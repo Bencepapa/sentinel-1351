@@ -1,0 +1,6 @@
+*.asm text eol=lf
+*.md text eol=lf
+*.py text eol=lf
+*.d64 binary
+*.prg binary
+*.png binary

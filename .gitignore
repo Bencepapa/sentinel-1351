@@ -1,0 +1,15 @@
+__pycache__/
+*.py[cod]
+
+# Original and third-party game images are local reverse-engineering inputs.
+Sentinel.d64
+Sentinel-KALLAILACI.d64
+sentinel-TonyMartini-sb174780-Page-ZimmermanSet3.d64
+prg/
+mouse/versions/
+
+# Keep only the latest distributable mouse-patch build.
+Sentinel-1351*.d64
+Sentinel-1351*.prg
+!Sentinel-1351_v8.d64
+!Sentinel-1351_v8.prg
