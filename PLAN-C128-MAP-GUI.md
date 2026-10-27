@@ -99,7 +99,53 @@ Reference files: `c128-map/ref/map-screen.png`, `c128-map/ref/map-state.txt`
 - Overlap with the shooting branch is therefore larger than first thought:
   reuse the pixel primitives read-only and put new code in a separate file.
 
-### Still open
+
+## Map routines traced (static, `$2000-$2400` region)
+
+All addresses are in the C64 memory image; none are run on the C128 yet.
+
+- **Geometry:** 10 columns x 6 rows = 60 sectors. Sector index =
+  `row*10+col` (`$22D6`: X=col, Y=row -> X). Current sector `$92` (col) /
+  `$93` (row); cursor target `$DF` / `$DE`; previous cursor `$20E2` / `$20E1`.
+- **Cell positions:** column text cells `$2075` = 5,8,11,...,32;
+  row text cells `$207F` = 5,7,9,11,13,15 (6th entry 12 is unused padding).
+  Pixel centre used for the cursor box: x = col*4+4, y = row*8+4.
+- **Sector data:** `$033C[idx]` = state (`$00` empty, `$80` special,
+  `$FF` another special; small values 1-4 = types) and `$0378[idx]` =
+  count/strength (0..9). `$20F1` clears `$033C-$03B3`.
+- **Full redraw:** `$215C` (checks `$20F0`) walks idx 59..0 (`$20E3`):
+  empty -> `$2355` erases the glyph (char `$60`); `$FF` -> `$22F0`
+  (colour `$16`, glyph `$66`); `$80` -> `$232E` (colour `$18`, glyph
+  `$67`); else `$2301` (colour from `$22FE` table, glyph `$68/$69/$6A`
+  by count < 4 / < 7 / more). Then `$21BE` draws the cursor.
+- **Glyph draw:** `JSR $0816` with A = glyph code, X = row cell, Y = col
+  cell. Colour matrix cell is set by `$233C` (`$BA11` computes the
+  `$4400` + `$D800` address). So icons are *character-cell glyphs inside
+  the bitmap area*, not sprites.
+- **Cursor box:** `$2384` (A = 0 erase, 1 erase old, 2 draw current-sector
+  marker, 3 draw new). It plots a rectangle with the pixel routine at
+  `$EF45` (pixel in `$36`/`$37`), selecting set vs erase colour tables by
+  patching the operand at `$EF4E` (`$EE52` / `$EE56`). The box is 16 wide
+  (x-3..x+12) and 16/17 tall (y-5..y+11).
+- **Cursor input:** `$21C8` (rate limited by `$21C7`, reload 24 frames)
+  reads the direction byte `$96` bits 0-3, wraps columns 0-9 and rows 0-5,
+  redraws old/new cursor. This is the hook for mouse and joystick on the map.
+- **Grid lines:** drawn from a command stream at `$2024-$2074` (0x80 starts
+  a segment, then coordinates) -- decode next.
+- **Open/close:** open = `$FB5A` -> `$99A1` (sets `$B8=1`, clears
+  `$0A5A` split index) + `$223D` (SID blip). Exit = `$FC59` (`$B8=0`).
+  Per-frame blink and update = `$2B14`.
+
+### Port order for the map
+
+1. `$EF45` pixel primitive + `$EE46/$EE52/$EE56` tables (already in
+   `c128-flight`).
+2. Cell address helper `$BA11`, glyph drawer `$0816`, and the glyph bitmaps
+   (chars `$60-$6A`).
+3. Grid line command stream `$2024` and its interpreter (find it).
+4. Sector data tables + `$215C` redraw loop.
+5. Cursor `$2384` + input `$21C8`.
+
 
 - Icon routine and grid-drawing routine addresses (trace writes to
   `$6000-$7FFF` while the map opens).
