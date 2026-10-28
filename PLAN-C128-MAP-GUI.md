@@ -152,6 +152,49 @@ All addresses are in the C64 memory image; none are run on the C128 yet.
 - What `$033C` / `$0378` hold (they are filled with sector flags/counts:
   values 0..9, `$80`, `$FF`).
 
+## Grid draw-in effect (traced with VICE 3.7 from an in-flight snapshot)
+
+The grid is not a static line list. `$B094` (called every frame from the
+main loop at `$102D`) runs an animated draw-in. `$B0F2-$B198` is the
+per-frame step and `$B2D2` is `JMP $EF53` (plot a pixel with the layering rule).
+
+- **Setup** (`$B0A2-$B0F1`, runs once while `$B075` is 0): `$B071=$11` (x of the
+  left front = 17), `$B072=$8A` (x of the right front = 138), `$B07C=$10`,
+  clears `$B077/$B078/$B07A/$B07B`, patches `$B2D3/$B2D4` to `$EF53`.
+- **Each step:** both fronts move 2 px inward/outward and the 7 horizontal
+  lines are plotted at the front x positions. Table `$B08A..$B090` =
+  y = 35,51,67,83,99,115,131 (16 px apart = 2 cell rows). Plotting uses
+  `$70` = x, `$71` = y, and a second pixel at y+1, so lines are 2 px thick.
+- **Verticals:** table `$B07F..$B088` = x = 29,41,53,65,77,89,101,113,125,137
+  (12 px apart = 3 cell columns); the first one is at x = 17 (`$B071` start).
+  The step logic at `$B168-$B18B` compares the front with the table entry
+  (`$B079` index) and skips past it when they match (hypothesis: the vertical
+  is drawn by the remaining passes; not traced in detail).
+- **Finish:** at x >= `$8B` it sets `$B07A=$81`; `$B198` onward runs a short
+  sound blip (`$B26D`/`$B2BC`), writes `$20F0` = `$B093`, and the glyph redraw
+  (`$215C`) puts the sector icons on top.
+- **Finished bitmap** (`c128-map/ref/map-bitmap-6000.bin`,
+  `map-screen-inflight.png`): 11 vertical lines (`$3C` bytes every 3rd cell
+  column from col 4, full cell height) and 7 horizontal lines (`$FF` on
+  scanlines 3 and 4 of every 2nd cell row starting at row 4). Each grid cell is
+  12 px wide and 16 px tall (160x200 multicolor pixel units), 10 x 6 cells.
+
+### Port consequence
+
+A native C128 version does not need the sweep: draw the 11 vertical and
+7 horizontal lines straight into the bitmap with the byte patterns above (or
+reuse the sweep for the same look), then draw the sector icons on top.
+
+### Quirks found while debugging
+
+- C= is read only on frames with `$A0 AND 3 = 2` (`$0B43-$0B59` picks
+  `$FDEE` / `$FE36` / `$FE6E` by the frame counter), so a tap can be missed;
+  hold the key about half a second. In VICE's default layout C= is Left Ctrl
+  and Tab is CTRL.
+- Snapshots: launch `x64sc` with `-sound -sounddev dummy`. `+sound` plus a
+  snapshot that restores a SID engine produced "Cannot initialize SID Engine".
+- Shield counter address not found yet (`$B6` was a false lead).
+
 ## Open questions
 
 - Which charset does the map use: ROM, or a custom one in the game's RAM?
