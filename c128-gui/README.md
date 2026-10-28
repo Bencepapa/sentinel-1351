@@ -152,6 +152,37 @@ capture) is the flash effect with its colour at white.
 Not traced yet: which game events start the flash (warp, hit, ship destroyed) and
 what the status colours stand for exactly.
 
+## `cockpit/`: the cockpit on the native C128
+
+```powershell
+python c128-gui/cockpit/build.py
+& "C:\C64\GTK3VICE-3.7-win64in8.exe" -40col -controlport2device 3 `
+  -autostart c128-gui\cockpit\sentinel-c128-cockpit.prg
+```
+
+(`-controlport2device 3` is the 1351 mouse, press Alt+Q in VICE to grab it; without it
+use a joystick in port 2.) **SPACE** returns to BASIC, **T** switches target
+tracking on and off (the crosshair then animates `$49-$4B`).
+
+- **Picture**: the raster schedule above, polled in the main loop: HUD strip with the
+  light-blue border and dark-gray background, the black 3D view with a small star field,
+  the cockpit art captured from the original (radar viewport, the two gun bases, the gray
+  band, rivets; `ref/cockpit-art.bin`), the font and the sprite shapes at their original
+  addresses. The HUD numbers are the captured ones (static).
+- **Crosshair** (sprite 0, shape `$7D`): follows the 1351 or the joystick with the
+  original mouse patch's logic: X 0-254, Y 88-173, joystick steps of 3 and 2 per
+  frame with the flight-stick inversion, and a glide back to the centre after 64 frames
+  of calm.
+- **Guns** (sprites 0 and 3 below the 3D view, shapes `$7E` / `$7F`, behind the bitmap,
+  twice as wide): the original routine `$9568` lean them with the steering direction and
+  bring them back to rest; the firing state turns one of them red, alternating.
+
+Checked in VICE: the writes to the video registers happen on the same lines as in the
+original's quiet frame (56 / 58, 74, 75, 76 / 77, 78, 194, 230, 233, 242); the cursor
+and gun variables follow the original rules for right, left, up, down, fire and release
+(limits, tilt of the two guns, glide back to rest). Not checked: how it looks, the real 1351
+mouse path, and the sprites' on-screen position.
+
 ## Not done yet
 
 - Where the numbers in the squares of `$7D` come from (digits copied from `$64`, per the
