@@ -6,6 +6,8 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, '..', 'mouse', 'tools'))
 from asm import asm
+sys.path.insert(0, HERE)
+from vdcdata import chardata, rowtables, textdata, VCOL
 
 LOAD = 0x1C01
 ENTRY = 0x1D00
@@ -46,6 +48,15 @@ def main():
     put(body, YHI, bytes(v >> 8 for v in yoff))
     put(body, XLO, bytes(v & 255 for v in xoff))
     put(body, XHI, bytes(v >> 8 for v in xoff))
+
+    # second display (VDC): custom characters, text row table, colour map
+    put(body, 0x3500, chardata())
+    lo, hi = rowtables()
+    put(body, 0x3600, lo)
+    put(body, 0x3620, hi)
+    put(body, 0x3640, VCOL)
+    for address, data in textdata():
+        put(body, address, data)
 
     with open(OUT, 'wb') as f:
         f.write(bytes((LOAD & 255, LOAD >> 8)) + body)

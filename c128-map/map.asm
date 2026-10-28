@@ -29,6 +29,20 @@ COUNT   = $3340
 NEWST   = $3380
 NEWCT   = $33C0
 DIRTY   = $3400
+VDCA    = $D600         ; second display (VDC, 80 columns), see the VDC section
+VDCD    = $D601
+VCHARS  = $3500         ; custom VDC characters $E0-$EC (13 x 16 bytes), from build.py
+VROWLO  = $3600         ; text row * 80, low / high bytes
+VROWHI  = $3620
+VCOLTAB = $3640         ; C64 colour -> VDC colour
+VMAPX   = 3             ; text column of the first vertical grid line
+VMAPY   = 2             ; text row of the first horizontal grid line
+VCHG    = $E3           ; first icon character
+VBOXC   = 15            ; colour of the cursor / selected-sector boxes
+VMSGS   = $3680         ; texts (screen codes), from build.py
+VTITLE  = $3720
+VKEYS1  = $3748
+VKEYS2  = $3770
 
         * = $1D00
 START:  SEI
@@ -97,6 +111,12 @@ clears: LDA #$00
         INX
         BNE clears
 
+        LDA #$08        ; remember the VDC's default attribute for leaving
+        LDX #$00
+        JSR VSETADR
+        LDX #31
+        JSR VRD
+        STA VDEF
         LDA #$FF        ; SID voice 3 as noise: $D41B feeds the random generator
         STA $D40E
         STA $D40F
@@ -150,7 +170,24 @@ norep:  LDA TMPK        ; T held: fast ticks, to watch the squadrons move
         AND #$40
         EOR #$40
         STA TFAST
-        LDA #$FF        ; port 2 joystick / mouse buttons
+        LDA #$F7        ; V switches the second display (VDC) on and off
+        STA CIA1PA
+        LDA CIA1PB
+        AND #$80
+        BNE vkup
+        LDA VPREV
+        BNE vkdone
+        LDA #1
+        STA VPREV
+        LDA VDCON
+        EOR #1
+        STA VDCON
+        BEQ vkdone
+        JSR VDCSYNC
+        JMP vkdone
+vkup:   LDA #0
+        STA VPREV
+vkdone: LDA #$FF        ; port 2 joystick / mouse buttons
         STA CIA1PA
         LDA CIA1PA
         AND #$1F
@@ -162,7 +199,8 @@ norep:  LDA TMPK        ; T held: fast ticks, to watch the squadrons move
         JSR BLINK
         JMP frame
 
-EXIT:   LDA #0
+EXIT:   JSR VDCEXIT
+        LDA #0
         STA $D404
         STA $D40B
         STA $D418
@@ -329,6 +367,400 @@ vset:   STA POSY
         STA $D404
         STA $D40B
 vret:   RTS
+
+; ---- second display (VDC) -------------------------------------------
+; The C128's 80-column chip drives its own monitor. It shows the same map as
+; text: one sector is 3x2 characters, an icon is 2 characters. Custom characters
+; $E0-$EC (grid pieces and icon halves) are loaded into the VDC's character RAM,
+; colours come from its attribute bytes, so the VIC-IIe screen is not touched.
+; The VIC-side code calls VDCDRAW / VDCBOX / VDCATTR2 wherever it draws an icon,
+; a box or a blink colour. V switches the second display on and off.
+VWR:    STX VDCA        ; X = register, A = value
+vw1:    BIT VDCA
+        BPL vw1
+        STA VDCD
+        RTS
+
+VRD:    STX VDCA        ; X = register
+vr1:    BIT VDCA
+        BPL vr1
+        LDA VDCD
+        RTS
+
+VSETADR:STA VT2         ; A = high, X = low: VDC update address
+        STX VT3
+        LDX #18
+        LDA VT2
+        JSR VWR
+        LDX #19
+        LDA VT3
+        JMP VWR
+
+; Screen RAM address of text position VPX/VPY: A = high, X = low.
+VPOS:   LDY VPY
+        LDA VROWLO,Y
+        CLC
+        ADC VPX
+        TAX
+        LDA VROWHI,Y
+        ADC #0
+        RTS
+
+; Character VPC with attribute VAT at text position VPX/VPY.
+VPUT:   JSR VPOS
+        STA VT1
+        STX VT0
+        JSR VSETADR
+        LDA VPC
+        LDX #31
+        JSR VWR
+        LDA VT1
+        CLC
+        ADC #$08        ; attribute RAM starts at $0800
+        LDX VT0
+        JSR VSETADR
+        LDA VAT
+        LDX #31
+        JMP VWR
+
+; VLEN characters from (PTR) at text position VPX/VPY in colour VAT.
+VTEXT:  JSR VPOS
+        JSR VSETADR
+        LDY #0
+vtx:    LDA (PTR),Y
+        LDX #31
+        JSR VWR
+        INY
+        CPY VLEN
+        BNE vtx
+        JSR VATADR
+        LDA VLEN
+        STA VCNT
+vta:    LDA VAT
+        LDX #31
+        JSR VWR
+        DEC VCNT
+        BNE vta
+        RTS
+
+; Show the game's message for LASTMSG (set by SURROUND) once.
+VDCMSG: LDA VDCON
+        BEQ vmret
+        LDA LASTMSG
+        BEQ vmret
+        CMP LASTSHOWN
+        BEQ vmret
+        STA LASTSHOWN
+        SEC
+        SBC #1
+        TAX
+        LDA VMOFF,X
+        CLC
+        ADC #<VMSGS
+        STA PTR
+        LDA #>VMSGS
+        ADC #0
+        STA PTR+1
+        LDA #3
+        STA VPX
+        LDA #17
+        STA VPY
+        LDA #15
+        STA VAT
+        LDA #40
+        STA VLEN
+        JMP VTEXT
+vmret:  RTS
+VMOFF:  .BYTE 0,40,80,120
+
+; Set the update address to the attribute byte of VPX/VPY.
+VATADR: JSR VPOS
+        CLC
+        ADC #$08
+        JMP VSETADR
+
+; Fill 2048 bytes of VDC RAM with VFV, starting at address A:$00.
+VFILL:  LDX #0
+        JSR VSETADR
+        LDA VFV
+        LDX #31
+        JSR VWR
+        LDA #8
+        STA VCNT
+vf1:    LDA #255
+        LDX #30
+        JSR VWR
+        DEC VCNT
+        BNE vf1
+        RTS
+
+; Text position of the icon of sector ROW/COL: column 3*COL+1, row 2*ROW+1.
+VCELLPOS:
+        LDA COL
+        STA VT0
+        ASL A
+        CLC
+        ADC VT0
+        CLC
+        ADC #VMAPX+1
+        STA VPX
+        LDA ROW
+        ASL A
+        CLC
+        ADC #VMAPY+1
+        STA VPY
+        RTS
+
+; Load the custom characters, clear the screen and draw the grid.
+VDCINIT:LDA #1
+        STA VDCUSED
+        LDX #26         ; black background
+        LDA #$F0
+        JSR VWR
+        LDA #$2E        ; character RAM address of character $E0
+        LDX #$00
+        JSR VSETADR
+        LDY #0
+vup:    LDA VCHARS,Y
+        LDX #31
+        JSR VWR
+        INY
+        CPY #208
+        BNE vup
+        LDA #$20
+        STA VFV
+        LDA #$00
+        JSR VFILL
+        LDA #14
+        STA VFV
+        LDA #$08
+        JSR VFILL
+        LDA #13         ; grid: light yellow
+        STA VAT
+        LDA #0
+        STA VGY
+vgy:    LDA #0
+        STA VGX
+        STA VGM
+vgx:    LDA VGM
+        BNE vnotv
+        LDA VGY
+        AND #1
+        BNE vonlyv
+        LDA #$E2        ; crossing
+        JMP vput
+vonlyv: LDA #$E0        ; vertical line
+        JMP vput
+vnotv:  LDA VGY
+        AND #1
+        BNE vnext       ; cell interior
+        LDA #$E1        ; horizontal line
+vput:   STA VPC
+        LDA VGX
+        CLC
+        ADC #VMAPX
+        STA VPX
+        LDA VGY
+        CLC
+        ADC #VMAPY
+        STA VPY
+        JSR VPUT
+vnext:  INC VGM
+        LDA VGM
+        CMP #3
+        BNE vgmok
+        LDA #0
+        STA VGM
+vgmok:  INC VGX
+        LDA VGX
+        CMP #31
+        BEQ vgxend
+        JMP vgx
+vgxend: INC VGY
+        LDA VGY
+        CMP #13
+        BEQ vgdone
+        JMP vgy
+vgdone: LDA #0
+        STA LASTSHOWN
+        LDA #<VTITLE    ; title and key legend
+        STA PTR
+        LDA #>VTITLE
+        STA PTR+1
+        LDA #3
+        STA VPX
+        LDA #0
+        STA VPY
+        LDA #15
+        STA VAT
+        LDA #40
+        STA VLEN
+        JSR VTEXT
+        LDA #<VKEYS1
+        STA PTR
+        LDA #>VKEYS1
+        STA PTR+1
+        LDA #19
+        STA VPY
+        LDA #14
+        STA VAT
+        JSR VTEXT
+        LDA #<VKEYS2
+        STA PTR
+        LDA #>VKEYS2
+        STA PTR+1
+        LDA #20
+        STA VPY
+        LDA #56
+        STA VLEN
+        JMP VTEXT
+
+; Called where the VIC side draws an icon: GLY is the glyph (5 = blank), COLC the
+; colour code of the colour matrix, ROW/COL the sector.
+VDCDRAW:LDA VDCON
+        BNE vdd
+        RTS
+vdd:    LDA GLY
+        CMP #5
+        BNE vdg
+        LDA #$20
+        STA VPC
+        STA VPD
+        JMP vdcol
+vdg:    ASL A
+        CLC
+        ADC #VCHG
+        STA VPC
+        CLC
+        ADC #1
+        STA VPD
+vdcol:  LDA COLC
+        AND #15
+        TAX
+        LDA VCOLTAB,X
+        STA VAT
+        JSR VCELLPOS
+        JSR VPUT
+        INC VPX
+        LDA VPD
+        STA VPC
+        JMP VPUT
+
+; Called after MATSET (blink): recolour the two icon characters of ROW/COL.
+VDCATTR2:
+        LDA VDCON
+        BNE va2
+        RTS
+va2:    LDA COLC
+        AND #15
+        TAX
+        LDA VCOLTAB,X
+        STA VAT
+        JSR VCELLPOS
+        JSR VATADR
+        LDA VAT
+        LDX #31
+        JSR VWR
+        LDA VAT
+        LDX #31
+        JMP VWR
+
+; Called at the start of BOX: the box is the colour of the sector's border
+; characters (VBOXC), or the grid colour when erased.
+VDCBOX: LDA VDCON
+        BNE vxb
+        RTS
+vxb:     LDA BV
+        BEQ vxb0
+        LDA #VBOXC
+        JMP vxb1
+vxb0:    LDA #13
+vxb1:    STA VAT
+        LDA BC
+        STA VT0
+        ASL A
+        CLC
+        ADC VT0
+        CLC
+        ADC #VMAPX
+        STA VBX
+        LDA BR
+        ASL A
+        CLC
+        ADC #VMAPY
+        STA VBY
+        LDA VBX
+        STA VPX
+        LDA VBY
+        STA VPY
+        JSR VATADR      ; top edge: 4 characters
+        JSR VAT4
+        INC VPY         ; middle: left and right edge
+        LDA VBX
+        STA VPX
+        JSR VATADR
+        JSR VAT1
+        LDA VBX
+        CLC
+        ADC #3
+        STA VPX
+        JSR VATADR
+        JSR VAT1
+        LDA VBY         ; bottom edge
+        CLC
+        ADC #2
+        STA VPY
+        LDA VBX
+        STA VPX
+        JSR VATADR
+VAT4:   LDA #4
+        STA VCNT
+v4:     LDA VAT
+        LDX #31
+        JSR VWR
+        DEC VCNT
+        BNE v4
+        RTS
+VAT1:   LDA VAT
+        LDX #31
+        JMP VWR
+
+; Switching the display on again: redraw everything.
+VDCSYNC:LDA ICONDONE
+        BEQ vsret
+        JSR VDCINIT
+        JSR VDCMSG
+        LDA #0
+        STA MODE
+        JSR DRAWALL
+        LDA CURINIT
+        BEQ vsret
+        LDA SELX
+        STA BC
+        LDA SELY
+        STA BR
+        LDA #1
+        STA BV
+        JSR VDCBOX
+        LDA CURX
+        STA BC
+        LDA CURY
+        STA BR
+        JSR VDCBOX
+vsret:  RTS
+
+; Leave the second screen as we found it (blank, default colour).
+VDCEXIT:LDA VDCUSED
+        BEQ vxret
+        LDA #$20
+        STA VFV
+        LDA #$00
+        JSR VFILL
+        LDA VDEF
+        STA VFV
+        LDA #$08
+        JSR VFILL
+vxret:  RTS
 
 ; ---- map cursor -----------------------------------------------------
 ; Original $21C8 / $2384. The cursor is a brown box (pixel value 2) drawn over
@@ -499,7 +931,8 @@ selgo:  LDA SELX
         JMP BLIP
 
 ; Box around sector BC/BR, value 2 (BV=1) or value 3 (BV=0).
-BOX:    LDX BC
+BOX:    JSR VDCBOX      ; mirror the box on the second display
+        LDX BC
         LDA CELLX,X
         ASL A
         ASL A
@@ -641,7 +1074,10 @@ mvzero: LDY OLDV
 ICONS:  LDA ICONDONE
         BNE iconret
         JSR GENERATE
-        JSR DRAWALL
+        LDA VDCON       ; second display: grid first, the icons follow below
+        BEQ icnovdc
+        JSR VDCINIT
+icnovdc:JSR DRAWALL
         LDA #1
         STA ICONDONE
 iconret:RTS
@@ -784,6 +1220,7 @@ dc5:    LDA #3          ; two icons, glyph $69
 dc4:    LDA #2          ; one icon, glyph $68
 dcset:  STA GLY
         STY COLC
+        JSR VDCDRAW     ; mirror the icon on the second display
         ; cell offset = cy*40 + cx
         LDX ROW
         LDA CELLY,X
@@ -1016,6 +1453,7 @@ blset:  STA COLC
         STX BLX
         LDA INNER,X
         JSR MATSET
+        JSR VDCATTR2    ; same colour on the second display
         LDX BLX
 blnx:   DEX
         BPL bll
@@ -1085,6 +1523,7 @@ msnc:   CLC
 
 ; Original $BE29-$BE4B.
 TICK:   JSR SURROUND
+        JSR VDCMSG
         DEC TICKC
         JSR MOTHER
         LDA TICKC
@@ -1556,5 +1995,27 @@ SAVMMU: .BYTE 0
 SAVPTRL:.BYTE 0
 SAVPTRH:.BYTE 0
 TMPK:   .BYTE 0
+VDCON:  .BYTE 1         ; second display on by default
+VPREV:  .BYTE 1
+VDCUSED:.BYTE 0
+VDEF:   .BYTE 14
+VLEN:   .BYTE 0
+LASTSHOWN:.BYTE 0
+VT0:    .BYTE 0
+VT1:    .BYTE 0
+VT2:    .BYTE 0
+VT3:    .BYTE 0
+VCNT:   .BYTE 0
+VFV:    .BYTE 0
+VPX:    .BYTE 0
+VPY:    .BYTE 0
+VPC:    .BYTE 0
+VPD:    .BYTE 0
+VAT:    .BYTE 0
+VGX:    .BYTE 0
+VGY:    .BYTE 0
+VGM:    .BYTE 0
+VBX:    .BYTE 0
+VBY:    .BYTE 0
 SAVMPL: .BYTE 0
 SAVMPH: .BYTE 0
