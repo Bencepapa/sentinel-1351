@@ -32,12 +32,10 @@ XLO     = $2F00
 XHI     = $2F28
 COLORDATA = $3000
 PTR     = $FB
-NSTARS  = 14
+NSTARS  = 16
 DDLY    = $40           ; frames of calm before the crosshair glides back
 DZ      = 12            ; steering dead zone around the center
 NDZ     = 244           ; -DZ
-VPX0    = 80            ; vanishing point of the star field
-VPY0    = 84
 
         * = $1D00
 START:  SEI
@@ -175,13 +173,14 @@ frame:  LDA #56
         STA $D016
         LDA #$50
         STA $D018
-        LDA #242
-        JSR WAITLN
-        LDA #0          ; black below it
-        STA BORDER
-        STA BG
-        LDA #$08
-        STA $D016
+        LDX #0          ; black below it: written as early as possible in line 242
+        LDY #$08
+w242:   LDA #242
+        CMP $D012
+        BNE w242
+        STX BORDER
+        STX BG
+        STY $D016
 
         JSR INPUT       ; vertical blank: mouse, cursor, guns
         LDA #$7F        ; SPACE leaves
@@ -263,8 +262,8 @@ sc1:    STA SPRPTR
 ; Below the 3D view the same two slots show the gun shapes (original $120B-$126F):
 ; sprite 0 = left gun $7E, sprite 3 = right gun $7F, both twice as wide, behind the
 ; bitmap, gray, and one of them red while firing.
-SPRGUNS:LDA $D01B
-        ORA #$01
+SPRGUNS:LDA $D01B       ; both guns behind the bitmap (the bases stand in front of them)
+        ORA #$09
         STA $D01B
         LDA $D010
         AND #$FE
@@ -301,7 +300,18 @@ sg3:    STA $D027
         RTS
 
 ; ---------------- the star field ----------------
-STARS:  LDX #NSTARS-1
+; The stars drift away from the vanishing point, which follows the crosshair
+; (the point the ship is heading for), faster the farther out they are.
+STARS:  LDA CURX        ; vanishing point in bitmap pixels
+        CLC
+        ADC #33
+        ROR A
+        STA VPX
+        LDA CURY
+        SEC
+        SBC #43
+        STA VPY
+        LDX #NSTARS-1
 stl:    JSR ERASESTAR
         JSR MOVESTAR
         JSR PLOTSTAR
@@ -309,52 +319,93 @@ stl:    JSR ERASESTAR
         BPL stl
         RTS
 
-NEWSTAR:JSR RANDOM      ; X = star: near the vanishing point
+NEWSTAR:JSR RANDOM      ; X = star: anywhere in the 3D view (x 2-157, y 26-141)
+        AND #$7F
+        STA TMPS
+        JSR RANDOM
         AND #$1F
         CLC
-        ADC #VPX0-16
-        STA STARX,X
+        ADC TMPS
+        ADC #2
+        CMP #158
+        BCC nsx
+        SBC #40
+nsx:    STA STARX,X
         JSR RANDOM
-        AND #$0F
+        AND #$7F
         CLC
-        ADC #VPY0-8
-        STA STARY,X
-        JSR RANDOM
-        AND #$03
-        CLC
-        ADC #1
-        STA STARV,X
+        ADC #26
+        CMP #142
+        BCC nsy
+        SBC #64
+nsy:    STA STARY,X
         RTS
 
 MOVESTAR:
-        LDA STARX,X
-        CMP #VPX0
-        BCC msxl
+        LDA STARX,X     ; x: step away from VPX, 1 + distance/16 pixels
+        SEC
+        SBC VPX
+        BCS mxp
+        EOR #$FF
         CLC
-        ADC STARV,X
-        CMP #158
-        BCS msnew
-        BCC msxs
-msxl:   SEC
-        SBC STARV,X
+        ADC #1
+        LSR A
+        LSR A
+        LSR A
+        LSR A
+        CLC
+        ADC #1
+        STA TMPS
+        LDA STARX,X
+        SEC
+        SBC TMPS
         BCC msnew
         CMP #2
         BCC msnew
-msxs:   STA STARX,X
-        LDA STARY,X
-        CMP #VPY0
-        BCC msyu
+        JMP mxs
+mxp:    LSR A
+        LSR A
+        LSR A
+        LSR A
         CLC
-        ADC STARV,X
-        CMP #141
+        ADC #1
+        CLC
+        ADC STARX,X
+        CMP #158
         BCS msnew
-        BCC msys
-msyu:   SEC
-        SBC STARV,X
+mxs:    STA STARX,X
+        LDA STARY,X     ; y: the same, away from VPY
+        SEC
+        SBC VPY
+        BCS myp
+        EOR #$FF
+        CLC
+        ADC #1
+        LSR A
+        LSR A
+        LSR A
+        LSR A
+        CLC
+        ADC #1
+        STA TMPS
+        LDA STARY,X
+        SEC
+        SBC TMPS
         BCC msnew
         CMP #26
         BCC msnew
-msys:   STA STARY,X
+        JMP mys
+myp:    LSR A
+        LSR A
+        LSR A
+        LSR A
+        CLC
+        ADC #1
+        CLC
+        ADC STARY,X
+        CMP #142
+        BCS msnew
+mys:    STA STARY,X
         RTS
 msnew:  JMP NEWSTAR
 
@@ -761,6 +812,9 @@ SEED:   .BYTE $80
 POSX:   .BYTE 0
 POSY:   .BYTE 0
 SAVEX:  .BYTE 0
+VPX:    .BYTE 80
+VPY:    .BYTE 84
+TMPS:   .BYTE 0
 STARX:  .BYTE 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
 STARY:  .BYTE 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
 STARV:  .BYTE 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0

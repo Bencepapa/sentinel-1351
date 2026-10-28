@@ -1,6 +1,11 @@
 """Build the native C128 cockpit (c128-gui/cockpit/cockpit.asm).
 
-usage: python c128-gui/cockpit/build.py   ->  c128-gui/cockpit/sentinel-c128-cockpit.prg
+usage: python c128-gui/cockpit/build.py          ->  c128-gui/cockpit/sentinel-c128-cockpit.prg
+       python c128-gui/cockpit/build.py --c64    ->  sentinel-c64-cockpit-test.prg
+
+The --c64 variant is only a debugging aid: the picture uses nothing but the VIC, CIA
+and SID, so the same program runs on a C64 (BASIC at $0801), where VICE can take
+screenshots of the VIC picture.
 
 Memory (bank 0, VIC bank 1 for the picture):
   $1C01  BASIC stub, SYS 7424
@@ -22,15 +27,16 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, '..', '..', 'mouse', 'tools'))
 from asm import asm
 
-LOAD = 0x1C01
-ENTRY = 0x1D00
+C64 = '--c64' in sys.argv
+LOAD = 0x0801 if C64 else 0x1C01
+ENTRY = 0x0900 if C64 else 0x1D00
 YLO = 0x2D00
 YHI = 0x2E00
 XLO = 0x2F00
 XHI = 0x2F28
 COLORDATA = 0x3000
 REF = os.path.join(HERE, '..', 'ref')
-OUT = os.path.join(HERE, 'sentinel-c128-cockpit.prg')
+OUT = os.path.join(HERE, 'sentinel-c64-cockpit-test.prg' if C64 else 'sentinel-c128-cockpit.prg')
 
 
 def basic_stub():
@@ -49,7 +55,10 @@ def put(body, address, data):
 
 def main():
     with open(os.path.join(HERE, 'cockpit.asm'), encoding='ascii') as f:
-        chunks, symbols = asm(f.read())
+        source = f.read()
+    if C64:
+        source = source.replace('* = $1D00', '* = $%04X' % ENTRY)
+    chunks, symbols = asm(source)
     if set(chunks) != {ENTRY}:
         raise SystemExit(f'unexpected assembly chunks: {list(chunks)}')
     code = chunks[ENTRY]
