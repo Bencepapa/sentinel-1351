@@ -15,18 +15,19 @@ identical to the running game, so there is nothing to generate:
 | pointers | address | what it is |
 |---|---|---|
 | `$20-$30` | `$4800-$4C3F` | enemy twin-pod fighters, tiny to close, in several rotations |
-| `$31-$38` | `$4C40-$4E3F` | lens-shaped saucers, one shape per distance (tiny to big) |
+| `$31-$38` | `$4C40-$4E3F` | enemy ships (lens-shaped), one shape per distance (tiny to big); **multicolor** (user) |
 | `$39-$3D` | `$4E40-$4FFF` | the planet, five globe frames (`$39-$3C` are cycled, see below) |
-| `$3E-$44` | `$4F80-$513F` | small spiky shapes, growing: the player's shot (the user thinks a multicolor sprite; not confirmed in the code) |
+| `$3E-$44` | `$4F80-$513F` | small spiky shapes, growing: the shot; **multicolor** (user) |
 | `$45`, `$46` | `$5140-$51BF` | blank on disk, **filled at run time** (see below) |
 | `$47`, `$48` | `$51C0-$523F` | two big diagonal arms, mirrored: the gun barrels (left, right) |
 | `$49-$4B` | `$5240-$52FF` | the tracking crosshair, animated |
 | `$4C-$4E` | `$5300-$53BF` | corner marks, three sizes (crosshair at distance) |
 | `$60-$63` | `$5800-$58FF` | explosion, four growing frames |
-| `$64`, `$65` | `$5900-$597F` | `$64`: digit shapes, said by the user to be the gun base and the source of the numbers in `$7D`; `$65`: a dome shape (looks like a base) |
+| `$64` | `$5900` | the digits 0-9, 8x5 pixels each: the source of the numbers shown in the three squares of `$7D` (user) |
+| `$65` | `$5940` | the gun base, a dome (user) |
 | `$66-$70` | `$5980-$5C3F` | enemy fire, growing as it approaches (tiny dots `$66-$68`, then blobs `$69-$70`) |
-| `$71-$7C` | `$5C40-$5F3F` | the basestar, one shape per distance (big to tiny) |
-| `$7D` | `$5F40` | the plain crosshair / cursor, with three small squares underneath for numbers (user: digits from `$64`) |
+| `$71-$7C` | `$5C40-$5F3F` | mines or drones, one shape per distance (big to tiny); **multicolor** (user) |
+| `$7D` | `$5F40` | the main cursor (crosshair), with three small squares underneath for numbers taken from the digits in `$64` |
 | `$7E`, `$7F` | `$5F80-$5FFF` | the guns: left (`$7E`) and right (`$7F`), mirrored |
 
 Pointers `$50-$5F` are the text screen (`$5400`), `$00-$1F` the character set and
@@ -48,7 +49,7 @@ raster interrupt):
 - **enemy fire** is the sequence `$66` to `$70` (`$28D6` starts a shot at `$66`,
   `$2940` steps the pointer up, `$2D23` / `$2D67` compare with `$70`): the shot
   grows as it approaches;
-- **the basestar** approaches as `$7C` stepping down to `$71` (`$CCDF`, `$CD27`);
+- **mines or drones** approach as `$7C` stepping down to `$71` (`$CCDF`, `$CD27`), so they grow;
 - sprite 1 is the planet on the map (pointers `$39-$3C`, every 8th frame) and is
   reused in flight for enemy fire and the basestar;
 - sprites 5 and 6 get pointers `$45` / `$46`, which are blank on disk: at `$CF64`
@@ -90,7 +91,7 @@ a text strip on top (screen `$5400`, character set `$4000`), the multicolor bitm
 
 ## Not done yet
 
-- What exactly the gun base (`$64`, per the user) is and where the numbers in `$7D`
-  come from; `$47` / `$48`; which sprite is the player's shot (`$3E-$44` is a guess).
+- Where the numbers in the squares of `$7D` come from (digits copied from `$64`, per the
+  user) and what they show; `$47` / `$48`; the player's shot (`$3E-$44`) in the code.
 - The data behind the run-time sprites `$45` / `$46` (table at `($5D)`, `$CF64`).
 - The rest of the lower GUI: the radar contents, the emplacements as bitmap data.

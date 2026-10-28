@@ -29,6 +29,10 @@ from build import file_sectors, read_file   # noqa: E402
 
 D64 = sys.argv[1] if len(sys.argv) > 1 else os.path.join(HERE, '..', 'Sentinel-1351_v8.d64')
 POINTERS = list(range(0x20, 0x50)) + list(range(0x60, 0x80))
+# multicolor sprites (per the user): ships, the shot, mines / drones. Drawn with
+# 2-bit pixels, 2 pixels wide; bit pairs 01 / 10 / 11 get three different colours.
+MULTICOLOR = set(range(0x31, 0x39)) | set(range(0x3E, 0x45)) | set(range(0x71, 0x7D))
+MC_COLORS = {1: (130, 150, 255), 2: (240, 240, 240), 3: (255, 170, 70)}
 
 
 def memory_image(d64):
@@ -74,6 +78,15 @@ def main():
         blk = blocks[p]
         draw.rectangle([x0 - 1, y0 + 12 - 1, x0 + 24 * scale, y0 + 12 + 21 * scale], outline=(70, 70, 90))
         draw.text((x0, y0 - 2), '$%02X' % p, fill=(255, 210, 90))
+        if p in MULTICOLOR:
+            for r in range(21):
+                for c in range(12):
+                    v = (blk[r * 3 + c // 4] >> (6 - 2 * (c % 4))) & 3
+                    if v:
+                        draw.rectangle([x0 + c * 2 * scale, y0 + 12 + r * scale,
+                                        x0 + c * 2 * scale + 2 * scale - 1, y0 + 12 + r * scale + scale - 1],
+                                       fill=MC_COLORS[v])
+            continue
         for r in range(21):
             for c in range(24):
                 if (blk[r * 3 + c // 8] >> (7 - c % 8)) & 1:
