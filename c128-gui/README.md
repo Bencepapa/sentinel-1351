@@ -177,6 +177,13 @@ tracking on and off (the crosshair then animates `$49-$4B`).
   twice as wide): the original routine `$9568` lean them with the steering direction and
   bring them back to rest; the firing state turns one of them red, alternating.
 
+Result on a real x128 run (user screenshot, `ref/cockpit-c128-working.png`): HUD, rivets,
+crosshair with its digits, guns behind the bases, radar and star field all correct.
+**Lesson:** on the C128 the video chip reads the character ROM at VIC address
+`$1000-$1FFF` in every bank, so in VIC bank 1 nothing (text screen, sprite shapes, font)
+may live at `$5000-$5FFF`; the first test, with the text screen at `$5400` and sprites
+at `$5F40`, showed noise there while the bitmap was fine.
+
 Checked in VICE: the writes to the video registers happen on the same lines as in the
 original's quiet frame (56 / 58, 74, 75, 76 / 77, 78, 194, 230, 233, 242); the cursor
 and gun variables follow the original rules for right, left, up, down, fire and release
