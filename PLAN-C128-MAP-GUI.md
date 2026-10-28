@@ -185,6 +185,22 @@ A native C128 version does not need the sweep: draw the 11 vertical and
 7 horizontal lines straight into the bitmap with the byte patterns above (or
 reuse the sweep for the same look), then draw the sector icons on top.
 
+### Icon layer is dynamic (from the user)
+
+Icons are not drawn once: squadrons move between cells, a mothership blinks
+when surrounded, and the planet at the centre rotates. The C128 port needs a
+per-frame update layer: keep sector state, redraw only the changed cells
+(`$215C` walks all 60 cells and the glyph drawer `$0816` already erases by
+drawing glyph `$60`), and animate the blink and the planet from a frame
+counter. `$2B14` is the original per-frame map blink/update hook.
+
+### First C128 build: grid draw-in
+
+`c128-map/` holds the native test (`map.asm`, `build.py`, `README.md`): the
+sweep, the pause and the beeping sound are ported; the finished bitmap matches
+the original on all 463 grid-only cells. Pixel-level look and sound are not
+yet confirmed by the user.
+
 ### Quirks found while debugging
 
 - C= is read only on frames with `$A0 AND 3 = 2` (`$0B43-$0B59` picks
