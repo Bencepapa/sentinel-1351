@@ -27,7 +27,22 @@ wide pixel-value-2 icons, with the color in the color matrix, exactly like
 layout, and `DRAWCELL` draws one cell, so the animation (moving squadrons,
 blinking motherships) only needs to change a cell and redraw it.
 
-Not included yet: the cursor and the rotating planet. The icons are
+## Cursor
+
+After the icons appear, a brown box marks the selected sector (start 4,2, the
+player's position in the original). The joystick in port 2 or a 1351 mouse in
+port 2 moves a second box over the grid (wrapping at the edges, with the same
+24 frame cooldown and move click as the original). Fire (or the mouse's left
+button) moves the selected sector to the cursor. R replays the sweep with a new
+random layout, SPACE returns to BASIC 7.
+
+The box is drawn over the sector's border in pixel value 2 (brown) and erased by
+redrawing the border in value 3 (yellow), as the original `$2384` does; after
+each move the selected sector's box is repaired, as at `$2231`. One difference:
+a move is accepted as soon as the cooldown is over, while the original only
+samples the stick every 24th frame.
+
+Not included yet: the rotating planet. The icons are
 animated every frame in the original (squadrons move between cells, a surrounded
 mothership blinks), so the animation will be a per-frame update on top of this.
 
@@ -39,7 +54,7 @@ python c128-map/build.py
   -40col -autostart c128-map\sentinel-c128-map.prg
 ```
 
-Port 2 fire restarts the animation after it finishes. SPACE returns to BASIC 7.
+See the controls under Cursor.
 
 ## Verification done
 
@@ -47,6 +62,10 @@ The finished bitmap at `$6000` was dumped from VICE 3.7 `x128` and compared to a
 bitmap dumped from the original game (`ref/map-bitmap-6000.bin`): all 463
 cells in map rows 4-16 that hold only grid pixels match byte for byte. The SID
 registers show both voices gated on during the sweep and off afterwards.
+
+The cursor was checked by feeding joystick input through RAM and comparing the
+bitmap with the expected boxes after moves, wraps and a fire press (0 differences);
+the 1351 mouse path is ported from the smoke test but not exercised.
 
 The icon layer was checked by dumping the state arrays, color matrix and bitmap:
 all 60 cells match the glyph and color rules (0 bad cells), 16 random squadrons use

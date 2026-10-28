@@ -20,6 +20,8 @@ YLO     = $2600
 YHI     = $2700
 XLO     = $2800
 XHI     = $2828
+POTX    = $D419
+POTY    = $D41A
 PTR     = $FB
 MP      = $FD
 STATE   = $2900
@@ -95,6 +97,19 @@ clears: LDA #$00
         LDA $D012       ; vary the random squadron layout between runs
         ORA #$01
         STA SEED
+        LDA #$BF        ; let the SID settle on port 2 before the first read
+        STA CIA1PA
+        LDX #16
+settle1:LDY #0
+settle2:DEY
+        BNE settle2
+        DEX
+        BNE settle1
+        LDA POTX
+        STA OLDX
+        LDA POTY
+        EOR #$FF
+        STA OLDY
         JSR RESET
 
 frame:  LDA $D012
@@ -105,6 +120,7 @@ waitff: LDA $D012
         BNE waitff
 
         JSR STEP
+        JSR POTS        ; 1351 deltas (port 2 pots were selected last frame)
 
         LDA #$7F        ; SPACE exits
         STA CIA1PA
@@ -112,25 +128,23 @@ waitff: LDA $D012
         AND #$10
         BNE nospace
         JMP EXIT
-nospace:LDA #$FF        ; fire on port 2 restarts, once the sweep is done
+nospace:LDA #$FB        ; R replays the sweep with a new random layout
+        STA CIA1PA
+        LDA CIA1PB
+        AND #$02
+        BNE norep
+        JSR RESET
+        LDA #$BF
+        STA CIA1PA
+        JMP frame
+norep:  LDA #$FF        ; port 2 joystick / mouse buttons
         STA CIA1PA
         LDA CIA1PA
-        AND #$10
-        BNE nofire
-        LDA FIREPREV
-        BNE firedn
-        LDA PHASE
-        CMP #3
-        BNE firedn
-        LDA #1
-        STA FIREPREV
-        JSR RESET
-        JMP frame
-nofire: LDA #0
-        STA FIREPREV
-        JMP frame
-firedn: LDA #1
-        STA FIREPREV
+        AND #$1F
+        STA JB
+        LDA #$BF        ; select port 2 pots for the next frame
+        STA CIA1PA
+        JSR CURSOR
         JMP frame
 
 EXIT:   LDA #0
@@ -193,6 +207,8 @@ clearb: STA (PTR),Y
         LDA #0
         STA PHASE
         STA ICONDONE
+        STA CURINIT
+        STA DELAY
         LDA #1
         STA FIREPREV
         LDX #0          ; icon colors live in the color matrix: clear it
@@ -293,6 +309,308 @@ vset:   STA POSY
         STA $D404
         STA $D40B
 vret:   RTS
+
+; ---- map cursor -----------------------------------------------------
+; Original $21C8 / $2384. The cursor is a brown box (pixel value 2) drawn over
+; the borders of a sector; erasing it redraws the border in yellow (value 3).
+; The selected sector (the player's position, start 4,2) keeps its box.
+; Differences from the original: a move is accepted as soon as the 24 frame
+; cooldown is over (the original only samples the stick every 24th frame).
+CURSOR: LDA ICONDONE
+        BNE cur1
+        RTS
+cur1:   LDA CURINIT
+        BNE cur2
+        LDA #1
+        STA CURINIT
+        LDA #4
+        STA CURX
+        STA SELX
+        LDA #2
+        STA CURY
+        STA SELY
+        LDA #0          ; fire not pressed yet
+        STA BC          ; (BC/BR/BV set below)
+        LDA SELX
+        STA BC
+        LDA SELY
+        STA BR
+        LDA #1
+        STA BV
+        JSR BOX
+cur2:   LDA DELAY
+        BEQ cur3
+        DEC DELAY
+cur3:   LDA MPRES       ; with a mouse, its motion becomes directions (original MSYN)
+        BEQ curjoy
+        LDA #$1F
+        LDY MDY
+        BEQ cmy0
+        BMI cmyu
+        AND #$FD        ; back = down
+        JMP cmy0
+cmyu:   AND #$FE        ; forward = up
+cmy0:   LDY MDX
+        BEQ cmx0
+        BMI cmxl
+        AND #$F7        ; right
+        JMP cmx0
+cmxl:   AND #$FB        ; left
+cmx0:   AND #$0F
+        STA TMPB
+        LDA JB
+        AND #$10        ; the mouse's left button is fire
+        ORA TMPB
+        STA JB
+curjoy: LDA JB
+        AND #$0F
+        CMP #$0F
+        BEQ curfire     ; no direction
+        LDA DELAY
+        BNE curfire
+        JMP CURMOVE
+curfire:LDA JB
+        AND #$10
+        BNE fireup
+        LDA FIREPREV
+        BNE firehd
+        LDA #1
+        STA FIREPREV
+        JMP SELECT
+fireup: LDA #0
+        STA FIREPREV
+firehd: RTS
+
+CURMOVE:LDA CURX
+        STA OLDCX
+        LDA CURY
+        STA OLDCY
+        LDA JB
+        LSR A           ; bit 0: up
+        BCS nu
+        DEC CURY
+        BPL nu
+        LDX #5
+        STX CURY
+nu:     LSR A           ; bit 1: down
+        BCS nd
+        INC CURY
+        LDX CURY
+        CPX #6
+        BNE nd
+        LDX #0
+        STX CURY
+nd:     LSR A           ; bit 2: left
+        BCS nl
+        DEC CURX
+        BPL nl
+        LDX #9
+        STX CURX
+nl:     LSR A           ; bit 3: right
+        BCS nr
+        INC CURX
+        LDX CURX
+        CPX #10
+        BNE nr
+        LDX #0
+        STX CURX
+nr:     LDA OLDCX       ; erase the old box unless it is the selected sector
+        CMP SELX
+        BNE erold
+        LDA OLDCY
+        CMP SELY
+        BEQ skiper
+erold:  LDA OLDCX
+        STA BC
+        LDA OLDCY
+        STA BR
+        LDA #0
+        STA BV
+        JSR BOX
+skiper: LDA CURX        ; draw the new box unless it is the selected sector
+        CMP SELX
+        BNE drnew
+        LDA CURY
+        CMP SELY
+        BEQ skipdr
+drnew:  LDA CURX
+        STA BC
+        LDA CURY
+        STA BR
+        LDA #1
+        STA BV
+        JSR BOX
+skipdr: LDA SELX       ; repair the selected sector's box: a shared edge of the
+        STA BC          ; old box may have been erased (original $2231)
+        LDA SELY
+        STA BR
+        LDA #1
+        STA BV
+        JSR BOX
+        JSR BLIP
+        LDA #$18
+        STA DELAY
+        RTS
+
+; Fire moves the selected sector to the cursor.
+SELECT: LDA CURX
+        CMP SELX
+        BNE selgo
+        LDA CURY
+        CMP SELY
+        BNE selgo
+        RTS
+selgo:  LDA SELX
+        STA BC
+        LDA SELY
+        STA BR
+        LDA #0
+        STA BV
+        JSR BOX
+        LDA CURX
+        STA SELX
+        STA BC
+        LDA CURY
+        STA SELY
+        STA BR
+        LDA #1
+        STA BV
+        JSR BOX
+        JMP BLIP
+
+; Box around sector BC/BR, value 2 (BV=1) or value 3 (BV=0).
+BOX:    LDX BC
+        LDA CELLX,X
+        ASL A
+        ASL A
+        SEC
+        SBC #3
+        STA BX1
+        CLC
+        ADC #12
+        STA BX2
+        LDX BR
+        LDA CELLY,X
+        ASL A
+        ASL A
+        ASL A
+        SEC
+        SBC #5
+        STA BY1
+        CLC
+        ADC #16
+        STA BY2
+        LDA #0
+        STA BK
+bkh:    LDA BX1
+        CLC
+        ADC BK
+        STA POSX
+        LDA BY1
+        STA POSY
+        JSR PLOTBOX
+        INC POSY
+        JSR PLOTBOX
+        LDA BY2
+        STA POSY
+        JSR PLOTBOX
+        INC POSY
+        JSR PLOTBOX
+        INC BK
+        LDA BK
+        CMP #13
+        BNE bkh
+        LDA #0
+        STA BK
+bkv:    LDA BY1
+        CLC
+        ADC BK
+        STA POSY
+        LDA BX1
+        STA POSX
+        JSR PLOTBOX
+        INC POSX
+        JSR PLOTBOX
+        LDA BX2
+        STA POSX
+        JSR PLOTBOX
+        INC POSX
+        JSR PLOTBOX
+        INC BK
+        LDA BK
+        CMP #17
+        BNE bkv
+        RTS
+
+; Unprotected pixel set to value 2 (BV=1) or value 3 (BV=0), like $EF45.
+PLOTBOX:JSR PIXADDR
+        LDA (PTR),Y
+        AND CLEARM,X
+        STA TMPB
+        LDA BV
+        BNE pbtwo
+        LDA TMPB
+        ORA MASK3,X
+        JMP pbst
+pbtwo:  LDA TMPB
+        ORA MASK2,X
+pbst:   STA (PTR),Y
+        RTS
+
+; Original $223D: short click on a cursor move.
+BLIP:   LDA #0
+        STA $D404
+        STA $D406
+        STA $D402
+        LDA #8
+        STA $D403
+        LDA #1
+        STA $D405
+        LDA #$8F
+        STA $D401
+        LDA #$41
+        STA $D404
+        RTS
+
+; Commodore 1351 pots -> MDX/MDY (same as Sentinel's MOVCHK).
+POTS:   LDA POTX
+        CMP #$FF        ; X pot stuck at $FF: no mouse plugged in
+        BEQ nomouse
+        LDA #1
+        BNE setmp
+nomouse:LDA #0
+setmp:  STA MPRES
+        LDA POTX
+        LDY OLDX
+        JSR MOVCHK
+        STA MDX
+        TYA
+        STA OLDX
+        LDA POTY
+        EOR #$FF
+        LDY OLDY
+        JSR MOVCHK
+        STA MDY
+        TYA
+        STA OLDY
+        RTS
+
+MOVCHK: STY OLDV
+        TAY
+        SEC
+        SBC OLDV
+        ASL A
+        CMP #$80
+        ROR A
+        CMP #$FF
+        BEQ mvzero
+        CMP #$80
+        ROR A
+        BEQ mvzero
+        RTS
+mvzero: LDY OLDV
+        LDA #0
+        RTS
 
 ; ---- sector icons ---------------------------------------------------
 ; Sector state follows the original tables: STATE ($033C) $00 empty,
@@ -618,6 +936,30 @@ INNER:  .BYTE 12,17,42,47
 STSEL:  .BYTE 1,2,3,2
 CNTSEL: .BYTE 1,1,2,2,3,3,4,5,6,7,8,9,1,2,3,5
 SEED:   .BYTE $A7
+JB:     .BYTE $1F
+MPRES:  .BYTE 0
+MDX:    .BYTE 0
+MDY:    .BYTE 0
+OLDX:   .BYTE 0
+OLDY:   .BYTE 0
+OLDV:   .BYTE 0
+CURINIT:.BYTE 0
+DELAY:  .BYTE 0
+CURX:   .BYTE 0
+CURY:   .BYTE 0
+SELX:   .BYTE 0
+SELY:   .BYTE 0
+OLDCX:  .BYTE 0
+OLDCY:  .BYTE 0
+BC:     .BYTE 0
+BR:     .BYTE 0
+BV:     .BYTE 0
+BK:     .BYTE 0
+BX1:    .BYTE 0
+BX2:    .BYTE 0
+BY1:    .BYTE 0
+BY2:    .BYTE 0
+TMPB:   .BYTE 0
 ICONDONE:.BYTE 0
 NSQ:    .BYTE 0
 IDX:    .BYTE 0
