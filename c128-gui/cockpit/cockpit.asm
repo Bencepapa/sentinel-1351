@@ -34,7 +34,7 @@ XLO     = $2F00
 XHI     = $2F28
 COLORDATA = $3000
 PTR     = $FB
-NSTARS  = 16
+NSTARS  = 12
 DDLY    = $40           ; frames of calm before the crosshair glides back
 DZ      = 12            ; steering dead zone around the center
 NDZ     = 244           ; -DZ
@@ -116,7 +116,10 @@ stinit: JSR NEWSTAR
         BPL stinit
 
 ; ================= the frame, driven by the raster =================
-frame:  LDA #56
+frame:  LDA $D012       ; still in the border of the old frame (lines 251-255)? wait for the wrap
+        CMP #251
+        BCS frame
+        LDA #56
         JSR WAITLN
         LDA #1          ; the one line of white at the top of the HUD
         STA BG
@@ -156,7 +159,6 @@ frame:  LDA #56
         LDA #78
         JSR WAITLN
         JSR SPRCROSS    ; the crosshair
-        JSR STARS       ; the star field, while the beam is in the 3D view
         LDA #194
         JSR WAITLN
         JSR SPRGUNS     ; sprites 0 and 3 become the two guns
@@ -177,14 +179,22 @@ frame:  LDA #56
         STA $D018
         LDX #0          ; black below it: written as early as possible in line 242
         LDY #$08
-w242:   LDA #242
-        CMP $D012
-        BNE w242
+w242:   LDA $D012
+        CMP #242
+        BCC w242
         STX BORDER
         STX BG
         STY $D016
 
-        JSR INPUT       ; vertical blank: mouse, cursor, guns
+        JSR INPUT       ; vertical blank: mouse, cursor, guns, then the star field
+        JSR STARS       ; (the processor has all its time here, no tearing)
+        LDA $D012       ; count frames whose work ran past line 56 (should stay 0)
+        CMP #56
+        BCC vbok
+        CMP #251
+        BCS vbok
+        INC OVRUN
+vbok:
         LDA #$7F        ; SPACE leaves
         STA CIA1PA
         LDA CIA1PB
@@ -195,8 +205,10 @@ nospace:LDA #$BF        ; port 2 pots for the next frame
         STA CIA1PA
         JMP frame
 
-WAITLN: CMP $D012       ; A = raster line: wait until it is reached
-        BNE WAITLN
+WAITLN: STA WLN         ; A = raster line: wait until it is reached or already passed
+wl1:    LDA $D012
+        CMP WLN
+        BCC wl1
         RTS
 
 EXIT:   LDA #0
@@ -514,7 +526,10 @@ tno:    LDA MPRES
         JMP icur
 ijoy:   LDA JRAW
         STA JOY
-icur:   LDA JOY         ; fire flag for the guns
+icur:   LDA DS          ; the guns lean with the crosshair's offset from the center
+        AND DS2
+        STA JOYG
+        LDA JOY         ; fire flag for the guns
         AND #$10
         EOR #$10
         STA FIRING
@@ -685,9 +700,9 @@ mvzero: LDY OLDV
         LDA #0
         RTS
 
-; The guns (original $9568-$9632): they lean with the direction in JOY and
-; return to rest when it is released. G1 = left gun, G2 = right gun.
-GUNS:   LDA JOY
+; The guns (original $9568-$9632): they lean with the direction in JOYG (the crosshair's
+; offset from the center, as the mouse patch derives it) and return to rest at the center. G1 = left gun, G2 = right gun.
+GUNS:   LDA JOYG
         AND #$0F
         CMP #$0F
         BNE gd0
@@ -814,6 +829,9 @@ SEED:   .BYTE $80
 POSX:   .BYTE 0
 POSY:   .BYTE 0
 SAVEX:  .BYTE 0
+WLN:    .BYTE 0
+OVRUN:  .BYTE 0
+JOYG:   .BYTE $FF
 VPX:    .BYTE 80
 VPY:    .BYTE 84
 TMPS:   .BYTE 0
