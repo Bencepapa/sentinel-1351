@@ -21,6 +21,9 @@ YHI     = $2700
 XLO     = $2800
 XHI     = $2828
 PTR     = $FB
+MP      = $FD
+STATE   = $2900
+COUNT   = $2940
 
         * = $1D00
 START:  SEI
@@ -32,6 +35,10 @@ START:  SEI
         STA SAVPTRL
         LDA PTR+1
         STA SAVPTRH
+        LDA MP
+        STA SAVMPL
+        LDA MP+1
+        STA SAVMPH
         LDA CIA1PA
         STA SAVPA
         LDA CIA2PA
@@ -85,6 +92,9 @@ clears: LDA #$00
         INX
         BNE clears
 
+        LDA $D012       ; vary the random squadron layout between runs
+        ORA #$01
+        STA SEED
         JSR RESET
 
 frame:  LDA $D012
@@ -151,6 +161,10 @@ EXIT:   LDA #0
         STA PTR
         LDA SAVPTRH
         STA PTR+1
+        LDA SAVMPL
+        STA MP
+        LDA SAVMPH
+        STA MP+1
         CLI
         RTS
 
@@ -178,8 +192,17 @@ clearb: STA (PTR),Y
         STA FB
         LDA #0
         STA PHASE
+        STA ICONDONE
         LDA #1
         STA FIREPREV
+        LDX #0          ; icon colors live in the color matrix: clear it
+clrmat: LDA #0
+        STA SCREEN,X
+        STA SCREEN+256,X
+        STA SCREEN+512,X
+        STA SCREEN+768,X
+        INX
+        BNE clrmat
         JMP SNDINIT
 
 ; One frame of the draw-in.
@@ -188,8 +211,11 @@ STEP:   LDA PHASE
         CMP #1
         BEQ PAUSEP
         CMP #2
+        BEQ stepv
+        CMP #3
         BNE steprt
-        JMP VERTP
+        JMP ICONS
+stepv:  JMP VERTP
 steprt: RTS
 
 ; Seven horizontal lines, 2 px thick: even rows from the left front,
@@ -267,6 +293,224 @@ vset:   STA POSY
         STA $D404
         STA $D40B
 vret:   RTS
+
+; ---- sector icons ---------------------------------------------------
+; Sector state follows the original tables: STATE ($033C) $00 empty,
+; $80 orange mothership, $FF blue mothership, $01-$03 squadron type (color);
+; COUNT ($0378) is the squadron size: 1-3 draws one icon, 4-6 two, 7+ three.
+; DRAWCELL can be called for any single cell, so later animation (moving
+; squadrons, blinking motherships) only has to change STATE/COUNT and redraw.
+ICONS:  LDA ICONDONE
+        BNE iconret
+        JSR GENERATE
+        JSR DRAWALL
+        LDA #1
+        STA ICONDONE
+iconret:RTS
+
+; Motherships at the four corners (orange) and near them (blue) as in the
+; original layout, plus randomly placed squadrons of different types.
+GENERATE:
+        LDX #59
+        LDA #0
+genclr: STA STATE,X
+        STA COUNT,X
+        DEX
+        BPL genclr
+        LDY #3
+gencor: LDX CORN,Y
+        LDA #$80
+        STA STATE,X
+        LDA #1
+        STA COUNT,X
+        DEY
+        BPL gencor
+        LDY #3
+geninn: LDX INNER,Y
+        LDA #$FF
+        STA STATE,X
+        DEY
+        BPL geninn
+        LDA #16
+        STA NSQ
+gensq:  JSR RANDOM
+        AND #$3F
+        CMP #60
+        BCS gensq
+        TAX
+        LDA STATE,X
+        BNE gensq
+        STX IDX
+        JSR RANDOM
+        AND #$03
+        TAY
+        LDA STSEL,Y
+        LDX IDX
+        STA STATE,X
+        JSR RANDOM
+        AND #$0F
+        TAY
+        LDA CNTSEL,Y
+        STA COUNT,X
+        DEC NSQ
+        BNE gensq
+        RTS
+
+DRAWALL:LDA #0
+        STA IDX
+        STA ROW
+drow:   LDA #0
+        STA COL
+dcol:   JSR DRAWCELL
+        INC IDX
+        INC COL
+        LDA COL
+        CMP #10
+        BNE dcol
+        INC ROW
+        LDA ROW
+        CMP #6
+        BNE drow
+        RTS
+
+; Draw the icon of sector IDX at grid cell ROW/COL (original $2301/$22F0/$232E).
+DRAWCELL:
+        LDX IDX
+        LDA STATE,X
+        BNE dc1
+        RTS
+dc1:    CMP #$80
+        BNE dc2
+        LDA #1          ; orange saucer, glyph $67, color $18
+        LDY #$18
+        JMP dcset
+dc2:    CMP #$FF
+        BNE dc3
+        LDA #0          ; blue saucer, glyph $66, color $16
+        LDY #$16
+        JMP dcset
+dc3:    TAX
+        DEX
+        LDY CT,X
+        LDX IDX
+        LDA COUNT,X
+        CMP #4
+        BCC dc4
+        CMP #7
+        BCC dc5
+        LDA #4          ; three icons, glyph $6A
+        JMP dcset
+dc5:    LDA #3          ; two icons, glyph $69
+        JMP dcset
+dc4:    LDA #2          ; one icon, glyph $68
+dcset:  STA GLY
+        STY COLC
+        ; cell offset = cy*40 + cx
+        LDX ROW
+        LDA CELLY,X
+        STA OFFL
+        LDA #0
+        STA OFFH
+        ASL OFFL
+        ROL OFFH
+        ASL OFFL
+        ROL OFFH
+        ASL OFFL
+        ROL OFFH
+        LDA OFFL
+        STA TL
+        LDA OFFH
+        STA TH
+        ASL OFFL
+        ROL OFFH
+        ASL OFFL
+        ROL OFFH
+        CLC
+        LDA OFFL
+        ADC TL
+        STA OFFL
+        LDA OFFH
+        ADC TH
+        STA OFFH
+        LDX COL
+        CLC
+        LDA OFFL
+        ADC CELLX,X
+        STA OFFL
+        BCC dcnc
+        INC OFFH
+dcnc:   ; color matrix: both icon cells get the color code
+        CLC
+        LDA OFFL
+        ADC #<SCREEN
+        STA MP
+        LDA OFFH
+        ADC #>SCREEN
+        STA MP+1
+        LDY #0
+        LDA COLC
+        STA (MP),Y
+        INY
+        STA (MP),Y
+        ; bitmap address = BITMAP + offset*8
+        ASL OFFL
+        ROL OFFH
+        ASL OFFL
+        ROL OFFH
+        ASL OFFL
+        ROL OFFH
+        CLC
+        LDA OFFL
+        ADC #<BITMAP
+        STA PTR
+        LDA OFFH
+        ADC #>BITMAP
+        STA PTR+1
+        ; expand the 8x8 glyph: high nibble -> left cell, low nibble -> right
+        LDA GLY
+        ASL A
+        ASL A
+        ASL A
+        STA GX
+        LDA #0
+        STA RR
+dgl:    LDA RR
+        CLC
+        ADC GX
+        TAX
+        LDA GLYPHS,X
+        STA SRC
+        LSR A
+        LSR A
+        LSR A
+        LSR A
+        TAX
+        LDA EXPT,X
+        LDY RR
+        STA (PTR),Y
+        LDA SRC
+        AND #$0F
+        TAX
+        LDA EXPT,X
+        PHA
+        LDA RR
+        CLC
+        ADC #8
+        TAY
+        PLA
+        STA (PTR),Y
+        INC RR
+        LDA RR
+        CMP #8
+        BNE dgl
+        RTS
+
+RANDOM: LDA SEED
+        ASL A
+        BCC randok
+        EOR #$1D
+randok: STA SEED
+        RTS
 
 ; Original $B26D: voice 1 and 2 pulse waves, gate on, volume 15.
 SNDINIT:LDA #0
@@ -357,6 +601,37 @@ MASK3:  .BYTE $C0,$30,$0C,$03
 YS:     .BYTE 35,51,67,83,99,115,131
 VX:     .BYTE 17,29,41,53,65,77,89,101,113,125,137
 
+; Glyph shapes copied from the game's character set ($4330-$4357):
+; blue saucer, orange saucer, 1/2/3 squadron icons.
+GLYPHS: .BYTE $00,$18,$7E,$E7,$FF,$7E,$3C,$00
+        .BYTE $00,$3C,$7E,$E7,$FF,$7E,$3C,$00
+        .BYTE $00,$00,$08,$1C,$08,$00,$00,$00
+        .BYTE $00,$20,$70,$20,$00,$04,$0E,$04
+        .BYTE $10,$38,$10,$02,$07,$42,$E0,$40
+; nibble -> 4 multicolor pixels of value 2 (original $9BB8 / $EE52 tables)
+EXPT:   .BYTE $00,$02,$08,$0A,$20,$22,$28,$2A,$80,$82,$88,$8A,$A0,$A2,$A8,$AA
+CELLX:  .BYTE 5,8,11,14,17,20,23,26,29,32
+CELLY:  .BYTE 5,7,9,11,13,15
+CT:     .BYTE $1E,$1D,$14
+CORN:   .BYTE 0,9,50,59
+INNER:  .BYTE 12,17,42,47
+STSEL:  .BYTE 1,2,3,2
+CNTSEL: .BYTE 1,1,2,2,3,3,4,5,6,7,8,9,1,2,3,5
+SEED:   .BYTE $A7
+ICONDONE:.BYTE 0
+NSQ:    .BYTE 0
+IDX:    .BYTE 0
+ROW:    .BYTE 0
+COL:    .BYTE 0
+GLY:    .BYTE 0
+GX:     .BYTE 0
+RR:     .BYTE 0
+SRC:    .BYTE 0
+COLC:   .BYTE 0
+OFFL:   .BYTE 0
+OFFH:   .BYTE 0
+TL:     .BYTE 0
+TH:     .BYTE 0
 FX:     .BYTE 0
 FR:     .BYTE 0
 FT:     .BYTE 0
@@ -381,3 +656,5 @@ SAVFAST:.BYTE 0
 SAVMMU: .BYTE 0
 SAVPTRL:.BYTE 0
 SAVPTRH:.BYTE 0
+SAVMPL: .BYTE 0
+SAVMPH: .BYTE 0
