@@ -211,6 +211,20 @@ the grid effect looks as expected (sound not explicitly confirmed).
   snapshot that restores a SID engine produced "Cannot initialize SID Engine".
 - Shield counter address not found yet (`$B6` was a false lead).
 
+## Ideas for later
+
+- **Ship status on the second display** (from the user): the VDC text screen has room
+  next to the map for the ship's systems. The ship has about ten subsystems that
+  can be damaged, so the panel would list each one and mark which are down
+  (colour or blink per system, like the map's attack rings). Not looked at yet:
+  where the original keeps the damage flags, how the game names the systems, and
+  what happens when one fails. Start by finding the damage state in the C64 code
+  (watch which bytes change when the player takes hits) and the system names.
+- **Message line on the main screen**: the VIC-IIe side only records `LASTMSG`; the
+  second display already prints the game's messages.
+- **Planet and mothership events in the flight view**: the cockpit side of the
+  attack rings and of the planet being surrounded.
+
 ## Open questions
 
 - Which charset does the map use: ROM, or a custom one in the game's RAM?
