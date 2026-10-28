@@ -9,9 +9,11 @@
 ; the two guns (sprites 0 and 3, shapes $7E / $7F, shown below the 3D view) follow it
 ; with the original's gun routine ($9568).
 ;
-; Data placed by build.py: COLORDATA, the tables, the character set ($4000), the
-; sprite shapes at their original addresses ($4800-$53FF, $5800-$5FFF), the text
-; screen ($5400), the color matrix ($4400) and the cockpit art in the bitmap.
+; Data placed by build.py: COLORDATA, the tables, the character set ($4000), the color
+; matrix ($4400), the text screen ($4800), the sprite shapes ($4C00) and the cockpit
+; art in the bitmap. Nothing may live at $5000-$5FFF: the C128's video chip reads the
+; character ROM there (VIC address $1000-$1FFF) even in VIC bank 1, which turned the
+; text and the sprites into noise in the first test.
 
 MMUCR   = $FF00
 CIA1PA  = $DC00
@@ -123,7 +125,7 @@ frame:  LDA #56
         STA $D011
         LDA #$08
         STA $D016
-        LDA #$50        ; text: screen $5400, character set $4000
+        LDA #$20        ; text: screen $4800, character set $4000
         STA $D018
         LDA #58
         JSR WAITLN
@@ -171,7 +173,7 @@ frame:  LDA #56
         STA $D011
         LDA #$05
         STA $D016
-        LDA #$50
+        LDA #$20
         STA $D018
         LDX #0          ; black below it: written as early as possible in line 242
         LDY #$08
@@ -240,7 +242,7 @@ SPRCROSS:
         LDA $D01D       ; not expanded
         AND #$FE
         STA $D01D
-        LDA #$7D
+        LDA #$30        ; shape $7D of the original, moved to $4C00
         LDX TRACK
         BEQ sc1
         LDA TRFRAME
@@ -277,9 +279,9 @@ SPRGUNS:LDA $D01B       ; both guns behind the bitmap (the bases stand in front 
         STA $D001
         LDA G2Y
         STA $D007
-        LDA #$7E
+        LDA #$34        ; the guns $7E / $7F of the original
         STA SPRPTR
-        LDA #$7F
+        LDA #$35
         STA SPRPTR+3
         LDA #$0C
         LDX #$0C
@@ -498,9 +500,9 @@ tdone:  LDA TRACK       ; tracking animation: $49, $4A, $4B every 16th frame
         LDA TRFRAME
         CLC
         ADC #1
-        CMP #$4C
+        CMP #$34        ; the tracking frames $49-$4B of the original, now $31-$33
         BCC tfok
-        LDA #$49
+        LDA #$31
 tfok:   STA TRFRAME
 tno:    LDA MPRES
         BEQ ijoy
@@ -806,7 +808,7 @@ FLIP:   .BYTE 0
 FCNT:   .BYTE 0
 FCNT2:  .BYTE 0
 TRACK:  .BYTE 0
-TRFRAME:.BYTE $49
+TRFRAME:.BYTE $31
 TPREV:  .BYTE 1
 SEED:   .BYTE $80
 POSX:   .BYTE 0

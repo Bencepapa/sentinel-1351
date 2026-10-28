@@ -14,9 +14,9 @@ Memory (bank 0, VIC bank 1 for the picture):
   $3000  color RAM image (1000 bytes, copied to $D800 at start)
   $4000  the font (128 characters, ref/charset-4000.bin)
   $4400  color matrix of the bitmap (ref/cockpit-art.bin)
-  $4800  sprite shapes, pointers $20-$4F  (ref/sprites-4800.bin, first 48 shapes)
-  $5400  text screen (HUD and bottom strip)
-  $5800  sprite shapes, pointers $60-$7F  (the last 32 shapes)
+  $4800  text screen (HUD and bottom strip)
+  $4C00  sprite shapes: pointers $30-$35 = the crosshair $7D, tracking $49-$4B, guns $7E / $7F
+  (nothing at $5000-$5FFF: the C128's video chip reads the character ROM there)
   $6000  multicolor bitmap; the cockpit art fills cell rows 18-22 ($7680-$7CBF)
 """
 
@@ -82,9 +82,15 @@ def main():
     put(body, 0x4000, open(os.path.join(REF, 'charset-4000.bin'), 'rb').read())
     put(body, 0x4400, matrix)
     sprites = open(os.path.join(REF, 'sprites-4800.bin'), 'rb').read()
-    put(body, 0x4800, sprites[:48 * 64])
-    put(body, 0x5400, screen)
-    put(body, 0x5800, sprites[48 * 64:])
+    order = [0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28, 0x29, 0x2A, 0x2B, 0x2C, 0x2D, 0x2E, 0x2F,
+             0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39, 0x3A, 0x3B, 0x3C, 0x3D, 0x3E, 0x3F,
+             0x40, 0x41, 0x42, 0x43, 0x44, 0x45, 0x46, 0x47, 0x48, 0x49, 0x4A, 0x4B, 0x4C, 0x4D, 0x4E, 0x4F,
+             0x60, 0x61, 0x62, 0x63, 0x64, 0x65, 0x66, 0x67, 0x68, 0x69, 0x6A, 0x6B, 0x6C, 0x6D, 0x6E, 0x6F,
+             0x70, 0x71, 0x72, 0x73, 0x74, 0x75, 0x76, 0x77, 0x78, 0x79, 0x7A, 0x7B, 0x7C, 0x7D, 0x7E, 0x7F]
+    shape = lambda p: sprites[order.index(p) * 64:order.index(p) * 64 + 64]
+    for new, original in enumerate((0x7D, 0x49, 0x4A, 0x4B, 0x7E, 0x7F)):
+        put(body, 0x4C00 + new * 64, shape(original))      # pointers $30-$35
+    put(body, 0x4800, screen)
     put(body, 0x6000 + 18 * 320, bitmap_rows)
 
     with open(OUT, 'wb') as f:
