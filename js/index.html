@@ -99,7 +99,7 @@ td.good { color: var(--good); } td.bad { color: var(--bad); font-weight: 500; }
     </div>
     <div class="controls">
       <label class="field" for="program">Test
-        <select id="program"><option value="map" selected>Sector map</option><option value="flight">Flight kernel</option></select>
+        <select id="program"><option value="cockpit">Cockpit</option><option value="map" selected>Sector map</option><option value="flight">Flight kernel</option></select>
       </label>
       <label class="field" for="mode">JS ports
         <select id="mode"><option value="verify" selected>Verify vs 6502</option><option value="replace">Replace 6502</option><option value="trace">Off (trace only)</option></select>
@@ -143,7 +143,7 @@ td.good { color: var(--good); } td.bad { color: var(--bad); font-weight: 500; }
       <div id="log"></div>
     </section>
   </div>
-  <p class="about">The unchanged 8502 binaries from c128-flight and c128-map run on a JS 6502 core. Their VIC-IIe, VDC, SID, CIA and 1351 registers are read by JS once per frame. Routines are hooked by label from the assembler's symbol table; PLOTPIX, ERASEPIX and MOVCHK have JS ports that run beside the originals and are compared on every call.</p>
+  <p class="about">The unchanged 8502 binaries from c128-gui/cockpit, c128-map and c128-flight run on a JS 6502 core. Their VIC-IIe, VDC, SID, CIA and 1351 registers are handled by JS; the VIC screen is drawn line by line from the register writes logged at each raster position, so raster splits show as on the real chip. Routines are hooked by label from the assembler's symbol table; PLOTPIX, ERASEPIX and MOVCHK have JS ports that run beside the originals and are compared on every call.</p>
 </div>
 
 <script src="programs.js"></script>

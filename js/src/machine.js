@@ -32,6 +32,10 @@ var C128 = (function () {
     this.hooks = null;            // set by Hooks
     this.writeLog = null;         // addresses written while a port is verified
     this.sidLog = [];             // [cycleInFrame, reg, value] for audio
+    this.vicLog = [];             // [line, cycleInLine, reg, value]: mid-frame VIC changes
+    this.ptrLog = [];             // [line, cycleInLine, addr, value]: sprite pointer writes
+    this.vicStart = new Uint8Array(0x40);   // VIC registers when the frame began
+    this.ptrStart = new Uint8Array(512);    // sprite pointers of every 1K screen then
     this.frame = 0;
     this.frameStart = 0;
     this.stopped = null;          // reason the program stopped
@@ -113,6 +117,10 @@ var C128 = (function () {
     var c = this.cpu, hooks = this.hooks;
     var end = this.frameStart + FRAME_CYCLES * this.clockMHz();
     this.sidLog.length = 0;
+    this.vicLog.length = 0;
+    this.ptrLog.length = 0;
+    this.vicStart.set(this.vic);
+    for (var b = 0; b < 64; b++) this.ptrStart.set(this.ram.subarray(b * 0x400 + 0x3F8, b * 0x400 + 0x400), b * 8);
     while (c.cycles < end) {
       if (c.pc === RETURN_TRAP) { this.stopped = 'returned to BASIC'; break; }
       if (hooks && hooks.at[c.pc]) { hooks.enter(c.pc); if (this.stopped) break; continue; }
@@ -125,6 +133,12 @@ var C128 = (function () {
   };
 
   // ---- memory map ------------------------------------------------------------
+
+  // Raster position of a write, for the line-by-line renderer.
+  P.logAt = function (log, what, v) {
+    var c = Math.floor(this.cycleInFrame() / this.clockMHz());
+    log.push(Math.floor(c / PAL_LINE_CYCLES), c % PAL_LINE_CYCLES, what, v);
+  };
 
   P.ioVisible = function () { return (this.mmuCR & 1) === 0; };
 
@@ -139,6 +153,7 @@ var C128 = (function () {
     if (a >= 0xD000 && a < 0xE000 && this.ioVisible()) { this.ioWrite(a, v); return; }
     if (a === 0xFF00) { this.mmuCR = v; return; }
     if (a > 0xFF00 && a <= 0xFF04) { this.mmuCR = this.mmu[a - 0xFF00]; return; }
+    if ((a & 0x3F8) === 0x3F8) this.logAt(this.ptrLog, a, v);
     this.ram[a] = v;
   };
 
@@ -155,7 +170,7 @@ var C128 = (function () {
   };
 
   P.ioWrite = function (a, v) {
-    if (a < 0xD400) { this.vic[a & 0x3F] = v; return; }
+    if (a < 0xD400) { this.logAt(this.vicLog, a & 0x3F, v); this.vic[a & 0x3F] = v; return; }
     if (a < 0xD500) { this.sidWrite(a & 0x1F, v); return; }
     if (a < 0xD600) { if ((a & 0xFF) === 0) this.mmuCR = v; else this.mmu[(a & 0x0F) % 12] = v; return; }
     if (a < 0xD700) { if (a & 1) this.vdcWrite(this.vdcIndex, v); else this.vdcIndex = v & 0x3F; return; }
@@ -341,6 +356,7 @@ var C128 = (function () {
   };
 
   Machine.FRAME_CYCLES = FRAME_CYCLES;
+  Machine.LINE_CYCLES = PAL_LINE_CYCLES;
   Machine.RETURN_TRAP = RETURN_TRAP;
   return Machine;
 })();

@@ -23,6 +23,7 @@ from asm import asm  # noqa: E402
 TESTS = {
     'flight': ('c128-flight', 'flight.asm', 'sentinel-c128-flight.prg'),
     'map': ('c128-map', 'map.asm', 'sentinel-c128-map.prg'),
+    'cockpit': (os.path.join('c128-gui', 'cockpit'), 'cockpit.asm', 'sentinel-c128-cockpit.prg'),
 }
 
 

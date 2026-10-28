@@ -8,7 +8,7 @@ replaced by JS that reads their registers once per frame:
 |---|---|
 | 8502 | `src/cpu6502.js`, all documented opcodes; passes Klaus Dormann's 6502 functional test |
 | MMU | `$FF00`/`$D500` configuration register; I/O visible when bit 0 is 0 |
-| VIC-IIe | `src/video.js`: text, hires and multicolor bitmap, sprites with priority, bank from CIA2 |
+| VIC-IIe | `src/video.js`: text, hires and multicolor bitmap, sprites with priority, bank from CIA2; drawn line by line from register and sprite-pointer writes logged with their raster line and cycle, so raster splits work (the cockpit's HUD / bitmap / strip, colour bars, sprites reused lower down) |
 | VDC | register file at `$D600/$D601`, update address, data, block fill/copy, 80x25 text with attributes |
 | SID | `src/audio.js`: register writes replayed in an AudioWorklet at their cycle in the frame; voice 3 noise readable at `$D41B` |
 | CIA1 | keyboard matrix, joystick in port 2 |
@@ -43,9 +43,9 @@ python js/bundle.py         # js/index.html (separate scripts) and js/dist/senti
 node js/test/run.js         # headless checks, PNG snapshots in js/test/out
 ```
 
-The headless checks run both tests with the ports in verify mode. They compare
+The headless checks run the three programs (cockpit, map, flight) with the ports in verify mode. They compare
 the map's grid cells with the original game's bitmap (`c128-map/ref`), and
-exercise the cursor, fast ticks, the planet sprite and the exits.
+exercise the cursor, fast ticks, the planet sprite, the cockpit crosshair and vertical-blank budget (`OVRUN`), and the exits.
 
 `index.html` needs a local web server (`python -m http.server` in `js/`);
 `dist/sentinel.html` opens directly.

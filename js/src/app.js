@@ -38,14 +38,17 @@
     hooks = new SentinelHooks(m, prog.symbols);
     SentinelNative.install(hooks, mode);
     hooks.onMismatch = function (r) { log('mismatch in ' + r.name + ' (frame ' + r.frame + '): ' + r.diffs.join('; ')); };
-    ['STEP', 'DRAWCELL', 'TICK', 'MOVEPASS', 'CURSOR', 'VDCDRAW', 'MOVESTAR', 'DRAW7', 'ERASE7']
+    ['STEP', 'DRAWCELL', 'TICK', 'MOVEPASS', 'CURSOR', 'VDCDRAW', 'MOVESTAR', 'DRAW7', 'ERASE7',
+     'INPUT', 'STARS', 'GUNS', 'SPRCROSS', 'SPRGUNS', 'PLOTSTAR', 'ERASESTAR']
       .forEach(function (n) { if (prog.symbols[n] !== undefined) hooks.trace(n); });
     m.start(prog.entry);
     audio.reset(audioFrame * 19656);
     $('vdcwrap').style.display = name === 'map' ? '' : 'none';
-    $('help').textContent = name === 'map'
-      ? 'Mouse/drag or arrows: cursor - left button / Fire: select - R new map - T fast ticks - V second display - SPACE exit'
-      : 'Mouse/drag: vanishing point - both buttons: exit';
+    $('help').textContent = {
+      map: 'Mouse/drag or arrows: cursor - left button / Fire: select - R new map - T fast ticks - V second display - SPACE exit',
+      flight: 'Mouse/drag: vanishing point - both buttons: exit',
+      cockpit: 'Mouse/drag or arrows: crosshair (the guns follow) - left button / Fire: shoot - SPACE exit',
+    }[name];
     $('overlay').style.display = 'none';
     $('log').textContent = '';
   }

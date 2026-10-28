@@ -1,5 +1,11 @@
 // Frame renderers: the VIC-IIe screen (40 columns) and the VDC screen
-// (80 columns). Both read the chips' registers and memory once per frame.
+// (80 columns).
+//
+// The VIC screen is drawn line by line from the register state at each raster
+// position: the machine logs every VIC register write and sprite pointer write
+// with its line and cycle, so raster splits (text strip / bitmap / text strip,
+// colour bars, sprites reused lower on the screen) come out as on the real chip.
+// A write in the middle of a line takes effect from the matching pixel.
 'use strict';
 
 var SentinelVideo = (function () {
@@ -16,7 +22,10 @@ var SentinelVideo = (function () {
     0xAA0000, 0xFF5555, 0xAA00AA, 0xFF55FF, 0xAA5500, 0xFFFF55, 0xAAAAAA, 0xFFFFFF,
   ];
 
-  var VIC_W = 384, VIC_H = 272, LEFT = 32, TOP = 36;
+  // Canvas: 384 x 272 PAL picture. Canvas x 32 = sprite x 24 = left edge of the
+  // 40-column window; canvas row 0 = raster line 15, so text row 0 (yscroll 3)
+  // starts at raster 51 = canvas row 36.
+  var VIC_W = 384, VIC_H = 272, LEFT = 32, FIRST_LINE = 15;
   var VDC_W = 640, VDC_H = 200;
 
   function rgba(pal) {
@@ -31,104 +40,152 @@ var SentinelVideo = (function () {
 
   // ---- VIC-IIe ---------------------------------------------------------------
 
-  var fg = new Uint8Array(320 * 200);   // foreground mask for sprite priority
+  // Canvas x where a write in cycle c of a line takes effect.
+  function cycleX(c) { return c * 8 - 96; }
 
-  // The VIC sees the character ROM at $1000-$1FFF of banks 0 and 2.
+  // The C128's VIC sees the character ROM at VIC address $1000-$1FFF (found on
+  // the real machine in banks 0 and 1; bank 2 as on the C64).
   function vicByte(m, bank, off) {
-    if ((bank === 0 || bank === 0x8000) && off >= 0x1000 && off < 0x2000) return Font.rom[off & 0x7FF];
+    if (bank !== 0xC000 && off >= 0x1000 && off < 0x2000) return Font.rom[off & 0x7FF];
     return m.ram[bank + off];
   }
 
-  function renderVic(m, px) {           // px: Uint32Array(VIC_W * VIC_H)
-    var v = m.vic, bank = m.vicBank();
-    var border = VICC[v[0x20] & 15];
-    px.fill(border);
-    if (!(v[0x11] & 0x10)) return;      // display off
-    var bmm = v[0x11] & 0x20, mcm = v[0x16] & 0x10, ecm = v[0x11] & 0x40;
-    var screen = (v[0x18] >> 4) * 0x400;
-    var bg0 = v[0x21] & 15;
-    var x, y, cx, cy, line, b, i, col, base, o;
-    fg.fill(0);
+  var line = new Uint32Array(VIC_W);     // one rendered line
+  var fgl = new Uint8Array(VIC_W);       // foreground mask of that line (sprite priority)
+  var cols = new Uint8Array(4);
 
-    for (cy = 0; cy < 25; cy++) {
-      for (cx = 0; cx < 40; cx++) {
-        i = cy * 40 + cx;
-        var sc = vicByte(m, bank, screen + i);
-        var cr = m.colorRam[i] & 15;
-        for (line = 0; line < 8; line++) {
-          y = cy * 8 + line;
-          o = (TOP + y) * VIC_W + LEFT + cx * 8;
-          var fo = y * 320 + cx * 8;
-          if (bmm) {
-            b = m.ram[bank + ((v[0x18] & 8) ? 0x2000 : 0) + i * 8 + line];
-            if (mcm) {
-              for (x = 0; x < 4; x++) {
-                var pv = (b >> (6 - x * 2)) & 3;
-                col = pv === 0 ? bg0 : pv === 1 ? sc >> 4 : pv === 2 ? sc & 15 : cr;
-                px[o + x * 2] = px[o + x * 2 + 1] = VICC[col];
-                if (pv & 2) fg[fo + x * 2] = fg[fo + x * 2 + 1] = 1;
-              }
-            } else {
-              for (x = 0; x < 8; x++) {
-                var on = (b >> (7 - x)) & 1;
-                px[o + x] = VICC[on ? sc >> 4 : sc & 15];
-                if (on) fg[fo + x] = 1;
-              }
-            }
-          } else {
-            base = (v[0x18] & 0x0E) * 0x400;
-            var code = ecm ? sc & 63 : sc;
-            b = vicByte(m, bank, base + code * 8 + line);
-            var bgc = ecm ? (v[0x21 + (sc >> 6)] & 15) : bg0;
-            if (mcm && (cr & 8)) {
-              for (x = 0; x < 4; x++) {
-                var p2 = (b >> (6 - x * 2)) & 3;
-                col = p2 === 0 ? bgc : p2 === 1 ? v[0x22] & 15 : p2 === 2 ? v[0x23] & 15 : cr & 7;
-                px[o + x * 2] = px[o + x * 2 + 1] = VICC[col];
-                if (p2 & 2) fg[fo + x * 2] = fg[fo + x * 2 + 1] = 1;
-              }
-            } else {
-              for (x = 0; x < 8; x++) {
-                var t = (b >> (7 - x)) & 1;
-                px[o + x] = VICC[t ? cr : bgc];
-                if (t) fg[fo + x] = 1;
-              }
-            }
+  // Render raster line 'raster' with registers v and sprite pointers ptr.
+  function renderLine(m, v, ptr, raster, bank) {
+    var border = VICC[v[0x20] & 15];
+    line.fill(border);
+    fgl.fill(0);
+    var den = v[0x11] & 0x10;
+    var rsel = v[0x11] & 0x08, csel = v[0x16] & 0x08;
+    var top = rsel ? 51 : 55, bottom = rsel ? 251 : 247;
+    var inWindow = den && raster >= top && raster < bottom;
+    var wl = csel ? LEFT : LEFT + 7, wr = csel ? LEFT + 320 : LEFT + 311;
+    var screen = (v[0x18] >> 4) * 0x400;
+
+    if (inWindow) {
+      var bg0 = v[0x21] & 15;
+      for (var i = wl; i < wr; i++) line[i] = VICC[bg0];
+      var ys = v[0x11] & 7, xs = v[0x16] & 7;
+      var y = raster - 48 - ys;
+      if (y >= 0 && y < 200) drawGraphics(m, v, bank, screen, y, LEFT + xs, bg0);
+    }
+    drawSprites(m, v, ptr, bank, screen, raster);
+    if (inWindow) {                       // the side borders cover the edge pixels
+      for (var a = 0; a < wl; a++) line[a] = border;
+      for (var b = wr; b < VIC_W; b++) line[b] = border;
+    } else {
+      line.fill(border);
+    }
+  }
+
+  function drawGraphics(m, v, bank, screen, y, x0, bg0) {
+    var bmm = v[0x11] & 0x20, mcm = v[0x16] & 0x10, ecm = v[0x11] & 0x40;
+    var cy = y >> 3, ln = y & 7, x, b, col;
+    var charBase = (v[0x18] & 0x0E) * 0x400, bmBase = (v[0x18] & 8) ? 0x2000 : 0;
+    for (var cx = 0; cx < 40; cx++) {
+      var i = cy * 40 + cx;
+      var sc = vicByte(m, bank, screen + i);
+      var cr = m.colorRam[i] & 15;
+      var o = x0 + cx * 8;
+      if (bmm) {
+        b = m.ram[bank + bmBase + i * 8 + ln];
+        if (mcm) {
+          for (x = 0; x < 4; x++) {
+            var pv = (b >> (6 - x * 2)) & 3;
+            col = pv === 0 ? bg0 : pv === 1 ? sc >> 4 : pv === 2 ? sc & 15 : cr;
+            put(o + x * 2, col, pv & 2); put(o + x * 2 + 1, col, pv & 2);
           }
+        } else {
+          for (x = 0; x < 8; x++) { var on = (b >> (7 - x)) & 1; put(o + x, on ? sc >> 4 : sc & 15, on); }
+        }
+      } else {
+        var code = ecm ? sc & 63 : sc;
+        b = vicByte(m, bank, charBase + code * 8 + ln);
+        var bgc = ecm ? (v[0x21 + (sc >> 6)] & 15) : bg0;
+        if (mcm && (cr & 8)) {
+          for (x = 0; x < 4; x++) {
+            var p2 = (b >> (6 - x * 2)) & 3;
+            col = p2 === 0 ? bgc : p2 === 1 ? v[0x22] & 15 : p2 === 2 ? v[0x23] & 15 : cr & 7;
+            put(o + x * 2, col, p2 & 2); put(o + x * 2 + 1, col, p2 & 2);
+          }
+        } else {
+          for (x = 0; x < 8; x++) { var t = (b >> (7 - x)) & 1; put(o + x, t ? cr : bgc, t); }
         }
       }
     }
-    renderSprites(m, px, bank, screen);
   }
 
-  function renderSprites(m, px, bank, screen) {
-    var v = m.vic;
+  function put(x, col, isFg) {
+    if (x >= VIC_W) return;
+    line[x] = VICC[col];
+    fgl[x] = isFg ? 1 : 0;
+  }
+
+  // Sprites visible on this raster line, from the registers of this line. The
+  // shape row is fetched with the pointer of the current screen, as the VIC does.
+  function drawSprites(m, v, ptr, bank, screen, raster) {
+    if (!v[0x15]) return;
+    var ptrBase = ((bank + screen) >> 10) * 8;
     for (var s = 7; s >= 0; s--) {
       if (!(v[0x15] & (1 << s))) continue;
-      var sx = v[s * 2] | ((v[0x10] >> s) & 1) << 8;
-      var sy = v[s * 2 + 1];
-      var data = bank + m.ram[bank + screen + 0x3F8 + s] * 64;
-      var mc = v[0x1C] & (1 << s), xe = v[0x1D] & (1 << s), ye = v[0x17] & (1 << s);
-      var behind = v[0x1B] & (1 << s);
-      var cols = [0, v[0x25] & 15, v[0x27 + s] & 15, v[0x26] & 15];
-      for (var row = 0; row < 21; row++) {
-        for (var yy = 0; yy < (ye ? 2 : 1); yy++) {
-          var py = sy - 50 + row * (ye ? 2 : 1) + yy + TOP;
-          if (py < 0 || py >= VIC_H) continue;
-          var bits = (m.ram[data + row * 3] << 16) | (m.ram[data + row * 3 + 1] << 8) | m.ram[data + row * 3 + 2];
-          for (var bx = 0; bx < 24; bx++) {
-            var c;
-            if (mc) { c = (bits >> (22 - (bx & ~1))) & 3; } else { c = ((bits >> (23 - bx)) & 1) ? 2 : 0; }
-            if (!c) continue;
-            for (var xx = 0; xx < (xe ? 2 : 1); xx++) {
-              var pxx = sx - 24 + bx * (xe ? 2 : 1) + xx + LEFT;
-              if (pxx < 0 || pxx >= VIC_W) continue;
-              var gx = pxx - LEFT, gy = py - TOP;
-              if (behind && gx >= 0 && gx < 320 && gy >= 0 && gy < 200 && fg[gy * 320 + gx]) continue;
-              px[py * VIC_W + pxx] = VICC[cols[c]];
-            }
-          }
+      var sy = v[s * 2 + 1], ye = (v[0x17] >> s) & 1;
+      var dy = (raster - sy) & 0xFF;          // wraps like the 8-bit compare
+      var h = ye ? 42 : 21;
+      if (dy >= h || raster > 300) continue;
+      var row = ye ? dy >> 1 : dy;
+      var sx = v[s * 2] | (((v[0x10] >> s) & 1) << 8);
+      var data = bank + ptr[ptrBase + s] * 64 + row * 3;
+      var bits = (m.ram[data] << 16) | (m.ram[data + 1] << 8) | m.ram[data + 2];
+      if (!bits) continue;
+      var mc = (v[0x1C] >> s) & 1, xe = (v[0x1D] >> s) & 1, behind = (v[0x1B] >> s) & 1;
+      cols[1] = v[0x25] & 15; cols[2] = v[0x27 + s] & 15; cols[3] = v[0x26] & 15;
+      var w = xe ? 2 : 1;
+      var px0 = sx - 24 + LEFT;
+      if (sx >= 0x1F8) px0 -= 0x1F8;            // x positions past the right edge wrap (PAL)
+      for (var bx = 0; bx < 24; bx++) {
+        var c = mc ? (bits >> (22 - (bx & ~1))) & 3 : ((bits >> (23 - bx)) & 1) << 1;
+        if (!c) continue;
+        for (var k = 0; k < w; k++) {
+          var x = px0 + bx * w + k;
+          if (x < 0 || x >= VIC_W) continue;
+          if (behind && fgl[x]) continue;
+          line[x] = VICC[cols[c]];
         }
+      }
+    }
+  }
+
+  var regs = new Uint8Array(0x40), ptrs = new Uint8Array(512);
+
+  function renderVic(m, px) {            // px: Uint32Array(VIC_W * VIC_H)
+    regs.set(m.vicStart);
+    ptrs.set(m.ptrStart);
+    var vl = m.vicLog, pl = m.ptrLog, vi = 0, pi = 0;
+    var bank = m.vicBank();
+    for (var row = 0; row < VIC_H; row++) {
+      var raster = row + FIRST_LINE, o = row * VIC_W;
+      // pointer writes up to the start of this line
+      while (pi < pl.length && (pl[pi] < raster || (pl[pi] === raster && cycleX(pl[pi + 1]) <= 0))) {
+        var a = pl[pi + 2]; ptrs[(a >> 10) * 8 + (a & 7)] = pl[pi + 3]; pi += 4;
+      }
+      // register writes before the visible part of the line
+      while (vi < vl.length && (vl[vi] < raster || (vl[vi] === raster && cycleX(vl[vi + 1]) <= 0))) {
+        regs[vl[vi + 2]] = vl[vi + 3]; vi += 4;
+      }
+      var x0 = 0;
+      while (true) {
+        renderLine(m, regs, ptrs, raster, bank);
+        var x1 = VIC_W;
+        if (vi < vl.length && vl[vi] === raster) x1 = Math.min(VIC_W, cycleX(vl[vi + 1]));
+        for (var x = x0; x < x1; x++) px[o + x] = line[x];
+        if (x1 >= VIC_W) break;
+        // apply every write that lands at this pixel, then draw the rest of the line
+        while (vi < vl.length && vl[vi] === raster && cycleX(vl[vi + 1]) <= x1) { regs[vl[vi + 2]] = vl[vi + 3]; vi += 4; }
+        x0 = x1;
       }
     }
   }

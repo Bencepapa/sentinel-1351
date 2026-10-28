@@ -134,5 +134,25 @@ function report(hooks, label) {
   check(m.stopped === 'returned to BASIC', 'map: SPACE returns to BASIC');
 }
 
+// ---- cockpit -------------------------------------------------------------
+{
+  const { m, hooks, p } = boot('cockpit', 'verify');
+  const s = p.symbols;
+  run(m, hooks, 60);
+  check(!m.stopped, 'cockpit runs' + (m.stopped ? ' (' + m.stopped + ')' : ''));
+  check(m.vicLog.length / 4 > 20, `cockpit: ${m.vicLog.length / 4} VIC writes per frame (raster splits logged)`);
+  const cx = m.ram[s.CURX], cy = m.ram[s.CURY];
+  run(m, hooks, 30, () => m.moveMouse(3, 2));
+  check(m.ram[s.CURX] > cx && m.ram[s.CURY] < cy, `cockpit: mouse moves the crosshair (${cx},${cy} -> ${m.ram[s.CURX]},${m.ram[s.CURY]})`);
+  run(m, hooks, 10, i => { m.mouse.left = i < 8; });
+  snap(m, 'cockpit');
+  check(m.ram[s.OVRUN] === 0, 'cockpit: frame work fits in the vertical blank (OVRUN = 0)');
+  report(hooks, 'cockpit');
+  m.mouse.left = false;
+  m.setKey(7, 4, true);
+  run(m, hooks, 3);
+  check(m.stopped === 'returned to BASIC', 'cockpit: SPACE returns to BASIC');
+}
+
 console.log(failures ? failures + ' check(s) failed' : 'all checks passed');
 process.exit(failures ? 1 : 0);
