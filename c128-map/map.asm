@@ -16,33 +16,37 @@ BORDER  = $D020
 BG      = $D021
 FAST    = $D030
 MMUCR   = $FF00
-YLO     = $3000
-YHI     = $3100
-XLO     = $3200
-XHI     = $3228
+YLO     = $3800
+YHI     = $3900
+XLO     = $3A00
+XHI     = $3A28
 POTX    = $D419
 POTY    = $D41A
 PTR     = $FB
 MP      = $FD
-STATE   = $3300
-COUNT   = $3340
-NEWST   = $3380
-NEWCT   = $33C0
-DIRTY   = $3400
+STATE   = $3C00
+COUNT   = $3C40
+NEWST   = $3C80
+NEWCT   = $3CC0
+DIRTY   = $3D00
 VDCA    = $D600         ; second display (VDC, 80 columns), see the VDC section
 VDCD    = $D601
-VCHARS  = $3500         ; custom VDC characters $E0-$EC (13 x 16 bytes), from build.py
-VROWLO  = $3600         ; text row * 80, low / high bytes
-VROWHI  = $3620
-VCOLTAB = $3640         ; C64 colour -> VDC colour
+VCHARS  = $4240         ; custom VDC characters $E0-$EC (13 x 16 bytes), from build.py
+VROWLO  = $4310         ; text row * 80, low / high bytes
+VROWHI  = $4330
+VCOLTAB = $4350         ; C64 colour -> VDC colour
 VMAPX   = 3             ; text column of the first vertical grid line
 VMAPY   = 2             ; text row of the first horizontal grid line
 VCHG    = $E3           ; first icon character
 VBOXC   = 15            ; colour of the cursor / selected-sector boxes
-VMSGS   = $3680         ; texts (screen codes), from build.py
-VTITLE  = $3720
-VKEYS1  = $3748
-VKEYS2  = $3770
+VMSGS   = $4360         ; texts (screen codes), from build.py
+VTITLE  = $3F00
+VKEYS1  = $3F28
+VKEYS2  = $3F50
+VPLN    = $4000         ; planet frames as VDC characters (4 x 9 x 16 bytes)
+VPLCH   = $ED           ; first planet character
+VPLX    = 17            ; text column / row of the planet's 3x3 block
+VPLY    = 7
 
         * = $1D00
 START:  SEI
@@ -197,6 +201,7 @@ vkdone: LDA #$FF        ; port 2 joystick / mouse buttons
         JSR CURSOR
         JSR TICKER
         JSR BLINK
+        JSR PLANET
         JMP frame
 
 EXIT:   JSR VDCEXIT
@@ -269,6 +274,7 @@ clearb: STA (PTR),Y
         STA TICKC
         LDA #1
         STA FIREPREV
+        JSR PLINIT
         LDX #0          ; icon colors live in the color matrix: clear it
 clrmat: LDA #0
         STA SCREEN,X
@@ -367,6 +373,54 @@ vset:   STA POSY
         STA $D404
         STA $D40B
 vret:   RTS
+
+; ---- the planet (original $1040-$10D5) ---------------------------------
+; Sprite 1, cyan, centred on the junction in the middle of the grid (sprite
+; position $A7/$7B), cycling four rotation frames (pointers $39-$3C) every
+; 8th frame. Its colour is driven by BLINK (original $3F72). The frames come
+; from the game's sprite memory ($4E40-$4F3F) via build.py.
+PLINIT: LDA #$39
+        STA $47F9       ; sprite 1 pointer (VIC bank 1, matrix at $4400)
+        STA PFRM
+        LDA #$A7
+        STA $D002
+        LDA #$7B
+        STA $D003
+        LDA #3
+        STA $D028
+        LDA $D010
+        AND #$FD
+        STA $D010
+        LDA $D01C       ; single colour, not expanded, in front of the bitmap
+        AND #$FD
+        STA $D01C
+        LDA $D01D
+        AND #$FD
+        STA $D01D
+        LDA $D017
+        AND #$FD
+        STA $D017
+        LDA $D01B
+        AND #$FD
+        STA $D01B
+        LDA $D015
+        ORA #$02
+        STA $D015
+        RTS
+
+PLANET: INC PCNT
+        LDA PCNT
+        AND #$07
+        BNE plrt
+        LDX PFRM
+        INX
+        CPX #$3D
+        BCC plkok
+        LDX #$39
+plkok:   STX PFRM
+        STX $47F9
+        JSR VDCPLDEF
+plrt:  RTS
 
 ; ---- second display (VDC) -------------------------------------------
 ; The C128's 80-column chip drives its own monitor. It shows the same map as
@@ -613,7 +667,8 @@ vgdone: LDA #0
         STA VPY
         LDA #56
         STA VLEN
-        JMP VTEXT
+        JSR VTEXT
+        JMP VDCPLACE
 
 ; Called where the VIC side draws an icon: GLY is the glyph (5 = blank), COLC the
 ; colour code of the colour matrix, ROW/COL the sector.
@@ -748,6 +803,102 @@ VDCSYNC:LDA ICONDONE
         STA BR
         JSR VDCBOX
 vsret:  RTS
+
+; The planet on the second display: 3x3 custom characters $ED-$F5 whose shapes
+; are rewritten from the four rotation frames, coloured like sprite 1.
+VDCPLDEF:
+        LDA VDCON
+        BEQ vpd0
+        LDA PFRM
+        SEC
+        SBC #$39
+        TAX
+        LDA PLOFFL,X
+        CLC
+        ADC #<VPLN
+        STA PTR
+        LDA PLOFFH,X
+        ADC #>VPLN
+        STA PTR+1
+        LDA #$2E        ; character RAM address of character $ED
+        LDX #$D0
+        JSR VSETADR
+        LDY #0
+vpl:    LDA (PTR),Y
+        LDX #31
+        JSR VWR
+        INY
+        CPY #144
+        BNE vpl
+vpd0:   RTS
+PLOFFL: .BYTE 0,144,32,176
+PLOFFH: .BYTE 0,0,1,1
+
+VDCPLACE:
+        LDA $D028
+        AND #15
+        TAX
+        LDA VCOLTAB,X
+        STA VAT
+        STA VPLC
+        LDA #VPLCH
+        STA VPC
+        LDA #0
+        STA VGY
+vpy:    LDA #0
+        STA VGX
+vpx:    LDA VGX
+        CLC
+        ADC #VPLX
+        STA VPX
+        LDA VGY
+        CLC
+        ADC #VPLY
+        STA VPY
+        JSR VPUT
+        INC VPC
+        INC VGX
+        LDA VGX
+        CMP #3
+        BNE vpx
+        INC VGY
+        LDA VGY
+        CMP #3
+        BNE vpy
+        JMP VDCPLDEF
+
+; Recolour the planet when the sprite colour changed (blink while surrounded).
+VDCPLCOL:
+        LDA VDCON
+        BEQ vpcr
+        LDA $D028
+        AND #15
+        TAX
+        LDA VCOLTAB,X
+        CMP VPLC
+        BEQ vpcr
+        STA VPLC
+        STA VAT
+        LDA #VPLX
+        STA VPX
+        LDA #VPLY
+        STA VPY
+        LDA #3
+        STA VGY
+vpc:    JSR VATADR
+        LDA VAT
+        LDX #31
+        JSR VWR
+        LDA VAT
+        LDX #31
+        JSR VWR
+        LDA VAT
+        LDX #31
+        JSR VWR
+        INC VPY
+        DEC VGY
+        BNE vpc
+vpcr:   RTS
 
 ; Leave the second screen as we found it (blank, default colour).
 VDCEXIT:LDA VDCUSED
@@ -1461,8 +1612,9 @@ blnx:   DEX
         BNE plblink
         LDA #3
         STA $D028
-        RTS
+        JMP VDCPLCOL
 plblink:INC $D028
+        JMP VDCPLCOL
 blret:  RTS
 
 ; Set the color matrix of sector A's two icon cells to COLC (original $233C).
@@ -1995,10 +2147,13 @@ SAVMMU: .BYTE 0
 SAVPTRL:.BYTE 0
 SAVPTRH:.BYTE 0
 TMPK:   .BYTE 0
+PFRM:   .BYTE $39
+PCNT:   .BYTE 0
 VDCON:  .BYTE 1         ; second display on by default
 VPREV:  .BYTE 1
 VDCUSED:.BYTE 0
 VDEF:   .BYTE 14
+VPLC:   .BYTE 0
 VLEN:   .BYTE 0
 LASTSHOWN:.BYTE 0
 VT0:    .BYTE 0

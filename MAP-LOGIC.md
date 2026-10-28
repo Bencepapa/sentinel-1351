@@ -131,6 +131,23 @@ colours **sprite 1** (`$D028`): cyan (`$03`) normally, and incrementing every fr
 while the planet is surrounded. So the planet is a sprite, and it flashes like the
 motherships when it is surrounded.
 
+## The planet sprite (`$1040-$10D5`)
+
+The planet is **sprite 1**, started with the grid sweep (when `$B075` is set):
+
+- position: sprite X `$A7` (167), Y `$7B` (123), i.e. centred on the grid junction in
+  the middle of the map, where the four sectors of the planet's ring meet;
+- single colour cyan (`$D028` = 3), not expanded, in front of the bitmap;
+- four rotation frames: sprite pointers `$39`, `$3A`, `$3B`, `$3C` (blocks at
+  `$4E40`, `$4E80`, `$4EC0`, `$4F00` in VIC bank 1), stepped every 8th frame
+  (`$A0 & 7 == 0`), wrapping back to `$39`;
+- the raster interrupt copies zero page `$B0-$B7` into the sprite pointers
+  `$47F8-$47FF` every frame, so the frame variable of sprite 1 is `$B1`; its shadow
+  enable bit is `$98` bit 1 and its position lives in `$E9` / `$EA`;
+- the colour is then driven by `$3F72` (above): cyan, or cycling while surrounded.
+
+When the sweep module is inactive (`$B075` = 0) the routine hides the sprite again.
+
 ## Verification
 
 The C128 port in `c128-map/` reimplements these rules. They were compared with
@@ -160,4 +177,3 @@ the original game's own routines running in VICE (same input, same result):
   squadron, `$3F4A` clears a sector, `$CFE6` turns a type-2 squadron into
   type 3 with half the count (`$CFC8` loop).
 - What `$CFA7` does when a mothership is destroyed.
-- The planet sprite itself (its shape frames and how it rotates).

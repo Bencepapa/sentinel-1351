@@ -90,7 +90,14 @@ Checked against the original game's own routines in VICE: the movement pass
 gives identical maps for the same input, as do corner spawn plus pass; the corner
 toggle follows the rules in the original and the port.
 
-Not included yet: the rotating planet in the player's sector. The icons are
+The planet is sprite 1 (cyan, centred on the grid junction in the middle of the map, four
+rotation frames stepped every 8th frame; frames copied from the game's sprite memory,
+`ref/planet-sprites.bin`). Its colour cycles while its ring is complete. On the second
+display it is a 3x3 block of custom characters whose shapes are redrawn per frame
+from the same four frames. Checked from the VIC-II state in VICE (sprite 1 enabled
+at 167/123, pointer cycling `$39,$3A,$3B,$3C`, colour 4,5,6,7,8 on consecutive frames
+while surrounded) and on the captured second display; the main screen picture itself
+was not seen. The icons are
 animated every frame in the original (squadrons move between cells, a surrounded
 mothership blinks), so the animation will be a per-frame update on top of this.
 

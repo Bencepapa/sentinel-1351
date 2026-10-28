@@ -7,14 +7,14 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, '..', 'mouse', 'tools'))
 from asm import asm
 sys.path.insert(0, HERE)
-from vdcdata import chardata, rowtables, textdata, VCOL
+from vdcdata import chardata, rowtables, textdata, planetchars, VCOL
 
 LOAD = 0x1C01
 ENTRY = 0x1D00
-YLO = 0x3000
-YHI = 0x3100
-XLO = 0x3200
-XHI = 0x3228
+YLO = 0x3800
+YHI = 0x3900
+XLO = 0x3A00
+XHI = 0x3A28
 OUT = os.path.join(HERE, 'sentinel-c128-map.prg')
 
 
@@ -38,6 +38,9 @@ def main():
     if set(chunks) != {ENTRY}:
         raise SystemExit(f'unexpected assembly chunks: {list(chunks)}')
 
+    if ENTRY + len(chunks[ENTRY]) > YLO:
+        raise SystemExit(f'code ends at ${ENTRY + len(chunks[ENTRY]):04X}, past the tables at ${YLO:04X}')
+
     stub = basic_stub()
     body = bytearray(stub)
     put(body, ENTRY, chunks[ENTRY])
@@ -50,11 +53,15 @@ def main():
     put(body, XHI, bytes(v >> 8 for v in xoff))
 
     # second display (VDC): custom characters, text row table, colour map
-    put(body, 0x3500, chardata())
+    put(body, 0x4240, chardata())
     lo, hi = rowtables()
-    put(body, 0x3600, lo)
-    put(body, 0x3620, hi)
-    put(body, 0x3640, VCOL)
+    put(body, 0x4310, lo)
+    put(body, 0x4330, hi)
+    put(body, 0x4350, VCOL)
+    with open(os.path.join(HERE, 'ref', 'planet-sprites.bin'), 'rb') as f:
+        sprites = f.read()
+    put(body, 0x4E40, sprites)          # planet sprite frames, pointers $39-$3C
+    put(body, 0x4000, planetchars(sprites))   # the same frames as VDC characters
     for address, data in textdata():
         put(body, address, data)
 

@@ -75,5 +75,23 @@ KEYS2 = 'R: NEW MAP  T: FAST TICKS  V: THIS SCREEN  SPACE: EXIT'
 def textdata():
     """(address, bytes) pairs for the VDC texts: messages, title, key lines."""
     msgs = b''.join(screencodes(m) for m in MESSAGES)
-    return [(0x3680, msgs), (0x3720, screencodes(TITLE)),
-            (0x3748, screencodes(KEYS1)), (0x3770, screencodes(KEYS2, 56))]
+    return [(0x4360, msgs), (0x3F00, screencodes(TITLE)),
+            (0x3F28, screencodes(KEYS1)), (0x3F50, screencodes(KEYS2, 56))]
+
+
+def planetchars(sprite_frames):
+    """4 sprite frames (64 bytes, 21 rows of 3 bytes) -> 4 x 9 VDC characters (16 bytes each).
+
+    The 24x21 sprite becomes a 3x3 block of characters, row by row; the missing
+    three pixel rows at the bottom are blank."""
+    out = bytearray()
+    for f in range(4):
+        sp = sprite_frames[f * 64:f * 64 + 63]
+        for cy in range(3):
+            for cx in range(3):
+                for r in range(8):
+                    row = cy * 8 + r
+                    out.append(sp[row * 3 + cx] if row < 21 else 0)
+                out += bytes(8)
+    assert len(out) == 576
+    return bytes(out)
