@@ -33,7 +33,11 @@ bitmap dumped from the original game (`ref/map-bitmap-6000.bin`): all 463
 cells in map rows 4-16 that hold only grid pixels match byte for byte. The SID
 registers show both voices gated on during the sweep and off afterwards.
 
-Not verified: the on-screen picture and the audible result. The monitor's
+Confirmed by the user in x128: the grid effect looks as expected. Not
+explicitly confirmed: the sound. (x128 opens two windows, VIC-IIe and
+VDC; the effect is on the VIC-IIe one.)
+
+Not verified by me: the on-screen picture and the audible result. The monitor's
 `screenshot` command only captures the 80-column (VDC) screen on `x128`, so
 this was checked by memory and register dumps. Please run it and compare the
 look and sound with the original.

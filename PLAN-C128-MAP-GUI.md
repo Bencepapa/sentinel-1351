@@ -198,8 +198,8 @@ counter. `$2B14` is the original per-frame map blink/update hook.
 
 `c128-map/` holds the native test (`map.asm`, `build.py`, `README.md`): the
 sweep, the pause and the beeping sound are ported; the finished bitmap matches
-the original on all 463 grid-only cells. Pixel-level look and sound are not
-yet confirmed by the user.
+the original on all 463 grid-only cells. The user ran it in x128 and confirmed
+the grid effect looks as expected (sound not explicitly confirmed).
 
 ### Quirks found while debugging
 
