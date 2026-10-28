@@ -131,6 +131,27 @@ The border colour of the upper HUD (`$0E`) is not what is on disk (`$05` in the 
 `$0CCB`); the game changes the operand at run time. The five-entry table at `$0A42`
 only gives the mode, the next line and the short white flash.
 
+## Colour effects: the border and background change all the time
+
+(From the user: the light-blue border at the upper left and right is calm blue, but
+turns gray or red when the engine warps, and shows many colours and fades.) The
+game does this by rewriting the instructions of the raster routines:
+
+| what | where | colours |
+|---|---|---|
+| **calm** | operand of `LDX #` at `$0CCC` (border), `LDY #` at `$0CD1` (HUD background), table entry `$0A4F` (bottom band) | border `$0E` light blue, HUD background `$0B` dark gray, band `$0B` |
+| **alert pulse** | `$09AC` (called every frame from `$0D02`): while the alert / engine sound plays (`$F8` or `$BA` non-zero) the border steps through the 36-entry table at `$08EE`, index `$0911` counting down from `$22` | light gray, gray, dark gray, black, dark gray, gray, light gray, white: a **gray fade out and back**; when the sound ends the border returns to `$0E` (`$09F4`) |
+| what starts the pulse | `$0930`, `$093F`, `$094E`, `$095D` set the counters `$08E5-$08E8` and the SID sound; `$0930` follows every message the game prints (the ring messages, the destroyed-system messages) | different lengths and pitches per variant |
+| **status colours** | `$C848` and `$8E8F` set the border to green (`$05`), then red (`$02`) and yellow (`$07`) as the enemy counters in the HUD (`$372C-$372F`) reach certain values | green, red, yellow |
+| **flash** | `$8834-$8869`, per frame, state in `$8831-$8833`: a random colour from the table at `$189B` (the low nibbles: red, orange, light red, purple, brown, black) is written into the entries `$0A4D` / `$0A4E` and into the code at `$0B26` (the colour that replaces black below the HUD), and in a later phase also into the border, HUD background and bottom band (`$0CCC`, `$0CD1`, `$0A4F`, `$12EE`) | random reds, oranges, purples and browns, for up to 255 frames |
+
+The white lines at 57 and 74 in the raster schedule above are the table colour `$01`
+showing for a moment; the screenshot taken during a hit (the first cockpit
+capture) is the flash effect with its colour at white.
+
+Not traced yet: which game events start the flash (warp, hit, ship destroyed) and
+what the status colours stand for exactly.
+
 ## Not done yet
 
 - Where the numbers in the squares of `$7D` come from (digits copied from `$64`, per the
