@@ -42,7 +42,24 @@ each move the selected sector's box is repaired, as at `$2231`. One difference:
 a move is accepted as soon as the cooldown is over, while the original only
 samples the stick every 24th frame.
 
-Not included yet: the rotating planet. The icons are
+## Strategic layer (ported from the original rules)
+
+The sector map is not static. `MAP-LOGIC.md` in the repository root describes the
+rules found in the C64 code: three squadron types with different movement,
+corner motherships that spawn squadrons and come and go, and a tick every 256
+frames (about 5 s). The C128 port reimplements them: `TICK`, `MOTHER`,
+`MOVEPASS`, `RESOLVE` follow `$BE29`, `$9F9A`, `$BE4C`, `$BF79`, and the start
+layout follows `$20F1` / `$225D` (difficulty 2 by default: 24 squadrons). Only
+changed cells are redrawn.
+
+Squadrons move slowly in the original (a type 1 squadron about every 80 s), so
+hold **T** to run ticks every 4th frame and watch them.
+
+Checked against the original game's own routines in VICE: the movement pass
+gives identical maps for the same input, as do corner spawn plus pass; the corner
+toggle follows the rules in the original and the port.
+
+Not included yet: the rotating planet in the player's sector. The icons are
 animated every frame in the original (squadrons move between cells, a surrounded
 mothership blinks), so the animation will be a per-frame update on top of this.
 

@@ -16,16 +16,19 @@ BORDER  = $D020
 BG      = $D021
 FAST    = $D030
 MMUCR   = $FF00
-YLO     = $2600
-YHI     = $2700
-XLO     = $2800
-XHI     = $2828
+YLO     = $3000
+YHI     = $3100
+XLO     = $3200
+XHI     = $3228
 POTX    = $D419
 POTY    = $D41A
 PTR     = $FB
 MP      = $FD
-STATE   = $2900
-COUNT   = $2940
+STATE   = $3300
+COUNT   = $3340
+NEWST   = $3380
+NEWCT   = $33C0
+DIRTY   = $3400
 
         * = $1D00
 START:  SEI
@@ -94,6 +97,11 @@ clears: LDA #$00
         INX
         BNE clears
 
+        LDA #$FF        ; SID voice 3 as noise: $D41B feeds the random generator
+        STA $D40E
+        STA $D40F
+        LDA #$80
+        STA $D412
         LDA $D012       ; vary the random squadron layout between runs
         ORA #$01
         STA SEED
@@ -131,13 +139,18 @@ waitff: LDA $D012
 nospace:LDA #$FB        ; R replays the sweep with a new random layout
         STA CIA1PA
         LDA CIA1PB
+        STA TMPK
         AND #$02
         BNE norep
         JSR RESET
         LDA #$BF
         STA CIA1PA
         JMP frame
-norep:  LDA #$FF        ; port 2 joystick / mouse buttons
+norep:  LDA TMPK        ; T held: fast ticks, to watch the squadrons move
+        AND #$40
+        EOR #$40
+        STA TFAST
+        LDA #$FF        ; port 2 joystick / mouse buttons
         STA CIA1PA
         LDA CIA1PA
         AND #$1F
@@ -145,6 +158,7 @@ norep:  LDA #$FF        ; port 2 joystick / mouse buttons
         LDA #$BF        ; select port 2 pots for the next frame
         STA CIA1PA
         JSR CURSOR
+        JSR TICKER
         JMP frame
 
 EXIT:   LDA #0
@@ -209,6 +223,11 @@ clearb: STA (PTR),Y
         STA ICONDONE
         STA CURINIT
         STA DELAY
+        STA TICKFR
+        STA TFAST
+        STA MODE
+        LDA #$1E        ; original start value of the tick counter ($2513)
+        STA TICKC
         LDA #1
         STA FIREPREV
         LDX #0          ; icon colors live in the color matrix: clear it
@@ -626,61 +645,91 @@ ICONS:  LDA ICONDONE
         STA ICONDONE
 iconret:RTS
 
-; Motherships at the four corners (orange) and near them (blue) as in the
-; original layout, plus randomly placed squadrons of different types.
+; Start layout, original $20F1: blue motherships (state $FF, count 0), orange
+; corner motherships (state $80, count 1), then N squadrons by difficulty, each
+; with type rnd&3 (0 becomes 1) and size (rnd&7)+2 raised to at least 3.
 GENERATE:
         LDX #59
         LDA #0
 genclr: STA STATE,X
         STA COUNT,X
+        STA NEWST,X
+        STA NEWCT,X
+        STA DIRTY,X
         DEX
         BPL genclr
+        LDX #3
+genflg: STA FLG,X
+        DEX
+        BPL genflg
         LDY #3
-gencor: LDX CORN,Y
-        LDA #$80
-        STA STATE,X
-        LDA #1
+gencor: LDX INNER,Y
+        LDA #0
         STA COUNT,X
-        DEY
-        BPL gencor
-        LDY #3
-geninn: LDX INNER,Y
         LDA #$FF
         STA STATE,X
-        DEY
-        BPL geninn
-        LDA #16
-        STA NSQ
-gensq:  JSR RANDOM
-        AND #$3F
-        CMP #60
-        BCS gensq
-        TAX
-        LDA STATE,X
-        BNE gensq
-        STX IDX
-        JSR RANDOM
-        AND #$03
-        TAY
-        LDA STSEL,Y
-        LDX IDX
-        STA STATE,X
-        JSR RANDOM
-        AND #$0F
-        TAY
-        LDA CNTSEL,Y
+        LDX CORN,Y
+        LDA #1
         STA COUNT,X
+        LDA #$80
+        STA STATE,X
+        DEY
+        BPL gencor
+        LDX DIFF
+        LDA SQN,X
+        STA NSQ
+gensq:  JSR RND
+        AND #$03
+        BNE gentype
+        LDA #1
+gentype:STA PTY
+        JSR RND
+        AND #$07
+        CLC
+        ADC #2
+        CMP #3
+        BCS gensize
+        LDA #3
+gensize:STA PSZ
+        JSR PLACE
         DEC NSQ
         BNE gensq
+        LDA #0          ; the player's start sector (4,2) stays empty
+        STA STATE+24
+        STA COUNT+24
         RTS
 
+; Original $225D: put a squadron (type PTY, size PSZ) into a random free cell.
+; Indices 60-63 fold onto 56-59, like the original.
+PLACE:  JSR RND
+        AND #$3F
+        CMP #60
+        BCC plok
+        SBC #4
+plok:   TAX
+        LDA STATE,X
+        BNE PLACE
+        LDA PTY
+        STA STATE,X
+        LDA PSZ
+        STA COUNT,X
+        RTS
+
+; MODE 0 draws every occupied cell; MODE 1 redraws only the cells marked dirty.
 DRAWALL:LDA #0
         STA IDX
         STA ROW
 drow:   LDA #0
         STA COL
-dcol:   JSR DRAWCELL
-        INC IDX
+dcol:   LDA MODE
+        BEQ dodraw
+        LDX IDX
+        LDA DIRTY,X
+        BEQ dnext
+        LDA #0
+        STA DIRTY,X
+dodraw: JSR DRAWCELL
+dnext:  INC IDX
         INC COL
         LDA COL
         CMP #10
@@ -696,7 +745,12 @@ DRAWCELL:
         LDX IDX
         LDA STATE,X
         BNE dc1
-        RTS
+        LDA MODE        ; an emptied cell is blanked only when redrawing
+        BEQ dcnone
+        LDA #5          ; blank glyph $60
+        LDY #0
+        JMP dcset
+dcnone: RTS
 dc1:    CMP #$80
         BNE dc2
         LDA #1          ; orange saucer, glyph $67, color $18
@@ -823,11 +877,313 @@ dgl:    LDA RR
         BNE dgl
         RTS
 
-RANDOM: LDA SEED
+; ---- strategic layer (see MAP-LOGIC.md) -----------------------------
+; Original random generator $BA85: seed*9 + $35, xor raster line, xor SID
+; voice 3 oscillator ($D41B, running as noise).
+RND:    LDA SEED
         ASL A
-        BCC randok
-        EOR #$1D
-randok: STA SEED
+        ASL A
+        ASL A
+        CLC
+        ADC SEED
+        CLC
+        ADC #$35
+        EOR $D012
+        EOR $D41B
+        STA SEED
+        RTS
+
+; Original $22D6: X = ICOL + 10*IROW.
+INDEX:  LDA IROW
+        ASL A
+        STA TMPI
+        ASL A
+        ASL A
+        CLC
+        ADC TMPI
+        CLC
+        ADC ICOL
+        TAX
+        RTS
+
+; Frame hook: one tick every 256 frames (original: $89 low byte is 0 in the
+; map loops, about 5.1 s PAL). Holding T makes a tick every 4th frame.
+TICKER: LDA ICONDONE
+        BEQ tkret
+        INC TICKFR
+        LDA TFAST
+        BEQ tknorm
+        LDA TICKFR
+        AND #$03
+        BNE tkret
+        JMP TICK
+tknorm: LDA TICKFR
+        BNE tkret
+        JMP TICK
+tkret:  RTS
+
+; Original $BE29-$BE4B.
+TICK:   DEC TICKC
+        JSR MOTHER
+        LDA TICKC
+        AND #$0F
+        BNE tickdr
+        JSR MOVEPASS    ; every 16th tick all squadrons move
+tickdr: LDA #1
+        STA MODE
+        JSR DRAWALL
+        LDA #0
+        STA MODE
+        RTS
+
+; Original $9F9A: mothership events, difficulty 2 and up only.
+MOTHER: LDX DIFF
+        CPX #2
+        BCC mothret
+        LDA TICKC
+        AND MASKS,X
+        CMP #$30
+        BEQ CORNSPAWN
+        CMP #$15
+        BEQ TOGGLE
+mothret:RTS
+
+; Original $9FB2: a corner with a mothership spawns a type 1 squadron (size
+; 1-8) into the empty cell beside it.
+CORNSPAWN:
+        LDX #3
+csl:    LDY CORN,X
+        LDA STATE,Y
+        BEQ csn
+        LDY ADJ,X
+        LDA STATE,Y
+        BNE csn
+        JSR RND
+        AND #$07
+        CLC
+        ADC #1
+        STA COUNT,Y
+        LDA #1
+        STA STATE,Y
+        STA DIRTY,Y
+csn:    DEX
+        BPL csl
+        RTS
+
+; Original $2091: corner motherships leave and return (not while the player
+; is in a mothership sector).
+TOGGLE: LDA SELX
+        STA ICOL
+        LDA SELY
+        STA IROW
+        JSR INDEX
+        LDA STATE,X
+        BPL tg1
+        RTS
+tg1:    LDX #3
+tgl:    LDY CORN,X
+        JSR RND
+        AND #$01
+        BNE tgrem
+        LDA FLG,X
+        BEQ tgn
+        LDA COUNT,Y
+        BNE tgn
+        LDA #0
+        STA FLG,X
+        LDA #1
+        STA COUNT,Y
+        LDA #$80
+        STA STATE,Y
+        JMP tgm
+tgrem:  LDA COUNT,Y
+        BEQ tgn
+        LDA STATE,Y
+        BPL tgn
+        LDA #1
+        STA FLG,X
+        LDA #0
+        STA COUNT,Y
+        STA STATE,Y
+tgm:    LDA #1
+        STA DIRTY,Y
+tgn:    DEX
+        BPL tgl
+        RTS
+
+; Original $BE4C-$BEC0: build the new map in NEWST/NEWCT, visiting sectors
+; from the bottom-right up, then copy it back and mark changed cells dirty.
+MOVEPASS:
+        LDX #59
+        LDA #0
+mpclr:  STA NEWST,X
+        STA NEWCT,X
+        DEX
+        BPL mpclr
+        LDA #5
+        STA PROW
+mprow:  LDA #9
+        STA PCOL
+mpcol:  JSR MOVECELL
+        DEC PCOL
+        BPL mpcol
+        DEC PROW
+        BPL mprow
+        LDX #59
+mpcb:   LDA NEWST,X
+        CMP STATE,X
+        BNE mpd
+        LDA NEWCT,X
+        CMP COUNT,X
+        BEQ mpn
+mpd:    LDA #1
+        STA DIRTY,X
+mpn:    LDA NEWST,X
+        STA STATE,X
+        LDA NEWCT,X
+        STA COUNT,X
+        DEX
+        BPL mpcb
+        RTS
+
+; One sector of the pass (original $BE61-$BEB2).
+MOVECELL:
+        LDA PCOL
+        STA ICOL
+        LDA PROW
+        STA IROW
+        JSR INDEX
+        STX MIDX
+        LDA STATE,X
+        STA MST
+        BNE mc1
+        RTS             ; empty sector
+mc1:    LDA COUNT,X
+        STA MCT
+        LDA MST
+        BMI mccopy      ; motherships never move
+        LDA PCOL        ; neither does a squadron in the player's sector
+        CMP SELX
+        BNE mcmove
+        LDA PROW
+        CMP SELY
+        BEQ mccopy
+mcmove: LDA MST
+        CMP #3
+        BNE mc2
+        JSR DIR3
+        JMP mcgo
+mc2:    CMP #2
+        BNE mc3
+        JSR DIR2
+        JMP mcgo
+mc3:    CMP #1
+        BNE mccopy
+        JSR DIR1
+mcgo:   JSR RESOLVE     ; X = destination index
+        LDA MST
+        STA NEWST,X
+        LDA MCT
+        STA NEWCT,X
+        RTS
+mccopy: LDX MIDX
+        LDA MST
+        STA NEWST,X
+        LDA MCT
+        STA NEWCT,X
+        RTS
+
+; Type 1 (original $BF58): one step toward the player's sector.
+DIR1:   LDA #0
+        STA DX
+        STA DY
+        LDA PCOL
+        CMP SELX
+        BCS d1a
+        INC DX
+        JMP d1b
+d1a:    BEQ d1b
+        DEC DX
+d1b:    LDA PROW
+        CMP SELY
+        BCS d1c
+        INC DY
+        RTS
+d1c:    BEQ d1d
+        DEC DY
+d1d:    RTS
+
+; Type 2 (original $BF40): every 32nd tick, toward the blue motherships.
+DIR2:   LDA TICKC
+        AND #$1F
+        BEQ d2a
+        LDA #0
+        STA DX
+        STA DY
+        RTS
+d2a:    LDX PCOL
+        LDA T2X,X
+        STA DX
+        LDX PROW
+        LDA T2Y,X
+        STA DY
+        RTS
+
+; Type 3 (original $BF18): every 64th tick, toward the middle of the map.
+DIR3:   LDA TICKC
+        AND #$3F
+        BEQ d3a
+        LDA #0
+        STA DX
+        STA DY
+        RTS
+d3a:    LDX PCOL
+        LDA T3X,X
+        STA DX
+        LDX PROW
+        LDA T3Y,X
+        STA DY
+        RTS
+
+; Original $BF79: the target cell if it is free, else the cell beside it
+; (new column, old row), else (old column, new row), else stay. X = index.
+RESOLVE:LDA PCOL
+        CLC
+        ADC DX
+        STA NX
+        LDA PROW
+        CLC
+        ADC DY
+        STA NY
+        LDA NX
+        STA ICOL
+        LDA NY
+        STA IROW
+        JSR INDEX
+        JSR EMPTYX
+        BEQ rsdone
+        LDA NX
+        STA ICOL
+        LDA PROW
+        STA IROW
+        JSR INDEX
+        JSR EMPTYX
+        BEQ rsdone
+        LDA PCOL
+        STA ICOL
+        LDA NY
+        STA IROW
+        JSR INDEX
+        JSR EMPTYX
+        BEQ rsdone
+        LDX MIDX        ; blocked: stay where it is
+rsdone: RTS
+
+; Z set when sector X is empty now and in the new map.
+EMPTYX: LDA STATE,X
+        ORA NEWST,X
+        ORA COUNT,X
+        ORA NEWCT,X
         RTS
 
 ; Original $B26D: voice 1 and 2 pulse waves, gate on, volume 15.
@@ -926,6 +1282,7 @@ GLYPHS: .BYTE $00,$18,$7E,$E7,$FF,$7E,$3C,$00
         .BYTE $00,$00,$08,$1C,$08,$00,$00,$00
         .BYTE $00,$20,$70,$20,$00,$04,$0E,$04
         .BYTE $10,$38,$10,$02,$07,$42,$E0,$40
+        .BYTE $00,$00,$00,$00,$00,$00,$00,$00   ; $60: blank
 ; nibble -> 4 multicolor pixels of value 2 (original $9BB8 / $EE52 tables)
 EXPT:   .BYTE $00,$02,$08,$0A,$20,$22,$28,$2A,$80,$82,$88,$8A,$A0,$A2,$A8,$AA
 CELLX:  .BYTE 5,8,11,14,17,20,23,26,29,32
@@ -933,8 +1290,35 @@ CELLY:  .BYTE 5,7,9,11,13,15
 CT:     .BYTE $1E,$1D,$14
 CORN:   .BYTE 0,9,50,59
 INNER:  .BYTE 12,17,42,47
-STSEL:  .BYTE 1,2,3,2
-CNTSEL: .BYTE 1,1,2,2,3,3,4,5,6,7,8,9,1,2,3,5
+; Squadrons per difficulty ($8422), tick masks ($9F95), cells beside the corners
+; ($9F91) and the movement tables ($BF08, $BF12, $BF30, $BF3A).
+SQN:    .BYTE 10,15,24,31,44
+MASKS:  .BYTE $FF,$FF,$7F,$7F,$3F
+ADJ:    .BYTE 1,8,51,58
+T3X:    .BYTE 1,1,1,1,0,0,$FF,$FF,$FF,$FF
+T3Y:    .BYTE 1,1,0,0,$FF,$FF
+T2X:    .BYTE 1,1,0,$FF,$FF,1,1,0,$FF,$FF
+T2Y:    .BYTE 1,0,$FF,1,0,$FF
+DIFF:   .BYTE 2
+FLG:    .BYTE 0,0,0,0
+TICKC:  .BYTE $1E
+TICKFR: .BYTE 0
+TFAST:  .BYTE 0
+MODE:   .BYTE 0
+TMPI:   .BYTE 0
+ICOL:   .BYTE 0
+IROW:   .BYTE 0
+PCOL:   .BYTE 0
+PROW:   .BYTE 0
+MIDX:   .BYTE 0
+MST:    .BYTE 0
+MCT:    .BYTE 0
+DX:     .BYTE 0
+DY:     .BYTE 0
+NX:     .BYTE 0
+NY:     .BYTE 0
+PTY:    .BYTE 0
+PSZ:    .BYTE 0
 SEED:   .BYTE $A7
 JB:     .BYTE $1F
 MPRES:  .BYTE 0
@@ -998,5 +1382,6 @@ SAVFAST:.BYTE 0
 SAVMMU: .BYTE 0
 SAVPTRL:.BYTE 0
 SAVPTRH:.BYTE 0
+TMPK:   .BYTE 0
 SAVMPL: .BYTE 0
 SAVMPH: .BYTE 0

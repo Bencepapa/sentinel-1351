@@ -9,10 +9,10 @@ from asm import asm
 
 LOAD = 0x1C01
 ENTRY = 0x1D00
-YLO = 0x2600
-YHI = 0x2700
-XLO = 0x2800
-XHI = 0x2828
+YLO = 0x3000
+YHI = 0x3100
+XLO = 0x3200
+XHI = 0x3228
 OUT = os.path.join(HERE, 'sentinel-c128-map.prg')
 
 
