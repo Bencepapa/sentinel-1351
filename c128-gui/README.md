@@ -89,6 +89,24 @@ a text strip on top (screen `$5400`, character set `$4000`), the multicolor bitm
 
 ![Cockpit in flight](ref/cockpit-flight.png)
 
+## Reference screenshot (quiet frame)
+
+`ref/gui-reference-quiet.png` is the difficulty menu screen in VICE, with no hit
+flash. The better, larger reference from the user is the same screen; it is not stored
+in the repo yet (drop it into `ref/` if you want it kept). What it shows:
+
+![Quiet frame](ref/gui-reference-quiet.png)
+
+- **Top**: a row of rivets, then the HUD: a light-blue band across the full width with
+  the dark-gray HUD bar in the middle, framed by a white vertical bar on each side.
+  Text is light green, numbers white.
+- **Middle**: black space with a few stars, the menu or the 3D view.
+- **Cursor**: the crosshair with three small squares under it showing `000`: the
+  digits taken from the sprite `$64`.
+- **Bottom**: the radar viewport (blue frame with a circle), and on each side a gun base
+  with the gray striped gun dish (the sprites `$7E` / `$7F`) standing on it; below them the
+  one-character gray band, a row of rivets, then black.
+
 ## Raster schedule of a quiet frame (PAL line numbers, measured in VICE)
 
 Recorded by logging every write to `D011-D021` and `D015` over one frame of the title
