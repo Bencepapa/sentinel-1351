@@ -89,6 +89,30 @@ a text strip on top (screen `$5400`, character set `$4000`), the multicolor bitm
 
 ![Cockpit in flight](ref/cockpit-flight.png)
 
+## Raster schedule of a quiet frame (PAL line numbers, measured in VICE)
+
+Recorded by logging every write to `D011-D021` and `D015` over one frame of the title
+and menu screen (no hit), and checked against a screenshot line by line. Colours that
+look wrong in a screenshot taken at the moment of a hit (the game flashes the border
+and background white) are not part of the normal look.
+
+| line | what is written | result on screen |
+|---|---|---|
+| 56-57 | `D020` = `D021` = 1 (white); `D011` = `$1B`, `D016` = `$08`, `D018` = `$50` | text mode (screen `$5400`, font `$4000`) starts; 1 line of white |
+| 58 | `D020` = `$0E` (light blue), `D021` = `$0B` (dark gray) | the **upper HUD**: light-blue border, dark-gray background, lines 58-74 |
+| 74 | `D020` = `D021` = 1 (white) | a 2-line white band |
+| 75 | `D011` = `$3B`, `D016` = `$18`, `D018` = `$18` | multicolor bitmap starts (`$6000`, matrix `$4400`) |
+| 76 / 77 | `D021` = 0, then `D020` = 0 | black: the 3D view and the cockpit art, lines 77-233 |
+| 78 | `D015` = shadow `$98` (sprites 0, 3, 7 in flight) | crosshair and others on |
+| 194, 228 | bitmap mode written again | no visible change |
+| 230 | `D015` = 0 | sprites off |
+| 233-234 | `D020` = `D021` = `$0B`; `D011` = `$1B`, `D016` = `$05`, `D018` = `$50` | text mode again, **dark-gray band**, 8 lines = exactly one character row |
+| 242 | `D020` = `D021` = 0, `D016` = `$08` | black below the gray band (routine at `$12EB`, waits for line `$F2`) |
+
+The border colour of the upper HUD (`$0E`) is not what is on disk (`$05` in the code at
+`$0CCB`); the game changes the operand at run time. The five-entry table at `$0A42`
+only gives the mode, the next line and the short white flash.
+
 ## Not done yet
 
 - Where the numbers in the squares of `$7D` come from (digits copied from `$64`, per the
