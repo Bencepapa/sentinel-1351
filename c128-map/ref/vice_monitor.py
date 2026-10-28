@@ -2,7 +2,7 @@ import socket, subprocess, time, re, sys
 VICE=r'C:\C64\GTK3VICE-3.7-win64\bin\x64sc.exe'
 PORT=6510
 def launch(media, extra=()):
-    return subprocess.Popen([VICE,'-remotemonitor','-warp','+sound','-autostart',media,*extra])
+    return subprocess.Popen([VICE,'-remotemonitor','-warp','-sound','-sounddev','dummy','-autostart',media,*extra])
 class Mon:
     def __init__(s):
         for _ in range(60):
