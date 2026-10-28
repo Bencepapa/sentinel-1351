@@ -66,6 +66,18 @@ movement pass, the random blink colour of an engaged mothership, and the
 message line. Not checked: the V key itself and the restore of the 80-column screen
 on exit.
 
+## Ship systems on the second display
+
+The right half of the second display shows the ship's eight systems (phasor cannons,
+long and short range scanners, stellar grid, automatic tracking computer, hyperspace
+coordinator, long range scan sequencer, communications module) with OK (green) or
+DOWN (red), plus shields, hits taken and INTACT / LOST. The rules are the original's
+(`SHIP-STATUS.md`): each hit takes one hit point from a random working system and one
+shield point, start values depend on the difficulty. The map program has no combat, so
+**H** makes the ship take a hit and **B** stands in for a base visit and restores
+everything (the original's repair rules are not traced yet). When a system is
+destroyed its original message appears on the message line.
+
 ## Strategic layer (ported from the original rules)
 
 The sector map is not static. `MAP-LOGIC.md` in the repository root describes the

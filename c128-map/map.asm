@@ -43,6 +43,16 @@ VMSGS   = $4360         ; texts (screen codes), from build.py
 VTITLE  = $3F00
 VKEYS1  = $3F28
 VKEYS2  = $3F50
+SYSHP   = $3D40         ; hit points of the eight ship systems (SHIP-STATUS.md)
+VSYSN   = $3E00         ; system names (8 x 28), messages (8 x 40), labels, from build.py
+VSYSM   = $3A80
+VLAB    = $3BC0
+VOKADR  = $3BE4         ; status words OK / DOWN / INTACT / LOST (6 characters each)
+VDNADR  = $3BEA
+VINADR  = $3BF0
+VLSADR  = $3BF6
+VKEYS3  = $3F88
+PANX    = 44            ; left edge of the ship status panel
 VPLN    = $4000         ; planet frames as VDC characters (4 x 9 x 16 bytes)
 VPLCH   = $ED           ; first planet character
 VPLX    = 17            ; text column / row of the planet's 3x3 block
@@ -177,6 +187,30 @@ norep:  LDA TMPK        ; T held: fast ticks, to watch the squadrons move
         LDA #$F7        ; V switches the second display (VDC) on and off
         STA CIA1PA
         LDA CIA1PB
+        STA TMPK
+        AND #$20        ; H: the ship takes a hit
+        BNE hkup
+        LDA HPREV
+        BNE hkdone
+        LDA #1
+        STA HPREV
+        JSR SHIPHIT
+        JMP hkdone
+hkup:   LDA #0
+        STA HPREV
+hkdone: LDA TMPK
+        AND #$10        ; B: repaired at a base
+        BNE bkup
+        LDA BPREV
+        BNE bkdone
+        LDA #1
+        STA BPREV
+        JSR SHIPINIT
+        JSR VDCSHIP
+        JMP bkdone
+bkup:   LDA #0
+        STA BPREV
+bkdone: LDA TMPK
         AND #$80
         BNE vkup
         LDA VPREV
@@ -275,6 +309,7 @@ clearb: STA (PTR),Y
         LDA #1
         STA FIREPREV
         JSR PLINIT
+        JSR SHIPINIT
         LDX #0          ; icon colors live in the color matrix: clear it
 clrmat: LDA #0
         STA SCREEN,X
@@ -373,6 +408,67 @@ vset:   STA POSY
         STA $D404
         STA $D40B
 vret:   RTS
+
+; ---- ship systems (see SHIP-STATUS.md) -------------------------------
+; Eight systems with hit points (original zero page $39-$40, start values by
+; difficulty from $8451). A hit (original $84D7 / $85D9) takes a hit point from
+; a random working system and one shield point. H and B stand in for combat and
+; for a base visit, which the map program does not have.
+SHIPINIT:
+        LDY DIFF
+        LDX #0
+shi1:   LDA HPTAB,Y
+        STA SYSHP,X
+        TYA
+        CLC
+        ADC #5
+        TAY
+        INX
+        CPX #7
+        BNE shi1
+        LDA #$FF        ; the communications module is effectively indestructible
+        STA SYSHP+7
+        LDX DIFF
+        LDA SHTAB,X
+        STA SHLD
+        LDA #0
+        STA HITS
+        STA SHIPDEAD
+        RTS
+
+SHIPHIT:LDA SHIPDEAD
+        BNE shhret
+        LDY #0
+shh1:   JSR RND
+        AND #$07
+        TAX
+        DEY             ; up to 256 tries, then no system is damaged
+        BEQ shhcom
+        LDA SYSHP,X
+        BEQ shh1
+        DEC SYSHP,X
+        BNE shhcom
+        JSR VDCSYSMSG   ; the system is destroyed: X = which
+shhcom: INC HITS
+        DEC SHLD
+        LDA SHLD
+        CMP #$FF
+        BNE shhok
+        LDA #0
+        STA SHLD
+        LDA #1
+        STA SHIPDEAD
+shhok:  JMP VDCSHIP
+shhret: RTS
+
+HPTAB:  .BYTE 255,10,5,5,5
+        .BYTE 255,10,6,4,4
+        .BYTE 4,3,2,2,2
+        .BYTE 6,4,4,4,4
+        .BYTE 3,3,3,3,3
+        .BYTE 4,4,4,4,4
+        .BYTE 2,2,2,2,2
+SHTAB:  .BYTE 40,30,25,25,25
 
 ; ---- the planet (original $1040-$10D5) ---------------------------------
 ; Sprite 1, cyan, centred on the junction in the middle of the grid (sprite
@@ -668,6 +764,16 @@ vgdone: LDA #0
         LDA #56
         STA VLEN
         JSR VTEXT
+        LDA #<VKEYS3
+        STA PTR
+        LDA #>VKEYS3
+        STA PTR+1
+        LDA #21
+        STA VPY
+        LDA #40
+        STA VLEN
+        JSR VTEXT
+        JSR VDCSHIP
         JMP VDCPLACE
 
 ; Called where the VIC side draws an icon: GLY is the glyph (5 = blank), COLC the
@@ -899,6 +1005,216 @@ vpc:    JSR VATADR
         DEC VGY
         BNE vpc
 vpcr:   RTS
+
+; Message of destroyed system X on the message line.
+VDCSYSMSG:
+        LDA VDCON
+        BNE vsm1
+        RTS
+vsm1:   LDA #<VSYSM
+        STA PTR
+        LDA #>VSYSM
+        STA PTR+1
+        TXA
+        BEQ vsm3
+vsm2:   CLC
+        LDA PTR
+        ADC #40
+        STA PTR
+        BCC vsm2a
+        INC PTR+1
+vsm2a:  DEX
+        BNE vsm2
+vsm3:   LDA #3
+        STA VPX
+        LDA #17
+        STA VPY
+        LDA #9          ; light red
+        STA VAT
+        LDA #40
+        STA VLEN
+        JMP VTEXT
+
+; The ship status panel: the eight systems with OK / DOWN, shields, hits.
+VDCSHIP:LDA VDCON
+        BNE vsh1
+        RTS
+vsh1:   LDA #<VLAB
+        STA PTR
+        LDA #>VLAB
+        STA PTR+1
+        LDA #PANX
+        STA VPX
+        LDA #2
+        STA VPY
+        LDA #15
+        STA VAT
+        LDA #12
+        STA VLEN
+        JSR VTEXT
+        LDA #<VSYSN
+        STA VSPL
+        LDA #>VSYSN
+        STA VSPH
+        LDA #0
+        STA VSN
+vsl:    LDX VSN
+        LDA SYSHP,X
+        BEQ vsdown
+        LDA #5          ; working: light green
+        STA VAT
+        LDA #<VOKADR
+        STA VSTL
+        LDA #>VOKADR
+        STA VSTH
+        JMP vsdraw
+vsdown: LDA #9          ; destroyed: light red
+        STA VAT
+        LDA #<VDNADR
+        STA VSTL
+        LDA #>VDNADR
+        STA VSTH
+vsdraw: LDA VSPL
+        STA PTR
+        LDA VSPH
+        STA PTR+1
+        LDA #PANX
+        STA VPX
+        LDA VSN
+        CLC
+        ADC #4
+        STA VPY
+        LDA #28
+        STA VLEN
+        JSR VTEXT
+        LDA VSTL
+        STA PTR
+        LDA VSTH
+        STA PTR+1
+        LDA #PANX+29
+        STA VPX
+        LDA #6
+        STA VLEN
+        JSR VTEXT
+        CLC
+        LDA VSPL
+        ADC #28
+        STA VSPL
+        BCC vsnc
+        INC VSPH
+vsnc:   INC VSN
+        LDA VSN
+        CMP #8
+        BEQ vsdone
+        JMP vsl
+vsdone: LDA #14         ; shields
+        STA VAT
+        LDA #<VLAB+12
+        STA PTR
+        LDA #>VLAB+12
+        STA PTR+1
+        LDA #PANX
+        STA VPX
+        LDA #13
+        STA VPY
+        LDA #12
+        STA VLEN
+        JSR VTEXT
+        LDA #PANX+13
+        STA VPX
+        LDA #15
+        STA VAT
+        LDA SHLD
+        JSR VNUM
+        LDA #14         ; hits taken
+        STA VAT
+        LDA #<VLAB+24
+        STA PTR
+        LDA #>VLAB+24
+        STA PTR+1
+        LDA #PANX
+        STA VPX
+        LDA #14
+        STA VPY
+        LDA #12
+        STA VLEN
+        JSR VTEXT
+        LDA #PANX+13
+        STA VPX
+        LDA #15
+        STA VAT
+        LDA HITS
+        JSR VNUM
+        LDA SHIPDEAD    ; ship status
+        BNE vslost
+        LDA #5
+        STA VAT
+        LDA #<VINADR
+        STA PTR
+        LDA #>VINADR
+        STA PTR+1
+        JMP vsfin
+vslost: LDA #9
+        STA VAT
+        LDA #<VLSADR
+        STA PTR
+        LDA #>VLSADR
+        STA PTR+1
+vsfin:  LDA #PANX
+        STA VPX
+        LDA #15
+        STA VPY
+        LDA #6
+        STA VLEN
+        JMP VTEXT
+
+; Print A (0-255) as up to three digits at VPX/VPY in colour VAT, no leading zeros.
+VNUM:   STA VN
+        LDX #0
+vnh:    LDA VN
+        CMP #100
+        BCC vnh2
+        SEC
+        SBC #100
+        STA VN
+        INX
+        BNE vnh
+vnh2:   STX VD0
+        LDX #0
+vnt:    LDA VN
+        CMP #10
+        BCC vnt2
+        SEC
+        SBC #10
+        STA VN
+        INX
+        BNE vnt
+vnt2:   STX VD1
+        LDA VD0
+        BEQ vnb1
+        CLC
+        ADC #$30
+        JMP vnp1
+vnb1:   LDA #$20
+vnp1:   STA VPC
+        JSR VPUT
+        INC VPX
+        LDA VD0
+        ORA VD1
+        BEQ vnb2
+        LDA VD1
+        CLC
+        ADC #$30
+        JMP vnp2
+vnb2:   LDA #$20
+vnp2:   STA VPC
+        JSR VPUT
+        INC VPX
+        LDA VN
+        CLC
+        ADC #$30
+        STA VPC
+        JMP VPUT
 
 ; Leave the second screen as we found it (blank, default colour).
 VDCEXIT:LDA VDCUSED
@@ -2153,6 +2469,19 @@ VDCON:  .BYTE 1         ; second display on by default
 VPREV:  .BYTE 1
 VDCUSED:.BYTE 0
 VDEF:   .BYTE 14
+SHLD:   .BYTE 0
+HITS:   .BYTE 0
+SHIPDEAD:.BYTE 0
+HPREV:  .BYTE 1
+BPREV:  .BYTE 1
+VN:     .BYTE 0
+VD0:    .BYTE 0
+VD1:    .BYTE 0
+VSN:    .BYTE 0
+VSPL:   .BYTE 0
+VSPH:   .BYTE 0
+VSTL:   .BYTE 0
+VSTH:   .BYTE 0
 VPLC:   .BYTE 0
 VLEN:   .BYTE 0
 LASTSHOWN:.BYTE 0

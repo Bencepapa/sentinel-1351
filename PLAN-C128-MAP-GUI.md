@@ -213,7 +213,7 @@ the grid effect looks as expected (sound not explicitly confirmed).
 
 ## Ideas for later
 
-- **Ship status on the second display** (from the user): the VDC text screen has room
+- **Ship status on the second display** (from the user, now started on the branch `c128-ship-status`, see `SHIP-STATUS.md`; what is below is the original idea): the VDC text screen has room
   next to the map for the ship's systems. The ship has about ten subsystems that
   can be damaged, so the panel would list each one and mark which are down
   (colour or blink per system, like the map's attack rings). Not looked at yet:

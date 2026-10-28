@@ -95,3 +95,38 @@ def planetchars(sprite_frames):
                 out += bytes(8)
     assert len(out) == 576
     return bytes(out)
+
+
+# Ship systems (see SHIP-STATUS.md): names from $9245, messages from $8301-$83FC
+# (the game writes "@" for a space).
+SYSTEMS = [
+    'PHASOR CANNONS',
+    'LONG RANGE SCANNER',
+    'SHORT RANGE SCANNER',
+    'STELLAR GRID',
+    'AUTOMATIC TRACKING COMPUTER',
+    'HYPERSPACE COORDINATOR',
+    'LONG RANGE SCAN SEQUENCER',
+    'COMMUNICATIONS MODULE',
+]
+SYSMSGS = [
+    'PHASORS DESTROYED CAPTAIN',
+    'LONG RANGE SCANNER DESTROYED',
+    'SHORT RANGE SCANNER DESTROYED',
+    'STELLER GRID UPDATE DESTROYED',
+    'AUTOMATIC TRACKING COMPUTER DESTROYED',
+    'HYPERSPACE COORDINATOR DESTROYED',
+    'LONG RANGE SCAN SEQUENCER DESTROYED',
+    'COMMUNICATIONS MODULE DESTROYED',
+]
+KEYS3 = 'H: TAKE A HIT   B: REPAIR AT BASE'
+
+
+def shipdata():
+    """(address, bytes) pairs: system names (28 each), messages (40 each), labels, key line."""
+    names = b''.join(screencodes(s, 28) for s in SYSTEMS)
+    msgs = b''.join(screencodes(s, 40) for s in SYSMSGS)
+    labels = (screencodes('SHIP SYSTEMS', 12) + screencodes('SHIELDS', 12) +
+              screencodes('HITS TAKEN', 12) + screencodes('OK', 6) + screencodes('DOWN', 6) +
+              screencodes('INTACT', 6) + screencodes('LOST', 6))
+    return [(0x3E00, names), (0x3A80, msgs), (0x3BC0, labels), (0x3F88, screencodes(KEYS3))]

@@ -7,7 +7,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, '..', 'mouse', 'tools'))
 from asm import asm
 sys.path.insert(0, HERE)
-from vdcdata import chardata, rowtables, textdata, planetchars, VCOL
+from vdcdata import chardata, rowtables, textdata, shipdata, planetchars, VCOL
 
 LOAD = 0x1C01
 ENTRY = 0x1D00
@@ -62,7 +62,7 @@ def main():
         sprites = f.read()
     put(body, 0x4E40, sprites)          # planet sprite frames, pointers $39-$3C
     put(body, 0x4000, planetchars(sprites))   # the same frames as VDC characters
-    for address, data in textdata():
+    for address, data in textdata() + shipdata():
         put(body, address, data)
 
     with open(OUT, 'wb') as f:
