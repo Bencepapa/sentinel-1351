@@ -159,6 +159,7 @@ norep:  LDA TMPK        ; T held: fast ticks, to watch the squadrons move
         STA CIA1PA
         JSR CURSOR
         JSR TICKER
+        JSR BLINK
         JMP frame
 
 EXIT:   LDA #0
@@ -662,6 +663,12 @@ genclr: STA STATE,X
 genflg: STA FLG,X
         DEX
         BPL genflg
+        LDX #4
+gener:  STA ENGC,X
+        STA DEAD,X
+        DEX
+        BPL gener
+        STA LASTMSG
         LDY #3
 gencor: LDX INNER,Y
         LDA #0
@@ -922,8 +929,163 @@ tknorm: LDA TICKFR
         JMP TICK
 tkret:  RTS
 
+; Original $3E7E: attack rings. A blue mothership (groups 0-3) or the planet
+; (group 4, the 2x2 block in the middle) is engaged when all four of its listed
+; sectors are occupied. Mothership: 120 ticks later it is destroyed. Planet:
+; 255 ticks later it ceases to exist (DEAD+4 = game over). A broken ring resets
+; the counter. LASTMSG records the message the game would print (1 engaged,
+; 2 destroyed, 3 surrounded, 4 ceases to exist).
+SURROUND:
+        LDA #0
+        STA GI
+sgl:    LDA GI
+        ASL A
+        ASL A
+        TAX
+        LDA #0
+        STA OCC
+        LDA #4
+        STA GK
+sgc:    LDY GRP,X
+        LDA STATE,Y
+        ORA COUNT,Y
+        BEQ sgn
+        INC OCC
+sgn:    INX
+        DEC GK
+        BNE sgc
+        LDX GI
+        LDA OCC
+        CMP #4
+        BCS sfull
+        LDA #0
+        STA ENGC,X
+        JMP snext
+sfull:  LDA DEAD,X
+        BNE snext
+        LDA ENGC,X
+        BNE scount
+        CPX #4
+        BEQ splan
+        LDA #120
+        STA ENGC,X
+        LDA #1
+        STA LASTMSG
+        JMP scount
+splan:  LDA #$FF
+        STA ENGC,X
+        LDA #3
+        STA LASTMSG
+scount: DEC ENGC,X
+        BNE snext
+        LDA #1
+        STA DEAD,X
+        CPX #4
+        BEQ sdead
+        LDY INNER,X     ; the mothership's sector is emptied
+        LDA #0
+        STA STATE,Y
+        STA COUNT,Y
+        LDA #1
+        STA DIRTY,Y
+        LDA #2
+        STA LASTMSG
+        JMP snext
+sdead:  LDA #4
+        STA LASTMSG
+snext:  INC GI
+        LDA GI
+        CMP #5
+        BEQ sgdone
+        JMP sgl
+sgdone: RTS
+
+; Original $3F72: every frame an engaged blue mothership shows a random colour,
+; otherwise blue ($06). Only the color matrix of its icon changes.
+BLINK:  LDA ICONDONE
+        BEQ blret
+        LDX #3
+bll:    LDA DEAD,X
+        BNE blnx
+        LDA ENGC,X
+        BEQ blcol
+        JSR RND
+        JMP blset
+blcol:  LDA #$06
+blset:  STA COLC
+        STX BLX
+        LDA INNER,X
+        JSR MATSET
+        LDX BLX
+blnx:   DEX
+        BPL bll
+        LDA ENGC4       ; the planet (sprite 1): cyan, cycling while surrounded
+        BNE plblink
+        LDA #3
+        STA $D028
+        RTS
+plblink:INC $D028
+blret:  RTS
+
+; Set the color matrix of sector A's two icon cells to COLC (original $233C).
+MATSET: LDX #0
+msdiv:  CMP #10
+        BCC msdone
+        SBC #10
+        INX
+        BNE msdiv
+msdone: STA COL
+        STX ROW
+        LDX ROW
+        LDA CELLY,X
+        STA OFFL
+        LDA #0
+        STA OFFH
+        ASL OFFL
+        ROL OFFH
+        ASL OFFL
+        ROL OFFH
+        ASL OFFL
+        ROL OFFH
+        LDA OFFL
+        STA TL
+        LDA OFFH
+        STA TH
+        ASL OFFL
+        ROL OFFH
+        ASL OFFL
+        ROL OFFH
+        CLC
+        LDA OFFL
+        ADC TL
+        STA OFFL
+        LDA OFFH
+        ADC TH
+        STA OFFH
+        LDX COL
+        CLC
+        LDA OFFL
+        ADC CELLX,X
+        STA OFFL
+        BCC msnc
+        INC OFFH
+msnc:   CLC
+        LDA OFFL
+        ADC #<SCREEN
+        STA MP
+        LDA OFFH
+        ADC #>SCREEN
+        STA MP+1
+        LDY #0
+        LDA COLC
+        STA (MP),Y
+        INY
+        STA (MP),Y
+        RTS
+
 ; Original $BE29-$BE4B.
-TICK:   DEC TICKC
+TICK:   JSR SURROUND
+        DEC TICKC
         JSR MOTHER
         LDA TICKC
         AND #$0F
@@ -1292,6 +1454,17 @@ CORN:   .BYTE 0,9,50,59
 INNER:  .BYTE 12,17,42,47
 ; Squadrons per difficulty ($8422), tick masks ($9F95), cells beside the corners
 ; ($9F91) and the movement tables ($BF08, $BF12, $BF30, $BF3A).
+; Attack rings ($3E60): the four sides of each blue mothership, then the
+; 2x2 block in the middle of the map (the planet).
+GRP:    .BYTE 2,11,13,22,7,16,18,27,32,41,43,52,37,46,48,57,24,25,34,35
+ENGC:   .BYTE 0,0,0,0
+ENGC4:  .BYTE 0         ; the planet's counter
+DEAD:   .BYTE 0,0,0,0,0
+LASTMSG:.BYTE 0
+GI:     .BYTE 0
+GK:     .BYTE 0
+OCC:    .BYTE 0
+BLX:    .BYTE 0
 SQN:    .BYTE 10,15,24,31,44
 MASKS:  .BYTE $FF,$FF,$7F,$7F,$3F
 ADJ:    .BYTE 1,8,51,58

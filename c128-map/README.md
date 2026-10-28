@@ -52,6 +52,13 @@ frames (about 5 s). The C128 port reimplements them: `TICK`, `MOTHER`,
 layout follows `$20F1` / `$225D` (difficulty 2 by default: 24 squadrons). Only
 changed cells are redrawn.
 
+Blue (friendly) motherships and the planet are attacked when all four sides are
+occupied: the mothership's icon then flashes a random colour every frame and is
+destroyed 120 ticks later; the planet flashes too and is lost after 255 ticks
+(`SURROUND` / `BLINK`, original `$3E7E` / `$3F72`). A broken ring resets the
+counter. The messages the game prints at these moments are recorded in `LASTMSG`
+but not drawn yet.
+
 Squadrons move slowly in the original (a type 1 squadron about every 80 s), so
 hold **T** to run ticks every 4th frame and watch them.
 

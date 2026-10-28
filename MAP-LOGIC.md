@@ -46,6 +46,7 @@ XOR SID voice 3 oscillator `$D41B`.
 space loops (every 256 frames, about 5.1 s PAL), and every 128 frames in one
 loop (`$B660`). Each tick:
 
+0. `$3E7E` checks the attack rings around the blue motherships and the planet (below).
 1. `$BDAF` (starts at 30) is decremented.
 2. `$9F9A` runs the mothership events (see below).
 3. When `$BDAF & $0F == 0` (every 16 ticks) all squadrons move once (`$BE4C`).
@@ -89,6 +90,47 @@ counter depends on the level (`$9F95`: `$FF,$FF,$7F,$7F,$3F`).
   returns as `$80`/1; a corner that still has its mothership leaves (flag set,
   cell emptied).
 
+## Motherships under attack, and the planet (`$3E7E`, `$3F72`)
+
+(Thanks to the user for the hint that it is the four sides that count.)
+
+At the start of every tick `$3E7E` checks five groups of four sectors
+(table `$3E60`):
+
+| group | sectors (index) | what it surrounds |
+|---|---|---|
+| 0 | 2, 11, 13, 22 | blue mothership at 12 (up, left, right, down) |
+| 1 | 7, 16, 18, 27 | blue mothership at 17 |
+| 2 | 32, 41, 43, 52 | blue mothership at 42 |
+| 3 | 37, 46, 48, 57 | blue mothership at 47 |
+| 4 | 24, 25, 34, 35 | the 2x2 block in the middle of the map: **the planet JARALOBA** |
+
+A cell counts as occupied when its state or count is non-zero (any squadron or
+mothership). Diagonals do not matter. For each group (`$95` = occupied cells):
+
+- fewer than 4 occupied: the attack counter `$3E74+group` is reset to 0;
+- all 4 occupied and the mothership is not destroyed yet (`$3E79+group` = 0):
+  - blue mothership: the first time the message **MOTHERSHIP ENGAGED IN BATTLE**
+    is shown and the counter is set to 120; it counts down once per tick. At 0
+    the message **MOTHERSHIP DESTROYED** appears, the mothership's cell is
+    emptied (`$033C` and `$0378`), its destroyed flag is set and `$CFA7` runs
+    (not yet understood);
+  - planet (group 4): the message **JARALOBA IS SURROUNDED** starts a counter of
+    255; at 0 **JARALOBA CEASES TO EXIST** sets the game-over flags
+    (`$DD`, `$3E7D`, `$F431`).
+
+So the defenders get about 120 ticks (10 minutes with the 5 s map tick, 5 minutes
+with the 2.6 s tick of the flight loop) to break up the ring around a blue
+mothership, and 255 ticks for the planet. If the ring is broken in time the
+counter is simply reset.
+
+The blinking is `$3F72`, run every frame while the map is shown: each blue mothership
+that is not destroyed gets its icon colour from the counter. Counter 0: colour
+`$06` (blue). Counter non-zero: a **random colour every frame**. The same routine
+colours **sprite 1** (`$D028`): cyan (`$03`) normally, and incrementing every frame
+while the planet is surrounded. So the planet is a sprite, and it flashes like the
+motherships when it is surrounded.
+
 ## Verification
 
 The C128 port in `c128-map/` reimplements these rules. They were compared with
@@ -102,14 +144,20 @@ the original game's own routines running in VICE (same input, same result):
   multiple of 16, so they always coincide): identical maps; only the random sizes
   of the new squadrons differ.
 - Corner toggling: both obey the rules in every trial (random outcomes differ).
+- Attack rings (`$3E7E`): fresh rings, rings about to expire, a broken ring and an
+  already destroyed mothership give identical sector maps, counters and flags in
+  the original and the port. The planet-colour code (`INC $D028` every frame
+  while surrounded, cyan otherwise) was confirmed to run in the port; the planet
+  sprite itself is not drawn yet.
 - Start layout: 24 squadrons at difficulty 2, 4 blue and 4 orange motherships,
   sizes 3-9, the start sector empty.
 
 ## Not yet understood
 
-- What `$3E7E` and `$C8D4` do inside the tick.
+- `$C8D4` looks like an encounter countdown: while a squadron sits in the player's
+  sector it counts `$C8D3` down from 15 ticks and then sets `$E3`; not yet confirmed in play.
 - Combat in the sector: `$3CD9` decrements the count when the player destroys a
   squadron, `$3F4A` clears a sector, `$CFE6` turns a type-2 squadron into
   type 3 with half the count (`$CFC8` loop).
-- The blinking of a mothership when it is surrounded (probably `$2B14`).
-- The animated planet in the player's sector.
+- What `$CFA7` does when a mothership is destroyed.
+- The planet sprite itself (its shape frames and how it rotates).
