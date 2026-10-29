@@ -7,7 +7,9 @@
 ; The 3D view is a star field. The crosshair (sprite 0, shape $7D) follows the
 ; 1351 mouse or the joystick in port 2 with the logic of the original mouse patch;
 ; the two guns (sprites 0 and 3, shapes $7E / $7F, shown below the 3D view) follow it
-; with the original's gun routine ($9568).
+; with the original's gun routine ($9568). Fire launches the phasor shot (sprite 1,
+; shapes $70 down to $67) from a gun to the crosshair, as the original does
+; ($1424, $1467, $1526, the line routine $3580; see "the phasor shot" below).
 ;
 ; Data placed by build.py: COLORDATA, the tables, the character set ($4000), the color
 ; matrix ($4400), the text screen ($4800), the sprite shapes ($4C00) and the cockpit
@@ -33,6 +35,9 @@ YHI     = $2E00
 XLO     = $2F00
 XHI     = $2F28
 COLORDATA = $3000
+PATHX   = $3400         ; phasor shot path, x / 2 (original $0400)
+PATHY   = $3500         ; and y (original $0500)
+HUDE    = $483E         ; the four energy digits of the HUD (original $543E)
 PTR     = $FB
 NSTARS  = 12
 DDLY    = $40           ; frames of calm before the crosshair glides back
@@ -107,6 +112,8 @@ set2:   DEY
         EOR #$FF
         STA OLDY
 
+        LDA #$0F        ; SID volume for the phasor sound
+        STA $D418
         LDA #$80        ; the star field
         STA SEED
         LDX #NSTARS-1
@@ -159,6 +166,11 @@ frame:  LDA $D012       ; still in the border of the old frame (lines 251-255)? 
         LDA #78
         JSR WAITLN
         JSR SPRCROSS    ; the crosshair
+        JSR FIREPH      ; the phasors, while the 3D view is drawn (the original runs
+        LDA SHOTARM     ; $1424 in its interrupt and launches from its main loop,
+        BEQ nolaunch    ; $2DFC; here the time until line 194 is free)
+        JSR LAUNCH
+nolaunch:
         LDA #194
         JSR WAITLN
         JSR SPRGUNS     ; sprites 0 and 3 become the two guns
@@ -213,6 +225,8 @@ wl1:    LDA $D012
 
 EXIT:   LDA #0
         STA VICENA
+        STA $D404
+        STA $D418
         LDA SAV11
         STA $D011
         LDA SAV16
@@ -262,20 +276,33 @@ sc1:    STA SPRPTR
         LDA XPOS
         STA $D000
         LDA $D010
-        AND #$FE
+        AND #$FC
         ORA XMSB
-        STA $D010
+        LDX SHOTXH      ; sprite 1: the phasor shot
+        BEQ sc2
+        ORA #$02
+sc2:    STA $D010
         LDA CURY
         STA $D001
         LDA #1
         STA $D027
-        LDA #1
+        LDA SHOTSHP     ; shapes $67-$70 of the original are $36-$3F here
+        SEC
+        SBC #$31
+        STA SPRPTR+1
+        LDA SHOTX
+        STA $D002
+        LDA SHOTY
+        STA $D003
+        LDA SHOTVIS
+        ASL A
+        ORA #1
         STA VICENA
         RTS
 
 ; Below the 3D view the same two slots show the gun shapes (original $120B-$126F):
 ; sprite 0 = left gun $7E, sprite 3 = right gun $7F, both twice as wide, behind the
-; bitmap, gray, and one of them red while firing.
+; bitmap, gray; while a shot is in flight the gun it came from is red ($1241).
 SPRGUNS:LDA $D01B       ; both guns behind the bitmap (the bases stand in front of them)
         ORA #$09
         STA $D01B
@@ -297,9 +324,10 @@ SPRGUNS:LDA $D01B       ; both guns behind the bitmap (the bases stand in front 
         STA SPRPTR+3
         LDA #$0C
         LDX #$0C
-        LDY FIRING
+        LDY SHOTON
         BEQ sg3
-        LDY FLIP
+        LDY SHOTGUN     ; 1: the left gun fired
+        CPY #$01
         BNE sg2
         LDA #2
         JMP sg3
@@ -309,7 +337,9 @@ sg3:    STA $D027
         LDA $D01D
         ORA #$09
         STA $D01D
-        LDA #$09
+        LDA SHOTVIS
+        ASL A
+        ORA #$09
         STA VICENA
         RTS
 
@@ -558,19 +588,11 @@ ijoy:   LDA JRAW
 icur:   LDA DS          ; the guns lean with the crosshair's offset from the center
         AND DS2
         STA JOYG
-        LDA JOY         ; fire flag for the guns
+        LDA JOY         ; fire held (original $D0)
         AND #$10
         EOR #$10
-        STA FIRING
-        BEQ ifx
-        INC FCNT2
-        LDA FCNT2
-        AND #$03
-        BNE ifx
-        LDA FLIP
-        EOR #1
-        STA FLIP
-ifx:    JSR CURSOR
+        STA FIREHELD
+        JSR CURSOR
         LDA CURX        ; crosshair sprite position
         CLC
         ADC #$2D
@@ -812,6 +834,363 @@ rs5:    BEQ rsend
         DEC G2Y
 rsend:  RTS
 
+; ---------------- the phasor shot ----------------
+; Ported from the original, routine for routine (C64 addresses in brackets).
+; Holding fire arms a shot (FIREPH); the next pass launches it (LAUNCH): the line
+; routine stores the path from a gun to the crosshair, and while fire is held the
+; shot sprite walks along it, a step every few of 48 sub-ticks per frame, with the
+; steps further apart each time (it slows down as it recedes) and a smaller shape
+; every third step. Releasing fire stops the shot where it is, as in the original.
+; js/test/run.js calls these routines and the original ones inside the C64 game
+; with the same crosshair, guns and fire timing and compares the path and the
+; shot sprite frame by frame.
+
+FIREPH:                 ; per frame ($1424). The original first stops here when the
+        LDA FIREHELD    ; phasor cannons are destroyed ($39), a torpedo flies, the map
+        BEQ phret       ; is shown or ($E3); none of those exist in this program yet.
+        LDA SHOTON
+        BEQ pharm
+        JMP phfly
+pharm:  LDA SHOTARM
+        BNE phret
+        LDA #$01
+        STA SHOTARM
+        JSR CHARGESND
+phret:  RTS
+phfly:  JSR SWEEPSND
+        JSR LINEGEN     ; the next part of the path (port only, see LINE)
+        LDA #$30
+        STA SUBN
+phsub:  JSR SHOTSTEP
+        DEC SUBN
+        BNE phsub
+        RTS
+
+LAUNCH: INC SHOTS       ; ($1467) shots fired, for the rating
+        BNE la1
+        INC SHOTS+1
+la1:    LDA #$07        ; sprite 1: yellow, multicolor 6 / 2
+        STA $D028
+        LDA #$06
+        STA $D025
+        LDA #$02
+        STA $D026
+        LDA $D01C
+        ORA #$02
+        STA $D01C
+        LDA $D017       ; (not expanded, in front of the bitmap)
+        AND #$FD
+        STA $D017
+        LDA $D01D
+        AND #$FD
+        STA $D01D
+        LDA $D01B
+        AND #$FD
+        STA $D01B
+        LDA #$01
+        STA SHIDX
+        STA SHOTY
+        LDA GUNSEL      ; the aim point moves 2 pixels every other shot
+        EOR #$02
+        STA GUNSEL
+        LDA CURX
+        LSR A
+        CLC
+        ADC #$18
+        SEC
+        SBC GUNSEL
+        STA L4E
+        LDA CURY
+        CLC
+        ADC #$02
+        STA L4F
+        LDA L4E         ; crosshair right of the middle: the left gun fires
+        CMP #$56
+        BCC la2
+        LDX #$01
+        LDA G1X
+        LDY G1Y
+        LSR A
+        CLC
+        ADC #$0A
+        JMP la3
+la2:    LDX #$FF
+        LDA G2X
+        LDY G2Y
+        LSR A
+        CLC
+        ADC #$81
+la3:    STA L36
+        STY L37
+        STX SHOTGUN
+        JSR LINE        ; NPTS is known at once; the first points are made here
+        JSR LINEGEN
+        LDA NPTS        ; the step rate grows with the length of the path
+        ASL A
+        STA RATE
+        LDA #$03
+        STA SHPRATE
+        STA SHPCNT
+        LDA #$04
+        STA STEPLEN
+        STA STEPCNT
+        LDA #$70        ; the biggest shape
+        STA SHOTSHP
+        STA SHOTON
+        LDA #$00
+        STA SHOTARM
+        LDA #$01
+        STA SHOTVIS
+        JSR SWEEPSND
+        JMP ENERGY10    ; a shot costs 10 energy ($F8B2)
+
+SHOTSTEP:               ; one sub-tick ($1526)
+        DEC STEPCNT
+        BEQ ss1
+        RTS
+ss1:    LDA #$13        ; the original reads its colour as LDX $1520 / LDA $1520,X,
+        STA $D028       ; which lands on $1527, a byte of its own code ($13): cyan
+        CLC
+        LDA STEPLEN
+        ADC #$01
+        STA STEPLEN
+        STA STEPCNT
+        DEC SHPCNT
+        BNE ss2
+        LDA SHPRATE
+        STA SHPCNT
+        LDA SHOTSHP
+        CMP #$67        ; the smallest shape
+        BEQ ss2
+        DEC SHOTSHP
+ss2:    LDY SHIDX
+        LDA PATHX,Y     ; x / 2: bit 7 is the sprite's x bit 8
+        PHA
+        BPL ss3
+        LDA #$01
+        BNE ss4
+ss3:    LDA #$00
+ss4:    STA SHOTXH
+        PLA
+        ASL A
+        STA SHOTX
+        LDA PATHY,Y
+        STA SHOTY
+        INY
+        CLC
+        LDA FRAC        ; 1 point per step, 2 more when the fraction overflows
+        ADC RATE
+        STA FRAC
+        BCC ss5
+        INY
+        INY
+ss5:    CPY NPTS
+        BCC ss7
+        LDA #$00        ; the end of the path: the shot is gone
+        STA SHOTON
+        STA HITWIN
+        STA FIREHELD
+        STA SHOTY
+        STA SHOTVIS
+        STA $D404
+        STA $D406
+        STA $D405
+        LDA #$01
+        STA $D404
+        LDY #$00        ; the original loads Y from its sound flag $F8 here (LDY $F8),
+ss7:    STY SHIDX       ; so the position it stores is that flag: 0 with no other sound
+        LDA NPTS        ; the last 10 points: the hit test window ($3370, $1616)
+        SEC
+        SBC SHIDX
+        CMP #$0A
+        BCS ss8
+        STA HITWIN
+ss8:    RTS
+
+CHARGESND:              ; ($15C7) voice 1 starts
+        LDA #$00
+        STA SF1
+        STA SF2
+        STA SF3
+        STA $D404
+        STA $D406
+        LDA #$0B
+        STA $D405
+        LDA #$41
+        STA $D404
+        RTS
+
+SWEEPSND:               ; ($15E0) voice 1 frequency and pulse sweep down
+        LDA SHOTON
+        ORA SHOTARM
+        BNE sw0
+        RTS
+sw0:    LDY #$03
+sw1:    LDA SF3
+        SBC #$0D
+        STA SF3
+        STA $D403
+        LDA SF1
+        SBC #$3A
+        STA SF1
+        STA $D400
+        BCS sw2
+        LDA SF2
+        SBC #$08
+        STA SF2
+        STA $D401
+sw2:    DEY
+        BNE sw1
+        RTS
+
+ENERGY10:               ; ($F8B2) the energy digits -10; at 0000 the original prints
+        LDY HUDE+2      ; OUT OF ENERGY ($F8E0), here they just stay at 0000
+        DEY
+        CPY #$6F
+        BEQ en1
+        STY HUDE+2
+        RTS
+en1:    LDY #$79
+        STY HUDE+2
+        LDY HUDE+1
+        DEY
+        CPY #$6F
+        BEQ en2
+        STY HUDE+1
+        RTS
+en2:    LDY #$79
+        STY HUDE+1
+        LDY HUDE
+        DEY
+        CPY #$6F
+        BEQ en3
+        STY HUDE
+        RTS
+en3:    LDY #$70
+        STY HUDE
+        STY HUDE+1
+        STY HUDE+2
+        STY HUDE+3
+        RTS
+
+; The original's line routine ($3580) in its "store the points" mode: from
+; (L36, L37) to (L4E, L4F), points into PATHX / PATHY. Same points, same order, but
+; made in parts: the original makes the whole path at once (up to about 125 points,
+; a full frame of processor time, which its main loop can afford); here LINE sets
+; the line up and counts the points (the major delta + 1), and LINEGEN makes 24 more
+; per call. The shot uses at most 18 points in its first frame and 12 later, so the
+; path is always ready before the shot gets there.
+LINE:   LDY #$01
+        STY L59
+        STY L5A
+        DEY
+        STY L52
+        STY L53
+        STY L51
+        STY NGEN
+        DEY
+        LDX #$01
+lnab:   LDA L4E,X       ; |delta| per axis, the step sign in L59 / L5A
+        CMP L36,X
+        BCS lnpos
+        SEC
+        LDA L36,X
+        SBC L4E,X
+        STA L4E,X
+        PHA             ; (the original's STY $59,X has no absolute form)
+        TYA
+        STA L59,X
+        PLA
+        JMP lnnext
+lnpos:  SBC L36,X
+        STA L4E,X
+lnnext: DEX
+        BEQ lnab
+        CMP L4F         ; y the major axis: swap
+        BCS lnmaj
+        LDX L4E
+        LDA L4F
+        STA L4E
+        STX L4F
+        INY
+        LDA L59
+        STA L52
+        LDA L5A
+        STA L53
+        STY L59
+        STY L5A
+lnmaj:  LDY #$01
+        STY LGY
+        LDA L4E
+        LSR A
+        STA L50
+        LDA L4E         ; the points: one per step of the major axis, both ends
+        CLC
+        ADC #$01
+        STA NPTS
+        RTS
+
+LINEGEN:LDA NGEN
+        CMP NPTS
+        BCC lgmake
+        RTS             ; all made
+lgmake: LDA #24
+        STA LGN
+        LDY LGY
+        LDA NGEN
+        BEQ lnplot      ; the first point comes before any step
+lnstep: CLC
+        LDA L36
+        ADC L59
+        STA L36
+        CLC
+        LDA L37
+        ADC L53
+        STA L37
+        CLC
+        LDA L50
+        ADC L4F
+        STA L50
+        LDA L51
+        ADC #$00
+        STA L51
+        INY
+        LDA L51
+        BNE lnsub
+        LDA L50
+        CMP L4E
+        BCC lnplot
+        BEQ lnplot
+lnsub:  SEC
+        LDA L50
+        SBC L4E
+        STA L50
+        LDA L51
+        SBC #$00
+        STA L51
+        CLC
+        LDA L36
+        ADC L52
+        STA L36
+        CLC
+        LDA L37
+        ADC L5A
+        STA L37
+lnplot: LDX NGEN
+        LDA L36
+        STA PATHX,X
+        LDA L37
+        STA PATHY,X
+        INC NGEN
+        DEC LGN
+        BEQ lgpause
+        CPY L4E
+        BCC lnmore
+        BEQ lnmore
+lgpause:STY LGY
+        RTS
+lnmore: JMP lnstep      ; (the loop is too long for a branch back)
+
 ; ---------------- data ----------------
 CLEARM: .BYTE $3F,$CF,$F3,$FC
 MASK3:  .BYTE $C0,$30,$0C,$03
@@ -847,10 +1226,7 @@ OLDY:   .BYTE 0
 OLDV:   .BYTE 0
 CD:     .BYTE 0
 DTIMER: .BYTE DDLY
-FIRING: .BYTE 0
-FLIP:   .BYTE 0
 FCNT:   .BYTE 0
-FCNT2:  .BYTE 0
 TRACK:  .BYTE 0
 TRFRAME:.BYTE $31
 TPREV:  .BYTE 1
@@ -887,3 +1263,41 @@ SAVBG:  .BYTE 0
 SAVFAST:.BYTE 0
 SAV1B:  .BYTE 0
 SAV1D:  .BYTE 0
+; the phasor shot (original addresses in brackets)
+FIREHELD:.BYTE 0        ; fire button held ($D0)
+SHOTARM:.BYTE 0         ; armed, launch on the next pass ($D1)
+SHOTON: .BYTE 0         ; a shot is in flight ($D2)
+SHOTVIS:.BYTE 0         ; sprite 1 on ($98 bit 1)
+SHOTSHP:.BYTE $70       ; shape, original numbering $70-$67 ($B1)
+SHOTX:  .BYTE 0         ; sprite 1 x, low 8 bits ($E9)
+SHOTXH: .BYTE 0         ; x bit 8 ($F7 bit 1)
+SHOTY:  .BYTE 0         ; ($EA)
+SHIDX:  .BYTE 0         ; position on the path ($1416)
+NPTS:   .BYTE 0         ; points on the path ($1415)
+NGEN:   .BYTE 0         ; points made so far (port only)
+LGY:    .BYTE 0         ; line step counter between LINEGEN calls (port only)
+LGN:    .BYTE 0
+RATE:   .BYTE 0         ; ($141C)
+FRAC:   .BYTE 0         ; ($141B, never reset)
+SHPRATE:.BYTE 3         ; ($1412)
+SHPCNT: .BYTE 3         ; ($1411)
+STEPLEN:.BYTE 4         ; ($1414)
+STEPCNT:.BYTE 4         ; ($1413)
+SUBN:   .BYTE 0         ; ($1419)
+GUNSEL: .BYTE 2         ; ($1417)
+SHOTGUN:.BYTE 0         ; 1 = left gun, $FF = right ($1418)
+HITWIN: .BYTE 0         ; points left when under 10 ($3370 / $1616)
+SHOTS:  .BYTE 0,0       ; ($F43B)
+SF1:    .BYTE 0         ; sound ($81-$83)
+SF2:    .BYTE 0
+SF3:    .BYTE 0
+L36:    .BYTE 0         ; line routine ($36-$5A), pairs must stay together
+L37:    .BYTE 0
+L4E:    .BYTE 0
+L4F:    .BYTE 0
+L50:    .BYTE 0
+L51:    .BYTE 0
+L52:    .BYTE 0
+L53:    .BYTE 0
+L59:    .BYTE 0
+L5A:    .BYTE 0

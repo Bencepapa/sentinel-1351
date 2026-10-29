@@ -14,6 +14,7 @@ def num(t,sym,p2):
     elif not p2: v=0xFFFF
     else: raise KeyError(base)
     if off: v+=int(off)
+    if not p2: v&=0xFFFF        # pass 1: an unknown label is $FFFF; LABEL+n must not overflow
     if pre=='<': v&=255
     if pre=='>': v=(v>>8)&255
     return v

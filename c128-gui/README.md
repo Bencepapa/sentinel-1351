@@ -175,7 +175,14 @@ tracking on and off (the crosshair then animates `$49-$4B`).
   of calm.
 - **Guns** (sprites 0 and 3 below the 3D view, shapes `$7E` / `$7F`, behind the bitmap,
   twice as wide): the original routine `$9568` lean them with the steering direction and
-  bring them back to rest; the firing state turns one of them red, alternating.
+  bring them back to rest; while a phasor shot flies, the gun it came from is red
+  (original `$1241`).
+- **Phasor shot** (sprite 1, multicolor shapes `$70` down to `$67`; branch `c128-port`):
+  hold fire to launch and fly it, from the gun on the other side of the crosshair, as the
+  original's `$1424` / `$1467` / `$1526` and its line routine `$3580` do. It slows as it
+  recedes and stops when fire is released; a shot costs 10 energy on the HUD. Checked
+  frame by frame against the original routines in `js/test/run.js`; details in
+  `PLAN-C128-COCKPIT.md`. No enemies yet, so nothing is hit.
 
 Result on a real x128 run (user screenshot, `ref/cockpit-c128-working.png`): HUD, rivets,
 crosshair with its digits, guns behind the bases, radar and star field all correct.

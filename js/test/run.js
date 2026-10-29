@@ -250,5 +250,72 @@ function report(hooks, label) {
   snap(m, 'c64-gameover');
 }
 
+// ---- phasor shot: C128 cockpit port against the original C64 routines ----------
+{
+  function callAt(m, addr) {                 // run a routine to its RTS, no interrupts
+    const c = m.cpu, ret = 0xFFF4, p = c.p;
+    c.push(((ret - 1) >> 8) & 255); c.push((ret - 1) & 255); c.pc = addr; c.p |= 4;
+    for (let i = 0; i < 2e6 && c.pc !== ret; i++) { c.step(); if (c.jam) throw new Error(c.jam); }
+    c.p = p;
+  }
+  const o = boot('c64game', 'trace'), os = o.p.symbols;
+  run(o.m, o.hooks, 250);                    // unpacked: the game's code is in memory
+  const k = boot('cockpit', 'trace'), ks = k.p.symbols;
+  run(k.m, k.hooks, 5);
+  const R = o.m.ram, K = k.m.ram;
+  // the original, as the game runs it: the IRQ's $1424, then $1467 from the main loop
+  const orig = {
+    setup(cx, cy, gunsel) {
+      R[0xB8] = 0; R[0xBACE] = 0; R[0xE3] = 0; R[0x39] = 5; R[0xD0] = R[0xD1] = R[0xD2] = 0;
+      R[os.CURX] = cx; R[os.CURY] = cy; R[0x1417] = gunsel; R[0x141B] = 0;
+      R[0x118F] = 0x20; R[0x1190] = 0x1F; R[0x1191] = 0xCF; R[0x1192] = 0xCF;
+    },
+    frame(fire) { R[0xD0] = fire; callAt(o.m, 0x1424); if (R[0xD1]) callAt(o.m, 0x1467); },
+    state: () => [R[0xD2], R[0xB1], R[0xE9] | ((R[0xF7] & 2) << 7), R[0xEA], o.m.vic[0x28] & 15, R[0x1416]],
+    path: () => [...R.subarray(0x400, 0x400 + R[0x1415])].map((x, i) => x + ',' + R[0x500 + i]).join(' '),
+  };
+  const port = {
+    setup(cx, cy, gunsel) {
+      K[ks.SHOTON] = K[ks.SHOTARM] = 0;
+      K[ks.CURX] = cx; K[ks.CURY] = cy; K[ks.GUNSEL] = gunsel; K[ks.FRAC] = 0;
+      K[ks.G1X] = 0x20; K[ks.G2X] = 0x1F; K[ks.G1Y] = 0xCF; K[ks.G2Y] = 0xCF;
+    },
+    frame(fire) { K[ks.FIREHELD] = fire; callAt(k.m, ks.FIREPH); if (K[ks.SHOTARM]) callAt(k.m, ks.LAUNCH); },
+    state: () => [K[ks.SHOTON], K[ks.SHOTSHP], K[ks.SHOTX] | (K[ks.SHOTXH] << 8), K[ks.SHOTY], k.m.vic[0x28] & 15, K[ks.SHIDX]],
+    path: () => [...K.subarray(ks.PATHX, ks.PATHX + K[ks.NGEN])].map((x, i) => x + ',' + K[ks.PATHY + i]).join(' '),
+  };
+  // crosshair x, y, gun alternation, frames fire is held (8: released mid-flight, the
+  // shot stops; 60: held on, a second shot follows the first)
+  const cases = [[0x7E, 0x81, 0, 40], [0xF0, 0x58, 2, 40], [0x10, 0xAD, 0, 40], [0x7E, 0x81, 2, 8], [0xAA, 0x60, 0, 60]];
+  let same = 0, shown = 0;
+  for (const [cx, cy, gs, hold] of cases) {
+    orig.setup(cx, cy, gs); port.setup(cx, cy, gs);
+    let ok = true, complete = false;
+    for (let f = 0; f < 45; f++) {
+      orig.frame(f < hold ? 1 : 0); port.frame(f < hold ? 1 : 0);
+      if (K[ks.NGEN] === K[ks.NPTS] && port.path() === orig.path()) complete = true;
+      const a = orig.state(), b = port.state();
+      if (f > 0 && a.join() !== b.join()) { ok = false; if (shown++ < 6) console.log('     ', cx, cy, 'frame', f, 'orig', a.join('/'), 'port', b.join('/')); }
+    }
+    // the port makes the path in parts: what it has made so far must be the original's
+    const op = orig.path().split(' '), pp = port.path().split(' ');
+    if (pp.join(' ') !== op.slice(0, pp.length).join(' ') || K[ks.NPTS] !== R[0x1415]) { ok = false; console.log('      path differs', cx, cy); }
+    if (hold >= 40 && !complete) { ok = false; console.log('      the port never had the whole path', cx, cy); }
+    if (ok) same++;
+  }
+  check(same === cases.length, `phasor: the cockpit port matches the original in ${same} of ${cases.length} shots (path, shape, position, colour, step)`);
+  check(K[ks.HUDE + 2] !== 0x79 || K[ks.HUDE + 1] !== 0x79, 'phasor: shots cost energy on the HUD');
+  // timing: the longest launch and the busiest flight frame fit between lines 78 and 194
+  const cyc = (addr) => { const c0 = k.m.cpu.cycles; callAt(k.m, addr); return k.m.cpu.cycles - c0; };
+  let worst = 0;
+  for (const [cx, cy] of [[0, 0x58], [0xFE, 0x58], [0, 0xAD], [0xFE, 0xAD]]) {
+    port.setup(cx, cy, 0);
+    K[ks.FIREHELD] = 1; cyc(ks.FIREPH);
+    worst = Math.max(worst, cyc(ks.LAUNCH));
+    for (let f = 0; f < 40; f++) worst = Math.max(worst, cyc(ks.FIREPH));
+  }
+  check(worst < (194 - 80) * 63, `phasor: the busiest frame takes ${worst} cycles (${Math.round(worst / 63)} lines, the 3D view gives 114)`);
+}
+
 console.log(failures ? failures + ' check(s) failed' : 'all checks passed');
 process.exit(failures ? 1 : 0);

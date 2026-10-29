@@ -15,7 +15,9 @@ Memory (bank 0, VIC bank 1 for the picture):
   $4000  the font (128 characters, ref/charset-4000.bin)
   $4400  color matrix of the bitmap (ref/cockpit-art.bin)
   $4800  text screen (HUD and bottom strip)
-  $4C00  sprite shapes: pointers $30-$35 = the crosshair $7D, tracking $49-$4B, guns $7E / $7F
+  $3400  phasor shot path (x, then y at $3500)
+  $4C00  sprite shapes: pointers $30-$35 = the crosshair $7D, tracking $49-$4B, guns $7E / $7F,
+         $36-$3F = the phasor shot $67-$70
   (nothing at $5000-$5FFF: the C128's video chip reads the character ROM there)
   $6000  multicolor bitmap; the cockpit art fills cell rows 18-22 ($7680-$7CBF)
 """
@@ -90,6 +92,8 @@ def main():
     shape = lambda p: sprites[order.index(p) * 64:order.index(p) * 64 + 64]
     for new, original in enumerate((0x7D, 0x49, 0x4A, 0x4B, 0x7E, 0x7F)):
         put(body, 0x4C00 + new * 64, shape(original))      # pointers $30-$35
+    for original in range(0x67, 0x71):                     # the phasor shot, $67-$70
+        put(body, 0x4C00 + (original - 0x31 - 0x30) * 64, shape(original))   # pointers $36-$3F
     put(body, 0x4800, screen)
     put(body, 0x6000 + 18 * 320, bitmap_rows)
 
