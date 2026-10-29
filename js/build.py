@@ -24,14 +24,23 @@ TESTS = {
     'flight': ('c128-flight', 'flight.asm', 'sentinel-c128-flight.prg'),
     'map': ('c128-map', 'map.asm', 'sentinel-c128-map.prg'),
     'cockpit': (os.path.join('c128-gui', 'cockpit'), 'cockpit.asm', 'sentinel-c128-cockpit.prg'),
+    'game': ('c128-game', None, 'sentinel-c128-game.prg'),     # cockpit + map, joined
 }
 
 
 def export(name, folder, source, prg):
     path = os.path.join(ROOT, folder)
     subprocess.run([sys.executable, os.path.join(path, 'build.py')], check=True)
-    with open(os.path.join(path, source), encoding='ascii') as f:
-        chunks, symbols = asm(f.read())
+    if source is None:                  # a joined program: its build.py assembles it
+        sys.path.insert(0, path)
+        import importlib.util
+        spec = importlib.util.spec_from_file_location('build_' + name, os.path.join(path, 'build.py'))
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        chunks, symbols = mod.assemble()
+    else:
+        with open(os.path.join(path, source), encoding='ascii') as f:
+            chunks, symbols = asm(f.read())
     with open(os.path.join(path, prg), 'rb') as f:
         data = f.read()
     load = data[0] | data[1] << 8

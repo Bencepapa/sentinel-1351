@@ -139,4 +139,32 @@ var SentinelProfiles = {
   },
 };
 
+// The joined program (c128-game): the cockpit's profile plus the map's world.
+// The map's labels carry the prefix M_ there.
+SentinelProfiles.game = (function (c) {
+  return {
+    title: 'C128 game (cockpit + map)',
+    watches: [
+      { name: 'Sector column', at: 'M_SELX' },
+      { name: 'Sector row', at: 'M_SELY' },
+      { name: 'Map STATE (60)', at: 'M_STATE', size: 60, fmt: 'bytes' },
+      { name: 'Map COUNT (60)', at: 'M_COUNT', size: 60, fmt: 'bytes' },
+    ].concat(c.watches),
+    cheats: c.cheats,
+    events: c.events.concat([
+      { name: 'Map opened', at: 'TOMAP' },
+      { name: 'Back in the cockpit', at: 'TOCOCK' },
+      { name: 'Into a sector', at: 'SECTORIN' },
+    ]),
+    keys: [
+      { label: 'Fire / L', mouse: 'left' },
+      { label: 'C= (map)', key: 'AltLeft' },
+      { label: 'SPACE', key: 'Space' },
+      { label: 'T', key: 'KeyT' },
+    ],
+    help: 'Cockpit: mouse or arrows aim (off centre steers), left button / Right Ctrl fires, C= (Alt) opens the map, SPACE exits. ' +
+          'Map: move the cursor, fire on another sector jumps there, SPACE goes back.',
+  };
+})(SentinelProfiles.cockpit);
+
 if (typeof module !== 'undefined') module.exports = SentinelProfiles;

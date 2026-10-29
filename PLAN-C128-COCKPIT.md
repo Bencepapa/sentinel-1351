@@ -157,7 +157,13 @@ destroyed system disables.
 
 ## Next (from the user, 2026-10-29): one program, the approach, the scanners
 
-### A. The map and the cockpit as one program
+### A. The map and the cockpit as one program (first step done: `c128-game/`)
+
+Done: `c128-game/` joins both programs (see its README): C= opens the map, fire on
+another sector jumps there at once, the sector's squadron comes in waves, TARGETS
+and the kills follow the map's COUNT. The plan below was the starting point;
+the picture copy went to `$5000-$5FDF` (bank 0 RAM the VIC-IIe cannot use).
+
 
 The user's idea: the map program's grid in the cockpit, squadrons only in the
 sectors where the map has them, and for now an instant jump from sector to

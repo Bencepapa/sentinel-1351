@@ -32,6 +32,33 @@ def put(body, address, data):
     body[offset:end] = data
 
 
+def place_assets(put, VDC=0x4000):
+    """Everything but the code. put(address, data). The second display's data
+    ($4000-$43FF here) goes to VDC instead (c128-game/build.py moves it)."""
+    yoff = [(y // 8) * 320 + (y & 7) for y in range(200)]
+    xoff = [x * 8 for x in range(40)]
+    put(YLO, bytes(v & 255 for v in yoff))
+    put(YHI, bytes(v >> 8 for v in yoff))
+    put(XLO, bytes(v & 255 for v in xoff))
+    put(XHI, bytes(v >> 8 for v in xoff))
+
+    # second display (VDC): custom characters, text row table, colour map
+    put(VDC + 0x240, chardata())
+    lo, hi = rowtables()
+    put(VDC + 0x310, lo)
+    put(VDC + 0x330, hi)
+    put(VDC + 0x350, VCOL)
+    with open(os.path.join(HERE, 'ref', 'planet-sprites.bin'), 'rb') as f:
+        sprites = f.read()
+    put(0x4E40, sprites)          # planet sprite frames, pointers $39-$3C
+    put(VDC, planetchars(sprites))   # the same frames as VDC characters
+    for address, data in textdata() + shipdata():
+        if 0x4000 <= address < 0x4400:
+            address += VDC - 0x4000
+        put(address, data)
+
+
+
 def main():
     with open(os.path.join(HERE, 'map.asm'), encoding='ascii') as f:
         chunks, symbols = asm(f.read())
@@ -45,25 +72,7 @@ def main():
     body = bytearray(stub)
     put(body, ENTRY, chunks[ENTRY])
 
-    yoff = [(y // 8) * 320 + (y & 7) for y in range(200)]
-    xoff = [x * 8 for x in range(40)]
-    put(body, YLO, bytes(v & 255 for v in yoff))
-    put(body, YHI, bytes(v >> 8 for v in yoff))
-    put(body, XLO, bytes(v & 255 for v in xoff))
-    put(body, XHI, bytes(v >> 8 for v in xoff))
-
-    # second display (VDC): custom characters, text row table, colour map
-    put(body, 0x4240, chardata())
-    lo, hi = rowtables()
-    put(body, 0x4310, lo)
-    put(body, 0x4330, hi)
-    put(body, 0x4350, VCOL)
-    with open(os.path.join(HERE, 'ref', 'planet-sprites.bin'), 'rb') as f:
-        sprites = f.read()
-    put(body, 0x4E40, sprites)          # planet sprite frames, pointers $39-$3C
-    put(body, 0x4000, planetchars(sprites))   # the same frames as VDC characters
-    for address, data in textdata() + shipdata():
-        put(body, address, data)
+    place_assets(lambda address, data: put(body, address, data))
 
     with open(OUT, 'wb') as f:
         f.write(bytes((LOAD & 255, LOAD >> 8)) + body)

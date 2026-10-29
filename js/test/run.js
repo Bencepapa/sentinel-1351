@@ -585,5 +585,39 @@ function report(hooks, label) {
   check(Math.abs(fast - cpuC / 2) < 3, `2 MHz: ${cpuC} processor cycles advance the raster by ${fast.toFixed(0)} cycles`);
 }
 
+// ---- the joined program (c128-game): cockpit + map ----
+{
+  const { m, hooks, p } = boot('game', 'verify');
+  const s = p.symbols, K = m.ram;
+  const tg = () => String.fromCharCode(K[s.TARGETS - 1] - 0x40, K[s.TARGETS] - 0x40);
+  run(m, hooks, 60);
+  check(!m.stopped && K[s.ALIVE] + K[s.ALIVE + 1] + K[s.ALIVE + 2] === 0 && tg() === '00',
+    `game: starts in the empty sector ${K[s.M_SELX] + 1}.${K[s.M_SELY] + 1}, TARGETS ${tg()}`);
+  run(m, hooks, 3, () => m.setKey(7, 5, true)); m.setKey(7, 5, false);
+  run(m, hooks, 400);
+  check(!m.stopped && K[s.M_ICONDONE] === 1, 'game: C= opens the map; the grid and the icons are drawn');
+  const st = [...K.subarray(s.M_STATE, s.M_STATE + 60)];
+  const idx = st.findIndex(v => v >= 1 && v <= 3), n0 = K[s.M_COUNT + idx];
+  K[s.M_CURX] = idx % 10; K[s.M_CURY] = Math.floor(idx / 10);
+  run(m, hooks, 4, i => { m.mouse.left = i < 2; }); run(m, hooks, 10);
+  const alive = K[s.ALIVE] + K[s.ALIVE + 1] + K[s.ALIVE + 2];
+  check(!m.stopped && K[s.M_SELY] * 10 + K[s.M_SELX] === idx && alive === Math.min(3, n0) && +tg() === n0,
+    `game: fire on a squadron's sector jumps there: ${alive} fighters, TARGETS ${tg()} (COUNT ${n0})`);
+  check(K[s.M_SELX] + 1 === K[s.HUDSEC + 1] - 0x70 && K[s.M_SELY] + 1 === K[s.HUDSEC + 4] - 0x70, 'game: the HUD shows the new sector');
+  const bitmapOk = [...K.subarray(0x6000, 0x63C0)].every((v, i) => v === K[s.MSPR + i]) &&
+                   [...K.subarray(0x7680, 0x7CC0)].every((v, i) => v === K[s.MART + i]);
+  check(bitmapOk, 'game: back from the map, the sprite shapes and the cockpit art are restored');
+  // every kill lowers the sector's COUNT; the last one empties it on the map
+  const callAt = (addr) => { const c = m.cpu, ret = 0xFFF4; c.push(((ret - 1) >> 8) & 255); c.push((ret - 1) & 255); c.pc = addr; const sp = c.p; c.p |= 4; for (let i = 0; i < 1e6 && c.pc !== ret; i++) c.step(); c.p = sp; };
+  for (let i = 0; i < n0; i++) { m.cpu.x = 0; callAt(s.KILL); }
+  check(K[s.M_COUNT + idx] === 0 && K[s.M_STATE + idx] === 0 && tg() === '00', `game: ${n0} kills empty the sector (COUNT 0, STATE 0, TARGETS ${tg()})`);
+  run(m, hooks, 3, () => m.setKey(7, 5, true)); m.setKey(7, 5, false);
+  run(m, hooks, 100);
+  run(m, hooks, 3, () => m.setKey(7, 4, true)); m.setKey(7, 4, false);
+  run(m, hooks, 20);
+  check(!m.stopped && K[s.M_SELY] * 10 + K[s.M_SELX] === idx && K[s.OVRUN] === 0, 'game: SPACE on the map goes back without a jump (the program keeps running)');
+  report(hooks, 'game');
+}
+
 console.log(failures ? failures + ' check(s) failed' : 'all checks passed');
 process.exit(failures ? 1 : 0);
