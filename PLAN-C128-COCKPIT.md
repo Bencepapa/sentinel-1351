@@ -91,10 +91,57 @@ What the code says about the enemies (found with the JS workbench; labels in
   enemy mothership's proton torpedo (see step 4); both belong to the mothership
   sequences.
 
-Suggested order inside this step: (a) one wave of type-1 fighters moving in 3D
-and drawn by depth; (b) the hit test and the explosion (`$60-$63`); (c) enemy
-fire and the player being hit (`$84D7`); (d) types 2 and 3 (shapes, hit
-counters, colours); (e) waves and the squadron count.
+#### How a fight runs (traced in the original, with the user's description)
+
+**Phase 1, approach.** Entering a squadron's sector, the three position slots
+(x `$16/$17`, y `$1C/$1D`, depth `$22/$23`, X = 0, 2, 4) hold up to three
+**groups** of fighters, far away (values like `$06xx-$0Dxx`). The player turns
+the ship (`$39C1`, rotation of every slot around the ship, all four directions,
+about 700 bytes) to bring the selected group to 0 bearing and 0 pitch on the
+long-range scanner; fire switches between groups (user). The ship then closes in
+fast (user); the range shows under the crosshair. The loop is `$C6A9-$C746`:
+every pass it checks whether a group is close enough (`$2C43`, `$2CDE`).
+
+**Phase 2, the group arrives.** `$C749-$C7C0` turns the group into fighters:
+its position becomes an offset (`$2B-$30`), `$FF1B` sets the three fighters'
+start positions (x `$888C` / `$8850` / `$88AF`, y `$8880` / `$888C` / `$8864`,
+depth `$8B14` / `$8B28` / `$8B00`, i.e. beyond the visible depths) and their
+movement streams, the offset is added, and hit counters and alive flags get the
+type. They then come in one by one, at most 3 on screen (user).
+
+**Phase 3, the dogfight.** Per main-loop pass (the loop is not tied to the frame:
+about 16 passes per frame in the JS machine, a little fewer on a real C64):
+
+| What | Original | How often |
+|---|---|---|
+| fighters fly their movement streams | `$2F6D`, `$2FB9`, `$3005` (one each) | every 16 passes (about once a frame) |
+| steering moves (rotates) them around the ship | `$39C1` | every 4 passes |
+| attackers drift back toward the middle of the view (x `$8832-$890E`, y `$885E-$88AE`, depth `$8640-$87E0`, 4 units per call) | `$33B6` | every 32 passes |
+| the ship's thrust: held key `$FDE6` speeds up (`$F209`), costs 10 energy per step, brings all slots closer (depth -6 per `$C81E`) | `$FEA7` | every 4 passes |
+| automatic tracking computer: while system 4 (`$3D`) works and tracking is on, it steers the ship toward a target fighter; destroyed, it switches off (`$89EB`) and the fighters drift out of view (user) | `$89E6`, `$8B49`, `$8BED` | every 32 passes |
+| fighters -> sprites 4-6 (shape by depth, hidden outside x `$8751-$894F`, y high byte `$88`, depth `$86xx-$87xx`) | `$2E36` x3, via the patched jump `$2E7B` | IRQ, every 4th frame |
+
+**Movement streams** (type 1): three tables of signed steps (bit 7 = minus,
+`$2BEF` / `$2C0B` / `$2C27` add them): x `$E800`, y `$EA00`, depth `$EB00`, 512
+steps each, looping; the three fighters start at offsets `$00`, `$AA`, `$54`.
+A fighter takes one step per call for type 1; types 2 and 3 step every 1 and 2
+calls (`$2F8B`), so the bigger ships move more slowly. Types 2 and 3 use other
+x / y tables (`$FF15`, `$FF18`).
+
+**Port notes.** The cockpit is frame-locked, the original is not: one stream
+step per frame matches the original's rate in the JS machine (0.99 per frame).
+VIC bank 1 has exactly 16 sprite slots free (`$4C00-$4FFF`; `$5000-$5FFF` shows
+the character ROM on the C128), so the shot and the fighters get one slot each,
+refilled from shape tables kept elsewhere. Bank 0 RAM `$8000-$BFFF` is free with
+the cockpit's MMU setting (`$0E`) for the new code and tables.
+
+Suggested order inside this step: (a) the dogfight with one type-1 wave:
+fighters on their streams, the drift, the sprites by depth; (b) steering
+(`$39C1`); (c) the hit test and the explosion (`$60-$63`); (d) enemy fire and the
+player being hit (`$84D7`); (e) the approach phase (groups, long-range scanner,
+group selection, closing in, fighters arriving one by one) and the tracking
+computer; (f) types 2 and 3; (g) waves and the squadron count. Open question from
+the user: can the enemy mothership's torpedo be shot down?
 
 The squadrons: twin-pod fighters (shapes `$20-$30`, several rotations), lens
 ships (`$31-$38`, multicolor), mines / drones (`$71-$7C`); enemy fire `$66-$70`

@@ -111,3 +111,17 @@ TORPLAUNCH  $916C   ; found: the enemy torpedo starts at radius $19 ($CF01)
 TORPSTEP    $CF04   ; found: torpedo animation step (every 16 frames): 31 frames from $AF80 down
 TORPANIM    $A000   ; found: pre-rendered torpedo frames, 128 bytes each (shapes $45/$46 at $5140)
 TORPIMPACT  $CF85   ; found: the torpedo hits: five hits on the ship ($84D7 x5)
+
+; ---- the fight (approach, arrival, dogfight) ----
+APPROACH    $C6A9   ; found: approach loop: groups far away, steering, checks for arrival ($C730)
+GROUPIN     $C749   ; found: a group arrives: becomes up to 3 fighters (offset + $FF1B)
+WAVEINIT    $FF1B   ; found: fighters' start positions and movement streams (type 1: x $E800, y $EA00, z $EB00)
+MOVE1       $2F6D   ; found: fighter 1 takes a step of its movement stream
+MOVE2       $2FB9   ; found: fighter 2
+MOVE3       $3005   ; found: fighter 3
+ADDX        $2BEF   ; found: x += signed step (bit 7 = minus); ADDY $2C0B, ADDZ $2C27
+STEER       $39C1   ; found: steering rotates every slot around the ship (4 directions)
+DRIFT       $33B6   ; found: attackers drift back toward the middle of the view
+THRUST      $FEA7   ; found: thrust key $FDE6: speed $F209, energy, depth -6 per $C81E
+AUTOTRACK   $89E6   ; found: automatic tracking computer (needs system 4, $3D)
+FIGHTLOOP   $2CE8   ; found: main loop in a fight (pass counter $89)
