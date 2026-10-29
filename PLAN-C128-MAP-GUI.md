@@ -225,6 +225,27 @@ the grid effect looks as expected (sound not explicitly confirmed).
 - **Planet and mothership events in the flight view**: the cockpit side of the
   attack rings and of the planet being surrounded.
 
+## Optional C128 features (not in the original, from the user)
+
+The C128 runs the VIC picture at the same 1 MHz as the C64 (same cycles per frame, same
+sprites and modes), so these are extras, not requirements. The native C128 gives more
+memory, the 2 MHz mode while the VIC shows only border (bottom border, vertical blank, top
+border; the 40-column picture blanks in 2 MHz mode) and the VDC as a second display.
+
+- **Sun and planet in the 3D view.** The sun is visible from every sector, the planet only
+  from the adjacent sectors.
+  - Sun: a 2x2 block of X/Y-expanded multicolor sprites (about 96x84 pixels), with `$D01B`
+    set so it sits behind the bitmap and the stars pass in front of it (the same priority
+    trick as the guns). Fixed place per sector, maybe a small parallax against the crosshair.
+  - Planet: one or two expanded sprites, a small disc two sectors away and a larger one in
+    the neighbouring sector; the neighbour state comes from the map data.
+  - Sprites 1, 2 and 4-7 are free in the view (sprite 3 between the lines 78 and 194).
+    More objects can reuse sprites in separate bands (a raster multiplex, as the guns do).
+  - To check first: do the original's 80 sprite shapes contain a sun or planet shape, or do
+    we draw our own; does the bitmap keep its background transparent for the priority.
+  - A raster IRQ instead of the polled waits would make the sprite switches steadier.
+- **2 MHz work in the vertical blank** (mouse, guns, star field) to leave margin for the above.
+
 ## Open questions
 
 - Which charset does the map use: ROM, or a custom one in the game's RAM?
