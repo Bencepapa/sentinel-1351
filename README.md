@@ -7,6 +7,8 @@ This is not related to Geoff Crammond's *The Sentinel*.
 The repository also contains native Commodore 128 experiments that establish
 which parts of the patched game can run directly in C128 mode without `GO64`.
 
+**Play it in the browser:** <https://bencepapa.github.io/sentinel-1351/> (the C128 cockpit, map and flight programs on a JS 6502 core; see [js/README.md](js/README.md)).
+
 ## C64 mouse patch
 
 The 1351 goes in control port 2. It directly moves the flight crosshair while
