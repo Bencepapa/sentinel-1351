@@ -150,6 +150,12 @@ function report(hooks, label) {
   const cx = m.ram[s.CURX], cy = m.ram[s.CURY];
   run(m, hooks, 30, () => m.moveMouse(3, 2));
   check(m.ram[s.CURX] > cx && m.ram[s.CURY] < cy, `cockpit: mouse moves the crosshair (${cx},${cy} -> ${m.ram[s.CURX]},${m.ram[s.CURY]})`);
+  {   // the guns follow slowly: a step every 16th frame, as the original's $9568
+    let steps = [], g = m.ram[s.G1X] + ',' + m.ram[s.G1Y];
+    run(m, hooks, 64, i => { m.moveMouse(i < 32 ? -4 : 4, 0); const n = m.ram[s.G1X] + ',' + m.ram[s.G1Y]; if (n !== g) steps.push(i); g = n; });
+    const gaps = steps.slice(1).map((v, i) => v - steps[i]);
+    check(steps.length >= 2 && gaps.every(d => d % 16 === 0), `cockpit: the guns take a step every 16th frame only (steps at frames ${steps.join(', ')})`);
+  }
   run(m, hooks, 10, i => { m.mouse.left = i < 8; });
   snap(m, 'cockpit');
   check(m.ram[s.OVRUN] === 0, 'cockpit: frame work fits in the vertical blank (OVRUN = 0)');

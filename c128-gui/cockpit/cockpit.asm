@@ -662,8 +662,12 @@ nofire: JSR CURSOR
         LDA #0
         ROL A
         STA XMSB
+        INC GFRM        ; the guns take a step every 16th frame only (the original
+        LDA GFRM        ; calls $9568 when its frame counter $A0 & $0F = 0, $0C2B):
+        AND #$0F        ; they follow the crosshair slowly
+        BNE ig1
         JSR GUNS
-        RTS
+ig1:    RTS
 
 ; Crosshair update (original $B2D8-$B399 as patched for the mouse).
 CURSOR: LDA MPRES
@@ -1589,22 +1593,23 @@ mv3:    TYA
 ; x and depth around x $88A0, by shifts of the offsets (a rotation in small
 ; steps). Translated instruction for instruction from the original's
 ; disassembly (each line keeps its address); the original first returns when the
-; ship's sector holds no squadron, and its checks of MSFLAG, MSFLAG2 and MSDIG
-; ($E3, $C847, $372C-$372F) only matter near a mothership, so here they stay 0.
+; ship's sector holds no squadron. Its checks of APPR, INFRONT and LRDIG ($E3:
+; the approach phase, $C847: the chosen group is in front, $372C-$372F: the long
+; range scanner's side and up digits) belong to the approach, not ported yet: 0.
 STEER:
          LDA JOY    ; $39CE
          STA SJ1    ; $39D0
          STA SJ2    ; $39D3
          LDX #$00    ; $39D6
          LDY #$02    ; $39D8
-st39DA:  LDA MSFLAG    ; $39DA
+st39DA:  LDA APPR    ; $39DA
          BEQ st39FA    ; $39DC
-         LDA MSFLAG2    ; $39DE
+         LDA INFRONT    ; $39DE
          BEQ st39FA    ; $39E1
-         LDA MSDIG+2    ; $39E3
+         LDA LRDIG+2    ; $39E3
          CMP #$70    ; $39E6
          BNE st39FA    ; $39E8
-         LDA MSDIG+3    ; $39EA
+         LDA LRDIG+3    ; $39EA
          CMP #$70    ; $39ED
          BNE st39FA    ; $39EF
          LSR SJ1    ; $39F1
@@ -1770,14 +1775,14 @@ st3B1D:  LDA T2B    ; $3B1D
          STA ENZ,X    ; $3B1F
          LDA T2C    ; $3B21
          STA ENZ+1,X    ; $3B23
-st3B25:  LDA MSFLAG    ; $3B25
+st3B25:  LDA APPR    ; $3B25
          BEQ st3B3F    ; $3B27
-         LDA MSFLAG2    ; $3B29
+         LDA INFRONT    ; $3B29
          BEQ st3B3F    ; $3B2C
-         LDA MSDIG    ; $3B2E
+         LDA LRDIG    ; $3B2E
          CMP #$70    ; $3B31
          BNE st3B3F    ; $3B33
-         LDA MSDIG+1    ; $3B35
+         LDA LRDIG+1    ; $3B35
          CMP #$70    ; $3B38
          BNE st3B3F    ; $3B3A
          JMP st3C75    ; $3B3C
@@ -3148,9 +3153,9 @@ T2D:    .BYTE 0
 T2E:    .BYTE 0
 SJ1:    .BYTE 0         ; the joystick byte, shifted per direction ($39BF)
 SJ2:    .BYTE 0         ; and its copy for the next fighter ($39C0)
-MSFLAG: .BYTE 0         ; mothership checks of the steering ($E3, $C847, $372C-$372F)
-MSFLAG2:.BYTE 0
-MSDIG:  .BYTE 0,0,0,0
+APPR: .BYTE 0           ; the approach phase ($E3)
+INFRONT:.BYTE 0
+LRDIG:  .BYTE 0,0,0,0
 EHITS:  .BYTE 0,0,0     ; shots each fighter can still take ($C59A)
 KILLS:  .BYTE 0,0       ; fighters destroyed ($F434)
 HTY:    .BYTE 0
@@ -3221,3 +3226,4 @@ EFMSB:  .BYTE 0
 EFSHP:  .BYTE $67
 EFVIS:  .BYTE 0
 ATMP2:  .BYTE 0
+GFRM:   .BYTE 0         ; frame counter for the guns ($A0)

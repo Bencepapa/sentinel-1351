@@ -155,6 +155,71 @@ Not yet: the approach and the arrival of the wave, the tracking computer, types
 2 and 3, the squadron count, the game-over sequence, system messages and what a
 destroyed system disables.
 
+## Next (from the user, 2026-10-29): one program, the approach, the scanners
+
+### A. The map and the cockpit as one program
+
+The user's idea: the map program's grid in the cockpit, squadrons only in the
+sectors where the map has them, and for now an instant jump from sector to
+sector (hyperspace later). How:
+
+- **One `.prg`**: the map's code (`c128-map/map.asm`, `$1D00-$37FF` today) moves
+  into bank 0 RAM beside the fight code (`$8C00+` / `$A000+`); the shared tables
+  (`YLO`/`YHI`/`XLO`/`XHI`, `RANDOM`, `PIXADDR`) are kept once; labels that clash
+  are renamed.
+- **The bitmap is shared** (`$6000`), as in the original (the map clears it,
+  `$BA72`, and draws the grid): going to the map saves nothing, coming back
+  redraws the cockpit art from a copy. The copy (8 KB bitmap + 1 KB matrix + 1 KB
+  colour) goes to RAM bank 1 (the C128's second 64 KB; the MMU's common RAM lets
+  the copy routine reach both banks) or, if it fits, bank 0 `$A000-$BFFF`.
+- **The VIC bank** stays bank 1; the map's planet sprites (`$4E40`, pointers
+  `$39-$3C`) and the VDC character data (`$4000-$43FF` in the map program, the HUD
+  font in the cockpit) are only copied to the VDC once, so they can live anywhere.
+- **The world**: `STATE` / `COUNT` (the map's sector table) decide what a jump
+  meets: type 1-3 and the number of ships; an empty sector has no fighters.
+  `TARGETS` on the HUD = `COUNT`, as the original sets it on arrival (`$FCE9`). A
+  kill lowers `COUNT` (`$3CD9`); the last one empties the sector (`$3CDE`).
+- **Keys**: the right button / C= opens the map (as in the original), choosing a
+  sector and fire jumps at once (hyperspace, step 3, replaces this later).
+
+### B. The approach phase and the long range scanner (traced)
+
+What happens on arrival in a squadron's sector (`$FCE1-$FD7A`, `$C6A9`):
+
+- The squadron (`COUNT` ships) is split into **groups of up to 3**
+  (`$C593-$C595`, `$3D58`), placed far away; `$E3` = 1 (approaching).
+- The approach loop `$C6A9` steers (`$39C1`, every 4 passes), moves, and every
+  32 passes checks each group's **distance** (`$2C43`): `|x - $88A0| + |y - $8890|
+  + |z - $8690|`, 16 bits. Below `$0400` the group **arrives** (`$C749`): it becomes
+  up to 3 fighters around its position (`$FF1B` + offset), the dogfight starts.
+- **Fire selects the next group** (`$3801-$382A`, needs the long range scan
+  sequencer `$3F`), with a sound (`$38D0`).
+- **Closing in** (`$C848`): when the chosen group is in front (`$C847` = 1) and the
+  long range scanner's side and up readings are both 0-3, the ship rushes forward:
+  12 depth steps of -6 per call (`$C81E`), the speed `$F209` and its sound.
+- When all fighters of a group are down, after a pause (`$C8D4`, 15 counts) `$E3`
+  goes back to 1: the next group is approached.
+
+**The long range scanner's numbers** (`$382D-$38CF`, text row 23, `$57A1-$57B5`):
+three readings for the chosen group, X (side), Y (up) and Z: each from the high
+byte of the coordinate minus 8 (`$389C`), a sign glyph (`$6B` / `$6D`), and the
+size looked up in a table at `$ED00` (most likely an angle table: it turns an
+offset into degrees), shown as two decimal digits. Side and up both 0-3 = the
+group is straight ahead (that is what `$C848` waits for).
+
+**The number under the crosshair** (`$3935`, a sprite with three digits): the
+distance (`$2C43`) of the chosen group (approach) or of the first live fighter
+(dogfight), high byte / 2, in decimal. **Its colour**: white (`$01`) when the
+target is in front (depth at or beyond `$8690`), light green (`$0D`) when it is
+behind. 000 when TARGETS is 0.
+
+**Flying from sector to sector without a hyperspace jump**: in the code the
+ship's sector (`$92` / `$93`) is written only at the start (`$2100`) and on
+hyperspace arrival (`$FCD0-$FCDF`, with the coordinator's random column error).
+Thrust (`$FEA7`, `$C81E`) only moves the objects in the sector closer. So far
+nothing shows another way; to check in the game: a write watch on `$92` in the
+page's debugger while doing it shows which code changes the sector.
+
 ## Next, in a suggested order
 
 ### 1. Enemies in the view and the hit test (start of the dogfight)
