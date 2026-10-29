@@ -203,8 +203,9 @@ What happens on arrival in a squadron's sector (`$FCE1-$FD7A`, `$C6A9`):
 **The long range scanner's numbers** (`$382D-$38CF`, text row 23, `$57A1-$57B5`):
 three readings for the chosen group, X (side), Y (up) and Z: each from the high
 byte of the coordinate minus 8 (`$389C`), a sign glyph (`$6B` / `$6D`), and the
-size looked up in a table at `$ED00` (most likely an angle table: it turns an
-offset into degrees), shown as two decimal digits. Side and up both 0-3 = the
+size looked up in a table at `$ED00`, which is linear: 0-127 becomes 0-99
+(`n * 99 / 127`), shown as two decimal digits. So each reading is the group's
+offset along that axis in 256-unit steps, scaled to 0-99. Side and up both 0-3 = the
 group is straight ahead (that is what `$C848` waits for).
 
 **The number under the crosshair** (`$3935`, a sprite with three digits): the
