@@ -1,0 +1,90 @@
+; Labels for the patched C64 game (Sentinel-1351_v8.prg), for the JS debugger.
+; One per line:  NAME $ADDR  ; comment
+; Collected from MOUSE-SUPPORT.md, MAP-LOGIC.md and c128-gui/README.md, plus the
+; game variables found with the JS debugger (marked "found"). Add your own here;
+; js/build.py reads this file.
+
+; ---- start, interrupts -------------------------------------------------------
+GAMEENTRY   $245A   ; game entry after the loaders
+IRQINIT     $0A80   ; sets the IRQ vector, raster interrupt
+IRQ         $0AD9   ; raster IRQ: five splits per frame
+SPLITTAB    $0A42   ; split table (D011 values; D020/21 at $0A4C, D016 $0A47, D018 $0A51, lines $0A56)
+SPLITNO     $0A5B   ; current split
+FRAMECNT    $A0     ; frame counter (also $89)
+
+; ---- input (with the 1351 patch) ------------------------------------------------
+KEYSCAN1    $FDEE   ; keyboard scans, one per frame
+KEYSCAN2    $FE36
+KEYSCAN3    $FE6E
+KEYMAP      $FDEC   ; C= flag: opens the map
+KEYTORP     $FDE5   ; SPACE flag: proton torpedo
+JOYBYTE     $96     ; joystick byte used everywhere
+JOYFIRE     $97     ; fire flag
+JOYIN       $02A2   ; patch: port read (replaces $B2D8)
+CURSOR      $B2D8   ; patch: crosshair update area (CURSOR, CAPPLY, MOVCHK, MSYN)
+CURX        $B2D7   ; crosshair X
+CURY        $120A   ; crosshair Y
+COCKPIT     $B8     ; 0 = cockpit view shown
+ATTRACT     $88     ; non-zero in attract mode
+DIFFMENU    $864A   ; difficulty menu
+DIFFICULTY  $8422   ; squadrons by difficulty (table)
+
+; ---- graphics ---------------------------------------------------------------------
+LINE        $3580   ; line drawing
+PLOT        $EF53   ; protected multicolor plot
+UNPLOT      $EEE6   ; matching erase
+MARKER      $3166   ; hostile-squadron marker (H)
+MARKERERASE $3138
+GFXCLEAR    $BA72   ; clears $6000-$7FFF
+SPRSHADOW   $B0     ; sprite pointer shadow $B0-$B7 (copied to $47F8 by the IRQ)
+CROSSSPR    $1290   ; crosshair sprite
+GUNSPR      $1225   ; guns in the lower split
+GUNS        $9568   ; gun routine
+FIRING      $D2     ; non-zero while firing
+TRACKING    $5C     ; non-zero while a target is tracked
+TITLETEXT   $1861
+SCROLLER    $C133
+
+; ---- map / strategic layer --------------------------------------------------------
+MAPGRID     $B094   ; grid draw-in
+MAPSOUND    $B26D
+STATE       $033C   ; sector state [60]
+COUNT       $0378   ; squadron count [60]
+INDEX       $22D6
+STARTMAP    $20F1
+PLACESQ     $225D
+RANDOM      $BA85
+TICK        $BE29
+TICKCOUNT   $BDAF
+MOTHER      $9F9A
+MOVEPASS    $BE4C
+RESOLVE     $BF79
+SURROUND    $3E7E
+BLINK       $3F72
+PLANETSPR   $1040
+
+; ---- ship state (found with the JS debugger: write watchpoints on the HUD digits) ----
+SHIELDS     $844F   ; found: shields, binary; shown at $5432/$5433 by SHOWSHIELDS
+PROTONS     $8450   ; found: proton torpedoes; shown at $545A/$545B by SHOWPROTONS
+SYSTEMS     $39     ; found: 8 ship-system counters $39-$40, set per difficulty by SHIPINIT
+DIFFLEVEL   $E0     ; found: difficulty index used by SHIPINIT
+SHIPINIT    $8451   ; found: systems, shields and protons from the difficulty tables
+SHOWPROTONS $849E   ; found
+SHOWSHIELDS $8487   ; found
+TOBCD       $9636   ; found: A -> two digits in $9D/$9E
+HIT         $84D7   ; found: the ship is hit: damages a random system, then shields -1
+SYSDOWN     $84F2   ; found: a system counter reached 0 (prints which one)
+SHIELDSDOWN $85D9   ; found: shields -1, sets SHIELDSLOST below 0
+HITS        $F432   ; found: hits taken (16 bit, used in the rating)
+SHIELDSLOST $8300   ; found: non-zero = shields gone (game over)
+PLANETLOST  $F431   ; found: non-zero = planet destroyed (game over), set at $3EFD
+GAMEOVERCHK $99F3   ; found: checks SHIELDSLOST | PLANETLOST
+GAMEOVER    $8869   ; found: the game-over sequence
+TORPEDO     $BADA   ; found: launch a proton torpedo (PROTONS -1)
+ENERGY      $543E   ; found: energy has no variable: the four HUD digits ($70-$79) count down
+ENERGYTICK  $F886   ; found: energy -1 (or +1 while docked)
+ENERGYOUT   $F8E0   ; found: energy reached 0000
+RECHARGE    $F9D6   ; found: energy +1
+DOCKED      $F86B   ; found: non-zero = energy counts up
+HUD         $5400   ; text screen of the HUD (row 1 at $5428, row 2 at $5450)
+PRINTBIG    $9BE5   ; double-width text into the bitmap

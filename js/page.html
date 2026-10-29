@@ -3,8 +3,9 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500&display=swap">
 <style>
-/* Layout: one column. The VIC-IIe monitor first, the C128's buttons under it,
-   then the second (VDC) monitor and the hook table, like a bench with two screens. */
+/* Layout: a workbench. The machine (screen, transport, keys, second display) on
+   the left, the debugger (CPU, watches, cheats, monitor, hooks, log) on the right;
+   one column on narrow screens. */
 :root {
   --bg: #e9e6df;          /* C128 case beige */
   --panel: #f6f4ef;
@@ -16,6 +17,8 @@
   --accent: #b5562c;      /* the C128 badge's rust */
   --good: #2f7a3e;
   --bad: #b3261e;
+  --warn: #9a6a00;
+  --hi: #f3e3c8;          /* current line in the disassembly */
   --bezel: #1b1a18;
   --display: 'Chakra Petch', 'Segoe UI', system-ui, sans-serif;
   --body: 'IBM Plex Sans', system-ui, sans-serif;
@@ -24,13 +27,15 @@
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
     --bg: #1d1c1a; --panel: #262522; --ink: #ece8df; --muted: #a39d90; --line: #3a3833;
-    --key: #46443f; --keyink: #f1eee6; --accent: #e07a4a; --good: #6cc07c; --bad: #f2776c; --bezel: #0d0d0c;
+    --key: #46443f; --keyink: #f1eee6; --accent: #e07a4a; --good: #6cc07c; --bad: #f2776c; --warn: #e2b04a;
+    --hi: #3e3426; --bezel: #0d0d0c;
     color-scheme: dark;
   }
 }
 :root[data-theme="dark"] {
   --bg: #1d1c1a; --panel: #262522; --ink: #ece8df; --muted: #a39d90; --line: #3a3833;
-  --key: #46443f; --keyink: #f1eee6; --accent: #e07a4a; --good: #6cc07c; --bad: #f2776c; --bezel: #0d0d0c;
+  --key: #46443f; --keyink: #f1eee6; --accent: #e07a4a; --good: #6cc07c; --bad: #f2776c; --warn: #e2b04a;
+  --hi: #3e3426; --bezel: #0d0d0c;
   color-scheme: dark;
 }
 body {
@@ -39,20 +44,28 @@ body {
   padding-right: max(16px, env(safe-area-inset-right, 0px));
   padding-block: 16px 32px;
 }
-.wrap { max-width: 820px; margin: 0 auto; display: flex; flex-direction: column; gap: 16px; }
-header { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 8px 16px; }
+.wrap { max-width: 1380px; margin: 0 auto; display: flex; flex-direction: column; gap: 14px; }
+header { display: flex; flex-wrap: wrap; align-items: end; justify-content: space-between; gap: 8px 16px; }
 h1 { font: 600 1.5rem/1.1 var(--display); letter-spacing: 0.02em; margin: 0; text-wrap: balance; }
 h1 span { color: var(--accent); }
 .sub { color: var(--muted); font-size: 0.85rem; margin: 2px 0 0; }
-.controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 label.field { display: flex; flex-direction: column; gap: 2px; font: 500 0.68rem/1 var(--mono); text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); }
-select, button {
+select, button, input[type="text"] {
   font: 500 0.85rem var(--body); color: var(--ink); background: var(--panel);
-  border: 1px solid var(--line); border-radius: 6px; padding: 6px 10px; min-height: 34px;
+  border: 1px solid var(--line); border-radius: 6px; padding: 5px 9px; min-height: 32px;
 }
+input[type="text"] { font-family: var(--mono); min-width: 0; }
 button { cursor: pointer; }
-select:focus-visible, button:focus-visible, #screen:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+button:disabled { opacity: 0.45; cursor: default; }
+select:focus-visible, button:focus-visible, input:focus-visible, #screen:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .check { display: flex; align-items: center; gap: 6px; font-size: 0.85rem; color: var(--muted); }
+
+.bench { display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr); gap: 14px; align-items: start; }
+@media (max-width: 1060px) { .bench { grid-template-columns: minmax(0, 1fr); } }
+@media (min-width: 1061px) { .bench > .col:first-child { position: sticky; top: calc(env(safe-area-inset-top, 0px) + 8px); } }
+.col { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
 
 .monitor { background: var(--bezel); border-radius: 10px; padding: 10px; position: relative; }
 .monitor canvas { display: block; width: 100%; height: auto; image-rendering: pixelated; image-rendering: crisp-edges; }
@@ -63,24 +76,60 @@ select:focus-visible, button:focus-visible, #screen:focus-visible { outline: 2px
 #lockhint { position: absolute; left: 50%; bottom: 18px; transform: translateX(-50%); font: 500 0.75rem var(--mono); color: #d8d2c4; background: rgba(0,0,0,0.55); padding: 4px 10px; border-radius: 4px; pointer-events: none; white-space: nowrap; }
 #overlay { position: absolute; inset: 10px; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,0.6); color: #f1eee6; font: 600 1rem var(--display); letter-spacing: 0.04em; cursor: pointer; text-align: center; padding: 16px; }
 
+.transport { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.transport .sep { width: 1px; align-self: stretch; background: var(--line); margin: 0 4px; }
+#status { font: 0.8rem var(--mono); color: var(--muted); font-variant-numeric: tabular-nums; min-width: 0; }
+#status b { color: var(--ink); font-weight: 500; }
+#status .brk { color: var(--bad); }
+
 .keys { display: flex; flex-wrap: wrap; gap: 6px; }
 .keys button { background: var(--key); color: var(--keyink); border: 0; border-bottom: 3px solid rgba(0,0,0,0.35); font: 500 0.8rem var(--mono); min-width: 52px; user-select: none; -webkit-user-select: none; touch-action: none; }
 .keys button:active { transform: translateY(2px); border-bottom-width: 1px; }
 .keys .mouse { background: var(--accent); }
 #help { color: var(--muted); font-size: 0.82rem; margin: 0; }
 
-.bench { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; }
-@media (max-width: 640px) { .bench { grid-template-columns: minmax(0, 1fr); } }
-.card { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; min-width: 0; }
-.card h2 { font: 600 0.78rem/1 var(--mono); text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); margin: 0 0 8px; display: flex; justify-content: space-between; }
-.tablewrap { overflow-x: auto; }
-table { border-collapse: collapse; width: 100%; font: 0.8rem var(--mono); font-variant-numeric: tabular-nums; }
-th { text-align: left; color: var(--muted); font-weight: 500; padding: 3px 6px; border-bottom: 1px solid var(--line); }
-td { padding: 3px 6px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; min-width: 0; }
+.card h2 { font: 600 0.74rem/1 var(--mono); text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); margin: 0 0 8px; display: flex; justify-content: space-between; gap: 8px; align-items: baseline; }
+.card h2 small { font-weight: 400; letter-spacing: 0; text-transform: none; }
+.split { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; }
+@media (max-width: 560px) { .split { grid-template-columns: minmax(0, 1fr); } }
+
+.mono { font: 0.78rem/1.45 var(--mono); font-variant-numeric: tabular-nums; }
+#regs { margin: 0 0 6px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.dis { overflow-x: auto; }
+.dis div { white-space: pre; padding: 0 4px; border-radius: 3px; cursor: pointer; }
+.dis div.pc { background: var(--hi); }
+.dis div .bp { color: var(--bad); }
+.dis div .lbl { color: var(--accent); }
+
+table { border-collapse: collapse; width: 100%; font: 0.78rem var(--mono); font-variant-numeric: tabular-nums; }
+th { text-align: left; color: var(--muted); font-weight: 500; padding: 3px 5px; border-bottom: 1px solid var(--line); }
+td { padding: 3px 5px; border-bottom: 1px solid var(--line); white-space: nowrap; vertical-align: middle; }
 td.good { color: var(--good); } td.bad { color: var(--bad); font-weight: 500; }
-#log { font: 0.75rem/1.4 var(--mono); color: var(--muted); max-height: 180px; overflow: auto; overflow-wrap: anywhere; }
-#log:empty::before { content: 'No mismatches. Each JS port is checked against the 6502 original on every call.'; }
-.about { font-size: 0.85rem; color: var(--muted); margin: 0; max-width: 65ch; }
+.tablewrap { overflow-x: auto; }
+td.val { cursor: text; font-weight: 500; }
+td.val input { width: 7em; min-height: 24px; padding: 1px 4px; }
+td canvas { display: block; width: 120px; height: 22px; }
+.x { border: 0; background: none; color: var(--muted); padding: 0 4px; min-height: 0; }
+.addrow { display: flex; gap: 6px; margin-top: 8px; }
+.addrow input { flex: 1 1 auto; }
+
+.toggles { display: flex; flex-direction: column; gap: 6px; }
+.toggle { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 2px 8px; align-items: start; font-size: 0.85rem; }
+.toggle input { margin-top: 3px; }
+.toggle small { grid-column: 2; color: var(--muted); font-size: 0.75rem; }
+.evrow { display: grid; grid-template-columns: minmax(0, 1fr) auto auto auto; gap: 8px; align-items: center; font-size: 0.82rem; padding: 2px 0; border-bottom: 1px solid var(--line); }
+.evrow span.n { font: 0.75rem var(--mono); color: var(--muted); min-width: 2.5em; text-align: right; }
+.empty { color: var(--muted); font-size: 0.82rem; margin: 0; }
+
+#conout { height: 190px; overflow: auto; margin: 0 0 6px; white-space: pre; background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; }
+#conout .cmd { color: var(--accent); }
+#conin { width: 100%; }
+#mem { overflow-x: auto; white-space: pre; margin: 6px 0 0; }
+#log { font: 0.75rem/1.45 var(--mono); max-height: 320px; overflow: auto; overflow-wrap: anywhere; }
+#log div.event { color: var(--warn); } #log div.break { color: var(--bad); } #log div.mismatch { color: var(--bad); } #log div.state { color: var(--good); }
+#log:empty::before { content: 'Events, breaks, saved states and verification mismatches appear here.'; color: var(--muted); }
+.about { font-size: 0.85rem; color: var(--muted); margin: 0; max-width: 75ch; }
 @media (prefers-reduced-motion: reduce) { .keys button:active { transform: none; } }
 </style>
 
@@ -88,55 +137,101 @@ td.good { color: var(--good); } td.bad { color: var(--bad); font-weight: 500; }
   <header>
     <div>
       <h1>Sentinel <span>128</span> JS</h1>
-      <p class="sub">C128 code on a 6502 core, chips replaced by JS</p>
+      <p class="sub">C64 game and C128 port on a 6502 core, with a debugger</p>
     </div>
-    <div class="controls">
-      <label class="field" for="program">Test
-        <select id="program"><option value="cockpit">Cockpit</option><option value="map" selected>Sector map</option><option value="flight">Flight kernel</option></select>
+    <div class="row">
+      <label class="field" for="program">Program
+        <select id="program">
+          <option value="c64game" selected>C64 game (1351 patch)</option>
+          <option value="cockpit">C128 cockpit</option>
+          <option value="map">C128 sector map</option>
+          <option value="flight">C128 flight kernel</option>
+        </select>
       </label>
       <label class="field" for="mode">JS ports
         <select id="mode"><option value="verify" selected>Verify vs 6502</option><option value="replace">Replace 6502</option><option value="trace">Off (trace only)</option></select>
       </label>
       <button id="restart" type="button">Restart</button>
-      <button id="pause" type="button">Pause</button>
       <label class="check" for="mute"><input id="mute" type="checkbox"> Mute</label>
     </div>
   </header>
 
-  <div class="monitor" id="screen" tabindex="0">
-    <canvas id="vic" width="384" height="272"></canvas>
-    <span class="tag">VIC-IIe · 40 col</span>
-    <span id="lockhint">Click to capture the mouse · drag on touch</span>
-    <div id="overlay" style="display:none"></div>
-  </div>
-
-  <div class="keys">
-    <button id="bLeft" class="mouse" type="button">Fire / L</button>
-    <button id="bRight" class="mouse" type="button">R btn</button>
-    <button id="bBoth" class="mouse" type="button">L+R</button>
-    <button id="kR" type="button">R</button>
-    <button id="kT" type="button">T</button>
-    <button id="kV" type="button">V</button>
-    <button id="kSpace" type="button">SPACE</button>
-  </div>
-  <p id="help"></p>
-
-  <div class="monitor" id="vdcwrap">
-    <canvas id="vdc" width="640" height="200"></canvas>
-    <span class="tag">VDC · 80 col</span>
-  </div>
-
   <div class="bench">
-    <section class="card">
-      <h2>Hooked routines <span id="frame"></span></h2>
-      <div class="tablewrap"><table id="hooks"></table></div>
-    </section>
-    <section class="card">
-      <h2>Verification log</h2>
-      <div id="log"></div>
-    </section>
+    <div class="col">
+      <div class="monitor" id="screen" tabindex="0">
+        <canvas id="vic" width="384" height="272"></canvas>
+        <span class="tag" id="victag">VIC-II</span>
+        <span id="lockhint">Click to capture the mouse · drag on touch</span>
+        <div id="overlay" style="display:none"></div>
+      </div>
+
+      <div class="transport">
+        <button id="run" type="button" class="primary">Pause</button>
+        <button id="step" type="button" title="One instruction">Step</button>
+        <button id="frame" type="button" title="Run to the end of this frame">Frame</button>
+        <button id="frames50" type="button" title="Run 50 frames, then pause">+50</button>
+        <select id="speed" aria-label="Speed"><option value="1" selected>1x</option><option value="2">2x</option><option value="4">4x</option><option value="max">Max</option></select>
+        <span class="sep"></span>
+        <select id="slot" aria-label="State slot"><option>1</option><option>2</option><option>3</option><option>4</option></select>
+        <button id="save" type="button">Save state</button>
+        <button id="load" type="button">Load</button>
+        <button id="export" type="button">Export</button>
+        <button id="import" type="button">Import</button>
+        <input id="importfile" type="file" accept=".json,.state,application/json" hidden>
+      </div>
+      <div id="status"></div>
+
+      <div class="keys" id="keys"></div>
+      <p id="help"></p>
+
+      <div class="monitor" id="vdcwrap">
+        <canvas id="vdc" width="640" height="200"></canvas>
+        <span class="tag">VDC · 80 col</span>
+      </div>
+    </div>
+
+    <div class="col">
+      <section class="card">
+        <h2>CPU <small id="breakwhy"></small></h2>
+        <div id="regs" class="mono"></div>
+        <div id="dis" class="dis mono"></div>
+      </section>
+
+      <section class="card">
+        <h2>Watches <small>click a value to change it</small></h2>
+        <div class="tablewrap"><table id="watches"></table></div>
+        <form class="addrow" id="addwatch"><input id="watchaddr" type="text" placeholder="LABEL or $addr" aria-label="Address to watch"><button type="submit">Add</button></form>
+      </section>
+
+      <div class="split">
+        <section class="card">
+          <h2>Cheats</h2>
+          <div class="toggles" id="cheats"></div>
+          <h2 style="margin-top:12px">Events <small>log · pause</small></h2>
+          <div id="events"></div>
+        </section>
+        <section class="card">
+          <h2>Log</h2>
+          <div id="log"></div>
+        </section>
+      </div>
+
+      <section class="card">
+        <h2>Monitor <small>help lists the commands</small></h2>
+        <div id="conout" class="mono"></div>
+        <form id="conform"><input id="conin" type="text" autocomplete="off" spellcheck="false" placeholder="d GAMEOVER · bk HIT · w SHIELDS · fr PROTONS 9 · m $5400" aria-label="Monitor command"></form>
+        <div class="row" style="margin-top:8px"><label class="field" for="memaddr">Memory</label><input id="memaddr" type="text" value="SHIELDS" aria-label="Memory address" style="width:9em"></div>
+        <div id="mem" class="mono"></div>
+      </section>
+
+      <section class="card">
+        <h2>Hooked routines <span id="framectr"></span></h2>
+        <div class="tablewrap"><table id="hooks"></table></div>
+      </section>
+    </div>
   </div>
-  <p class="about">The unchanged 8502 binaries from c128-gui/cockpit, c128-map and c128-flight run on a JS 6502 core. Their VIC-IIe, VDC, SID, CIA and 1351 registers are handled by JS; the VIC screen is drawn line by line from the register writes logged at each raster position, so raster splits show as on the real chip. Routines are hooked by label from the assembler's symbol table; PLOTPIX, ERASEPIX and MOVCHK have JS ports that run beside the originals and are compared on every call.</p>
+
+  <p class="about">The unchanged binaries run on a JS 6502 core: the patched C64 game (Sentinel-1351_v8.prg) and the native C128 programs from c128-gui/cockpit, c128-map and c128-flight. The VIC is drawn line by line from the register writes logged at each raster position. Labels come from the assemblers' symbol tables and, for the C64 game, from js/c64-symbols.txt. Save states are kept in this browser.</p>
 </div>
 
 <!--SCRIPTS-->

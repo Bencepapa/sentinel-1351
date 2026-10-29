@@ -4,7 +4,10 @@
 // 2. map: runs the grid sweep and icons, compares the grid cells of the
 //    bitmap with the original game's bitmap (c128-map/ref/map-bitmap-6000.bin),
 //    exercises the cursor, the fast ticks and the second display
-// Writes PNG snapshots of both screens to outdir.
+// 3. cockpit: raster splits, crosshair, vertical-blank budget
+// 4. C64 game: boots, starts, debugger (breakpoints, write watches, stepping),
+//    save / load state (determinism, mid-frame), cheats and the game-over event
+// Writes PNG snapshots of the screens to outdir.
 'use strict';
 const fs = require('fs');
 const path = require('path');
@@ -14,6 +17,10 @@ const zlib = require('zlib');
 const ROOT = path.join(__dirname, '..');
 global.CPU6502 = require(path.join(ROOT, 'src/cpu6502.js'));
 global.SentinelFont = require(path.join(ROOT, 'src/font.js'));
+global.SentinelVideo = require(path.join(ROOT, 'src/video.js'));
+global.SentinelDisasm = require(path.join(ROOT, 'src/disasm.js'));
+const Debugger = require(path.join(ROOT, 'src/debugger.js'));
+const Profiles = require(path.join(ROOT, 'src/profiles.js'));
 const C128 = require(path.join(ROOT, 'src/machine.js'));
 const Video = require(path.join(ROOT, 'src/video.js'));
 const Hooks = require(path.join(ROOT, 'src/hooks.js'));
@@ -29,7 +36,7 @@ function check(cond, msg) { console.log((cond ? 'ok   ' : 'FAIL ') + msg); if (!
 
 function boot(name, mode) {
   const p = PROGRAMS[name];
-  const m = new C128();
+  const m = new C128(p.model);
   m.loadPrg(new Uint8Array(Buffer.from(p.prg, 'base64')));
   const hooks = new Hooks(m, p.symbols);
   const ported = Native.install(hooks, mode);
@@ -41,7 +48,6 @@ function run(m, hooks, frames, each) {
   for (let i = 0; i < frames; i++) {
     if (each) each(i);
     if (!m.runFrame()) return false;
-    hooks.endFrame();
   }
   return true;
 }
@@ -152,6 +158,96 @@ function report(hooks, label) {
   m.setKey(7, 4, true);
   run(m, hooks, 3);
   check(m.stopped === 'returned to BASIC', 'cockpit: SPACE returns to BASIC');
+}
+
+// ---- C64 game + debugger ------------------------------------------------------
+{
+  const { m, hooks, p } = boot('c64game', 'verify');
+  const dbg = new Debugger(m, hooks, 'c64game', Profiles.c64game);
+  const s = p.symbols;
+  let entered = -1;
+  hooks.on('GAMEENTRY', () => { if (entered < 0) entered = m.frame; });
+  run(m, hooks, 300);
+  check(entered > 0 && !m.stopped, `c64: depacker reaches the game (frame ${entered})`);
+  const hud = [...m.ram.subarray(0x5429, 0x5430)].map(c => String.fromCharCode(c)).join('');
+  check(hud === 'SHIELDS', `c64: HUD text on the screen ("${hud}")`);
+  snap(m, 'c64-title');
+
+  // start a game: fire on the title, fire on the difficulty menu
+  run(m, hooks, 300, i => { m.mouse.left = (i >= 0 && i < 10) || (i >= 150 && i < 160); });
+  const energy = dbg.watches.find(w => w.name === 'Energy');
+  const e1 = dbg.value(energy);
+  run(m, hooks, 200);
+  const e2 = dbg.value(energy);
+  check(e2 < e1 && e1 <= 9999, `c64: game running, energy counts down (${e1} -> ${e2})`);
+  check(dbg.value(dbg.watches[0]) === m.ram[s.SHIELDS] && m.ram[s.SHIELDS] > 0, `c64: shields = ${m.ram[s.SHIELDS]}`);
+  snap(m, 'c64-flight');
+
+  // breakpoint on the raster IRQ, then single steps
+  m.setBreak(s.IRQ, true);
+  let r = m.run();
+  check(r === 'break' && m.cpu.pc === s.IRQ, `c64: breakpoint stops at IRQ ($${s.IRQ.toString(16)}), line ${m.rasterLine()}`);
+  m.stepInstruction(); m.stepInstruction();
+  check(m.cpu.pc === s.IRQ + 2, `c64: two single steps (PC $${m.cpu.pc.toString(16)})`);
+  m.setBreak(s.IRQ, false);
+
+  // write watch on the last energy digit: stops in the energy routine
+  m.setWatch(s.ENERGY + 3, true);
+  for (let i = 0; i < 200 && (r = m.run()) !== 'break'; i++);
+  const wb = m.breakInfo;
+  check(r === 'break' && wb.type === 'watch' && wb.pc >= s.ENERGYTICK && wb.pc < s.ENERGYOUT,
+        `c64: write watch on the energy digit stops at $${wb && wb.pc.toString(16)} (${wb && wb.old} -> ${wb && wb.value})`);
+  m.setWatch(s.ENERGY + 3, false);
+
+  // save / load: the same frames after a load give the same memory
+  const hash = () => { let h = 0; for (let i = 0; i < 0x10000; i++) h = (h * 31 + m.ram[i]) | 0; return h; };
+  for (let i = 0; i < 1234; i++) m.stepInstruction();          // save in the middle of a frame
+  const raster = m.rasterLine();
+  dbg.save('t');
+  run(m, hooks, 60);
+  const h1 = hash(), f1 = m.frame;
+  dbg.load('t');
+  check(m.rasterLine() === raster, `c64: load state restores the raster position (line ${raster})`);
+  run(m, hooks, 60);
+  check(hash() === h1 && m.frame === f1, 'c64: after load, 60 frames give identical memory (deterministic)');
+  const text = m.stateToText();
+  const back = m.stateFromText(text);
+  check(back.arrays.ram.length === 0x10000 && back.cpu.pc === m.cpu.pc, `c64: state text round trip (${(text.length / 1024).toFixed(0)} KB)`);
+
+  // a hit, called directly: HIT lowers shields; invulnerable and frozen shields stop it
+  function callRoutine(addr) {
+    const c = m.cpu, ret = c.pc, sp = c.sp;
+    c.push(((ret - 1) >> 8) & 255); c.push((ret - 1) & 255); c.pc = addr;
+    for (let i = 0; i < 200000 && !(c.pc === ret && c.sp === sp); i++) m.stepInstruction();
+  }
+  dbg.setEvent(Profiles.c64game.events[1], true, false);       // log hits, no pause
+  m.ram[0xFD] = 0;
+  const sh0 = m.ram[s.SHIELDS];
+  callRoutine(s.HIT);
+  check(m.ram[s.SHIELDS] === sh0 - 1, `c64: HIT lowers shields (${sh0} -> ${m.ram[s.SHIELDS]})`);
+  dbg.setCheat('invuln', true);
+  callRoutine(s.HIT);
+  check(m.ram[s.SHIELDS] === sh0 - 1, 'c64: cheat Invulnerable: HIT changes nothing');
+  dbg.setCheat('invuln', false);
+  dbg.setCheat('shields', true);
+  const sys0 = [...m.ram.subarray(s.SYSTEMS, s.SYSTEMS + 8)].reduce((a, b) => a + b);
+  callRoutine(s.HIT);
+  const sys1 = [...m.ram.subarray(s.SYSTEMS, s.SYSTEMS + 8)].reduce((a, b) => a + b);
+  check(m.ram[s.SHIELDS] === sh0 - 1 && sys1 === sys0 - 1, 'c64: cheat Freeze shields: systems damaged, shields stay');
+  dbg.setCheat('shields', false);
+  check(dbg.log.filter(e => e.kind === 'event' && /Ship hit/.test(e.text)).length === 3, 'c64: event log saw the three hits');
+
+  // game over: shields lost -> the game-over event pauses the machine
+  dbg.exec('> SHIELDSLOST 01');
+  for (let i = 0; i < 300 && (r = m.run()) !== 'break'; i++);
+  check(r === 'break' && m.breakInfo.type === 'event' && m.breakInfo.name === 'Game over',
+        `c64: game-over event pauses at frame ${m.frame}`);
+  // monitor commands
+  const d = dbg.exec('d GAMEOVER 3');
+  check(d.length === 3 && /GAMEOVER/.test(d[0]), 'c64: monitor disassembles with labels: ' + d[0].trim());
+  check(/^PC=/.test(dbg.exec('r')[0]) && dbg.exec('m SHIELDS 1')[0].startsWith('$844F'), 'c64: monitor r / m');
+  run(m, hooks, 100);
+  snap(m, 'c64-gameover');
 }
 
 console.log(failures ? failures + ' check(s) failed' : 'all checks passed');

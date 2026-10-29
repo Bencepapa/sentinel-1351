@@ -26,16 +26,29 @@ var SentinelHooks = (function () {
 
   var P = Hooks.prototype;
 
+  // A label, or an address as a number / '$1234'.
   P.addr = function (name) {
+    if (typeof name === 'number') return name & 0xFFFF;
     var a = this.symbols[name];
+    if (a === undefined && /^\$[0-9a-f]{1,4}$/i.test(name)) a = parseInt(name.slice(1), 16);
     if (a === undefined) throw new Error('unknown label ' + name);
     return a;
+  };
+
+  // Label for an address (for the debugger), or null.
+  P.labelOf = function (a) {
+    if (!this.byAddr) {
+      this.byAddr = {};
+      for (var n in this.symbols) if (!(this.symbols[n] in this.byAddr)) this.byAddr[this.symbols[n]] = n;
+    }
+    return this.byAddr[a] || null;
   };
 
   P.handler = function (name) {
     var a = this.addr(name), h = this.handlers[a];
     if (!h) {
-      h = this.handlers[a] = { name: name, addr: a, mode: 'trace', fn: null,
+      if (typeof name === 'number' || name[0] === '$') name = this.labelOf(a) || '$' + ('000' + a.toString(16).toUpperCase()).slice(-4);
+      h = this.handlers[a] = { name: name, addr: a, mode: 'trace', fn: null, listeners: [],
                                calls: 0, callsLastFrame: 0, verified: 0, failed: 0 };
       this.at[a] = 1;
     }
@@ -43,6 +56,24 @@ var SentinelHooks = (function () {
   };
 
   P.trace = function (name) { this.handler(name); return this; };
+
+  // Call fn(machine, handler) every time the routine is entered (events, cheats).
+  // fn can stop the machine: m.breakRequest = {type: 'event', ...}.
+  P.on = function (name, fn) { this.handler(name).listeners.push(fn); return this; };
+  P.off = function (name, fn) {
+    var h = this.handler(name);
+    h.listeners = fn ? h.listeners.filter(function (f) { return f !== fn; }) : [];
+  };
+
+  // Skip a routine: it returns at once (RTS) without running. Used for cheats
+  // like 'no damage'. mode 'off' turns it back on.
+  P.skip = function (name, on) { return this.port(name, function () {}, on === false ? 'trace' : 'replace'); };
+
+  // Forget verifications in flight (after load state).
+  P.resetPending = function () {
+    for (var a in this.watches) if (!this.handlers[a]) this.at[a] = 0;
+    this.watches = {};
+  };
 
   P.port = function (name, fn, mode) {
     var h = this.handler(name);
@@ -82,6 +113,7 @@ var SentinelHooks = (function () {
     var h = this.handlers[pc];
     if (!h) { cpu.step(); return; }
     h.calls++;
+    for (var i = 0; i < h.listeners.length; i++) h.listeners[i](m, h);
     if (!h.fn || h.mode === 'trace' || h.mode === 'off' || m.writeLog) { cpu.step(); return; }
 
     var ctx = new Ctx(this, cpu);

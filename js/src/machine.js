@@ -1,25 +1,35 @@
-// High-level C128 machine for the Sentinel C128 code.
+// High-level C64 / C128 machine for the Sentinel code.
 //
-// The 8502 code runs unchanged on a 6502 core. The chips around it are not
-// emulated cycle by cycle; they are register files that JS reads once per
-// frame (VIC-IIe bitmap/text/sprites, VDC text screen) or turns into WebAudio
-// (SID). Routines can be hooked by label (see hooks.js) to trace them, or to
-// replace them with JS ports that are verified against the original code.
+// The 6502/8502 code runs unchanged on a 6502 core. The chips around it are
+// register files: the VIC is drawn line by line from logged register writes
+// (video.js), the SID is replayed in an AudioWorklet (audio.js), the VDC keeps
+// its own RAM. Two models:
 //
-// No ROMs are needed: the tests run with interrupts off, sync on $D012 and talk
-// to the hardware directly. The VDC character set and the VIC character ROM are
-// replaced by an original font (font.js).
+//   c128  native C128 mode as the tests use it: MMU configuration register at
+//         $FF00/$D500, VDC at $D600, $D030 2 MHz bit
+//   c64   C64 memory map from the processor port $00/$01, used by the full
+//         patched game (Sentinel-1351_v8.prg)
+//
+// No ROMs: the programs bank them out or never call them. ROM areas read as RAM,
+// the character ROM is an original font (font.js).
+//
+// Debugging lives here too, because it has to sit in the instruction loop:
+// PC breakpoints, write watchpoints, frozen addresses, instruction / frame
+// stepping that can stop in the middle of a frame, and save / load state.
 'use strict';
 
 var C128 = (function () {
   var CPU = (typeof CPU6502 !== 'undefined') ? CPU6502 : require('./cpu6502.js');
+  var Video = (typeof SentinelVideo !== 'undefined') ? SentinelVideo : require('./video.js');
+  var Font = (typeof SentinelFont !== 'undefined') ? SentinelFont : require('./font.js');
 
   var PAL_LINES = 312, PAL_LINE_CYCLES = 63;
   var FRAME_CYCLES = PAL_LINES * PAL_LINE_CYCLES;   // 19656 at 1 MHz
-  var RETURN_TRAP = 0xFFF0;                         // RTS from START lands here
+  var RETURN_TRAP = 0xFFF0;                         // RTS from START lands here (C128 tests)
 
-  function Machine() {
+  function Machine(model) {
     var m = this;
+    this.model = model === 'c64' ? 'c64' : 'c128';
     this.ram = new Uint8Array(0x10000);
     this.colorRam = new Uint8Array(0x400);
     this.vic = new Uint8Array(0x40);
@@ -32,13 +42,19 @@ var C128 = (function () {
     this.hooks = null;            // set by Hooks
     this.writeLog = null;         // addresses written while a port is verified
     this.sidLog = [];             // [cycleInFrame, reg, value] for audio
-    this.vicLog = [];             // [line, cycleInLine, reg, value]: mid-frame VIC changes
+    this.vicLog = [];             // [line, cycleInLine, reg, value]: VIC writes this frame
     this.ptrLog = [];             // [line, cycleInLine, addr, value]: sprite pointer writes
     this.vicStart = new Uint8Array(0x40);   // VIC registers when the frame began
     this.ptrStart = new Uint8Array(512);    // sprite pointers of every 1K screen then
-    this.frame = 0;
-    this.frameStart = 0;
-    this.stopped = null;          // reason the program stopped
+    // debugging
+    this.bpAt = new Uint8Array(0x10000);    // PC breakpoints
+    this.wpAt = new Uint8Array(0x10000);    // write watchpoints
+    this.frozenAt = new Uint8Array(0x10000);
+    this.frozen = {};                        // addr -> value
+    this.watchHit = null;
+    this.breakInfo = null;                   // why the last run() stopped early
+    this.skipBreakAt = -1;
+    this.video = new Video.Vic(this);
     this.reset();
   }
 
@@ -52,14 +68,18 @@ var C128 = (function () {
     this.vdcRam.fill(0);
     this.vdcReg.fill(0);
     this.mmu.fill(0);
-    this.mmuCR = 0x00;            // after RUN from BASIC: ROMs + I/O
-    // VIC as BASIC leaves it: text at $0400, light blue on blue
+    this.mmuCR = 0x00;            // C128 after RUN from BASIC: ROMs + I/O
+    this.port0 = 0x2F;            // C64 processor port: DDR, data
+    this.port1 = 0x37;
+    // VIC as BASIC leaves it: text at $0400
     this.vic[0x11] = 0x1B; this.vic[0x16] = 0xC8; this.vic[0x18] = 0x14;
-    this.vic[0x20] = 13; this.vic[0x21] = 11;
+    this.vic[0x20] = 14; this.vic[0x21] = 6;
     this.vic[0x30] = 0xFC;
+    this.vicIrq = 0;              // latched interrupt bits of $D019
+    this.collSS = 0; this.collSB = 0;
     // CIA1: keyboard columns out, rows in. CIA2: VIC bank 0.
-    this.cia1 = { pra: 0x7F, prb: 0xFF, ddra: 0xFF, ddrb: 0x00 };
-    this.cia2 = { pra: 0x97, prb: 0xFF, ddra: 0x3F, ddrb: 0x00 };
+    this.cia1 = { pra: 0x7F, prb: 0xFF, ddra: 0xFF, ddrb: 0x00, icrMask: 0 };
+    this.cia2 = { pra: 0x97, prb: 0xFF, ddra: 0x3F, ddrb: 0x00, icrMask: 0 };
     // VDC as the KERNAL sets it up: 80x25, screen $0000, attributes $0800,
     // character set $2000, 16 bytes per character.
     var r = this.vdcReg;
@@ -67,7 +87,7 @@ var C128 = (function () {
     r[12] = 0x00; r[13] = 0x00; r[20] = 0x08; r[21] = 0x00;
     r[22] = 0x78; r[23] = 0x08; r[25] = 0x47; r[26] = 0xF0; r[27] = 0; r[28] = 0x2F;
     this.vdcIndex = 0;
-    if (typeof SentinelFont !== 'undefined') SentinelFont.loadVdc(this.vdcRam, 0x2000);
+    Font.loadVdc(this.vdcRam, 0x2000);
     this.vdcRam.fill(0x20, 0, 0x800);                 // blank screen
     this.vdcRam.fill(0x8D, 0x800, 0x1000);            // KERNAL default attribute
     // input
@@ -76,9 +96,16 @@ var C128 = (function () {
     this.mouse = { present: true, x: 0, y: 0, left: false, right: false };
     this.noise = 0x7FFFF8;
     this.noisePhase = 0;
+    this.osc3Time = 0;
     this.sidLog.length = 0;
     this.stopped = null;
+    this.romReads = 0;
     this.cpu.jam = null;
+    this.cpu.cycles = 0;
+    this.frame = 0;
+    this.frameStart = 0;
+    this.frameOpen = false;
+    this.lastLine = 0;
   };
 
   // ---- loading -------------------------------------------------------------
@@ -89,7 +116,7 @@ var C128 = (function () {
     return load;
   };
 
-  // Start a program at its entry, as SYS from BASIC 7 would: RTS at the end
+  // Start a program at its entry, as SYS from BASIC would: RTS at the end
   // returns to a trap address that stops the machine.
   P.start = function (entry) {
     var c = this.cpu;
@@ -99,37 +126,117 @@ var C128 = (function () {
     c.pc = entry;
     this.frameStart = c.cycles;
     this.frame = 0;
+    this.frameOpen = false;
     this.stopped = null;
   };
 
   // ---- timing --------------------------------------------------------------
 
-  P.clockMHz = function () { return (this.vic[0x30] & 1) ? 2 : 1; };
+  P.clockMHz = function () { return (this.model === 'c128' && (this.vic[0x30] & 1)) ? 2 : 1; };
   P.cycleInFrame = function () { return this.cpu.cycles - this.frameStart; };
   P.rasterLine = function () {
     var c = this.cycleInFrame();
     return Math.floor(c / (PAL_LINE_CYCLES * this.clockMHz())) % PAL_LINES;
   };
+  P.rasterCycle = function () {
+    return Math.floor(this.cycleInFrame() / this.clockMHz()) % PAL_LINE_CYCLES;
+  };
 
-  // Run one PAL frame. Returns false once the program has stopped.
-  P.runFrame = function () {
-    if (this.stopped) return false;
-    var c = this.cpu, hooks = this.hooks;
-    var end = this.frameStart + FRAME_CYCLES * this.clockMHz();
+  P.beginFrame = function () {
+    this.frameEnd = this.frameStart + FRAME_CYCLES * this.clockMHz();
     this.sidLog.length = 0;
     this.vicLog.length = 0;
     this.ptrLog.length = 0;
     this.vicStart.set(this.vic);
     for (var b = 0; b < 64; b++) this.ptrStart.set(this.ram.subarray(b * 0x400 + 0x3F8, b * 0x400 + 0x400), b * 8);
-    while (c.cycles < end) {
-      if (c.pc === RETURN_TRAP) { this.stopped = 'returned to BASIC'; break; }
-      if (hooks && hooks.at[c.pc]) { hooks.enter(c.pc); if (this.stopped) break; continue; }
-      c.step();
-      if (c.jam) { this.stopped = c.jam; break; }
-    }
-    this.frameStart = end;
+    this.video.beginFrame();
+    this.frameOpen = true;
+    this.lastLine = 0;
+    this.checkRaster(0);
+  };
+
+  P.endFrame = function () {
+    this.video.renderTo(PAL_LINES);
+    this.frameStart = this.frameEnd;
     this.frame++;
-    return !this.stopped;
+    this.frameOpen = false;
+    if (this.hooks) this.hooks.endFrame();
+    if (this.onFrame) this.onFrame(this);
+  };
+
+  // Run until the end of the current frame. Returns 'frame' when it ended,
+  // 'break' when a breakpoint / watchpoint / hook stopped it (this.breakInfo
+  // says why; the next run() continues the same frame), 'stopped' when the
+  // program ended or the CPU jammed.
+  P.run = function () {
+    if (this.stopped) return 'stopped';
+    if (!this.frameOpen) this.beginFrame();
+    var c = this.cpu, hooks = this.hooks, bp = this.bpAt;
+    this.breakInfo = null;
+    while (c.cycles < this.frameEnd) {
+      var pc = c.pc;
+      if (bp[pc] && pc !== this.skipBreakAt) {
+        this.breakInfo = { type: 'break', pc: pc };
+        this.skipBreakAt = pc;
+        return 'break';
+      }
+      this.skipBreakAt = -1;
+      if (this.exec()) return this.stopped ? 'stopped' : 'break';
+    }
+    this.endFrame();
+    return 'frame';
+  };
+
+  // One instruction (plus any interrupt it lets in). Returns true if the
+  // machine must stop: the program ended, the CPU jammed, a watchpoint fired
+  // or a hook asked for a break.
+  P.exec = function () {
+    var c = this.cpu, pc = c.pc;
+    if (pc === RETURN_TRAP) { this.stopped = 'returned to BASIC'; return true; }
+    this.instrPC = pc;
+    if (this.hooks && this.hooks.at[pc]) this.hooks.enter(pc); else c.step();
+    if (c.jam) { this.stopped = c.jam; return true; }
+    if (this.stopped) return true;
+    var line = this.rasterLine();
+    if (line !== this.lastLine) this.checkRaster(line);
+    if ((this.vicIrq & this.vic[0x1A] & 0x0F) && !(c.p & 4)) c.irq();
+    if (this.watchHit) {
+      this.breakInfo = this.watchHit; this.watchHit = null;
+      return true;
+    }
+    if (this.breakRequest) {
+      this.breakInfo = this.breakRequest; this.breakRequest = null;
+      return true;
+    }
+    return false;
+  };
+
+  // Raster compare: latch bit 0 of $D019 on the line that matches.
+  P.checkRaster = function (line) {
+    var cmp = this.vic[0x12] | ((this.vic[0x11] & 0x80) << 1);
+    var from = this.lastLine;
+    this.lastLine = line;
+    // the lines entered since the last check: (from, line], or just 'line' at frame start
+    if (line === cmp || (line > from && cmp > from && cmp <= line)) this.vicIrq |= 1;
+  };
+
+  // Step one instruction, finishing the frame if it ends. Returns as run().
+  P.stepInstruction = function () {
+    if (this.stopped) return 'stopped';
+    if (!this.frameOpen) this.beginFrame();
+    this.skipBreakAt = -1;
+    this.breakInfo = null;
+    if (this.exec()) return this.stopped ? 'stopped' : 'break';
+    if (this.cpu.cycles >= this.frameEnd) { this.endFrame(); return 'frame'; }
+    return 'step';
+  };
+
+  // Compatibility: run a whole frame, ignoring breakpoints' "stop" (they still
+  // stop if set). Returns false once the program has stopped.
+  P.runFrame = function () {
+    var r;
+    do { r = this.run(); } while (r === 'break' && !this.breakInfo);
+    return r !== 'stopped';
   };
 
   // ---- memory map ------------------------------------------------------------
@@ -140,59 +247,135 @@ var C128 = (function () {
     log.push(Math.floor(c / PAL_LINE_CYCLES), c % PAL_LINE_CYCLES, what, v);
   };
 
-  P.ioVisible = function () { return (this.mmuCR & 1) === 0; };
+  // C64 banking: bits 0-2 of the port (inputs read high)
+  P.c64Bits = function () { return (this.port1 | ~this.port0) & 7; };
+
+  P.ioVisible = function () {
+    if (this.model === 'c128') return (this.mmuCR & 1) === 0;
+    var b = this.c64Bits();
+    return (b & 4) && (b & 3);
+  };
 
   P.read = function (a) {
+    if (this.model === 'c64') {
+      if (a < 2) return a === 0 ? this.port0 : ((this.port1 & this.port0) | (~this.port0 & 0x17)) & 0xFF;
+      if (a >= 0xD000 && a < 0xE000) {
+        var b = this.c64Bits();
+        if ((b & 3) && (b & 4)) return this.ioRead(a);
+        if ((b & 3) && !(b & 4)) return Font.rom[a & 0x7FF];
+      }
+      return this.ram[a];
+    }
     if (a >= 0xD000 && a < 0xE000 && this.ioVisible()) return this.ioRead(a);
     if (a >= 0xFF00 && a <= 0xFF04) return a === 0xFF00 ? this.mmuCR : 0;
     return this.ram[a];
   };
 
+  // Read without side effects (debugger, watches): I/O shows the register file.
+  P.peek = function (a) {
+    a &= 0xFFFF;
+    if (a >= 0xD000 && a < 0xE000 && this.ioVisible()) {
+      if (a < 0xD400) {
+        var r = a & 0x3F;
+        if (r === 0x12) return this.rasterLine() & 0xFF;
+        if (r === 0x19) return this.vicIrq;
+        if (r === 0x1E) return this.collSS;
+        if (r === 0x1F) return this.collSB;
+        return this.vic[r];
+      }
+      if (a < 0xD800) return a < 0xD500 ? this.sid[a & 0x1F] : 0xFF;
+      if (a < 0xDC00) return this.colorRam[a & 0x3FF];
+      return this.ram[a];
+    }
+    if (this.model === 'c64' && a < 2) return a === 0 ? this.port0 : this.port1;
+    return this.ram[a];
+  };
+
+  // Write from the debugger: RAM always (also under I/O), or I/O when asked.
+  P.poke = function (a, v, io) {
+    a &= 0xFFFF; v &= 0xFF;
+    if (io && a >= 0xD000 && a < 0xE000) { this.ioWrite(a, v); return; }
+    this.ram[a] = v;
+    if (this.frozenAt[a]) this.frozen[a] = v;
+  };
+
   P.write = function (a, v) {
     if (this.writeLog) this.writeLog.push(a);
-    if (a >= 0xD000 && a < 0xE000 && this.ioVisible()) { this.ioWrite(a, v); return; }
-    if (a === 0xFF00) { this.mmuCR = v; return; }
-    if (a > 0xFF00 && a <= 0xFF04) { this.mmuCR = this.mmu[a - 0xFF00]; return; }
+    if (this.wpAt[a] && !this.watchHit) {
+      this.watchHit = { type: 'watch', addr: a, old: this.peek(a), value: v, pc: this.instrPC };
+    }
+    if (this.model === 'c64') {
+      if (a < 2) { if (a === 0) this.port0 = v; else this.port1 = v; this.ram[a] = v; return; }
+      if (a >= 0xD000 && a < 0xE000 && this.ioVisible()) { this.ioWrite(a, v); return; }
+    } else {
+      if (a >= 0xD000 && a < 0xE000 && this.ioVisible()) { this.ioWrite(a, v); return; }
+      if (a === 0xFF00) { this.mmuCR = v; return; }
+      if (a > 0xFF00 && a <= 0xFF04) { this.mmuCR = this.mmu[a - 0xFF00]; return; }
+    }
+    if (this.frozenAt[a]) return;
     if ((a & 0x3F8) === 0x3F8) this.logAt(this.ptrLog, a, v);
     this.ram[a] = v;
   };
 
   P.ioRead = function (a) {
     if (a < 0xD400) return this.vicRead(a & 0x3F);
-    if (a < 0xD500) return this.sidRead(a & 0x1F);
-    if (a < 0xD600) return (a & 0xFF) === 0 ? this.mmuCR : this.mmu[(a & 0x0F) % 12];
-    if (a < 0xD700) return (a & 1) ? this.vdcRead(this.vdcIndex) : 0x80 | 0x02;  // status: ready, version 2
-    if (a < 0xD800) return 0xFF;
-    if (a < 0xDC00) return this.colorRam[a & 0x3FF] & 0x0F;
+    if (this.model === 'c64') {
+      if (a < 0xD800) return this.sidRead(a & 0x1F);
+    } else {
+      if (a < 0xD500) return this.sidRead(a & 0x1F);
+      if (a < 0xD600) return (a & 0xFF) === 0 ? this.mmuCR : this.mmu[(a & 0x0F) % 12];
+      if (a < 0xD700) return (a & 1) ? this.vdcRead(this.vdcIndex) : 0x80 | 0x02;  // status: ready, version 2
+      if (a < 0xD800) return 0xFF;
+    }
+    if (a < 0xDC00) return (this.colorRam[a & 0x3FF] & 0x0F) | 0xF0;
     if (a < 0xDD00) return this.cia1Read(a & 0x0F);
     if (a < 0xDE00) return this.cia2Read(a & 0x0F);
     return 0xFF;
   };
 
   P.ioWrite = function (a, v) {
-    if (a < 0xD400) { this.logAt(this.vicLog, a & 0x3F, v); this.vic[a & 0x3F] = v; return; }
-    if (a < 0xD500) { this.sidWrite(a & 0x1F, v); return; }
-    if (a < 0xD600) { if ((a & 0xFF) === 0) this.mmuCR = v; else this.mmu[(a & 0x0F) % 12] = v; return; }
-    if (a < 0xD700) { if (a & 1) this.vdcWrite(this.vdcIndex, v); else this.vdcIndex = v & 0x3F; return; }
-    if (a < 0xD800) return;
+    if (a < 0xD400) { this.vicWrite(a & 0x3F, v); return; }
+    if (this.model === 'c64') {
+      if (a < 0xD800) { this.sidWrite(a & 0x1F, v); return; }
+    } else {
+      if (a < 0xD500) { this.sidWrite(a & 0x1F, v); return; }
+      if (a < 0xD600) { if ((a & 0xFF) === 0) this.mmuCR = v; else this.mmu[(a & 0x0F) % 12] = v; return; }
+      if (a < 0xD700) { if (a & 1) this.vdcWrite(this.vdcIndex, v); else this.vdcIndex = v & 0x3F; return; }
+      if (a < 0xD800) return;
+    }
     if (a < 0xDC00) { this.colorRam[a & 0x3FF] = v & 0x0F; return; }
     if (a < 0xDD00) { this.ciaWrite(this.cia1, a & 0x0F, v); return; }
     if (a < 0xDE00) { this.ciaWrite(this.cia2, a & 0x0F, v); return; }
   };
 
-  // ---- VIC-IIe registers -------------------------------------------------
+  // ---- VIC registers -------------------------------------------------------
+
+  P.vicWrite = function (r, v) {
+    if (r === 0x19) { this.vicIrq &= ~v & 0x0F; return; }      // acknowledge
+    if (r === 0x1E || r === 0x1F) return;
+    if (r === 0x30 && this.model === 'c64') return;
+    this.logAt(this.vicLog, r, v);
+    this.vic[r] = v;
+    if (r === 0x12 || r === 0x11) {
+      // the compare matches at once if it is set to the current line
+      var cmp = this.vic[0x12] | ((this.vic[0x11] & 0x80) << 1);
+      if (cmp === this.rasterLine() && this.rasterCycle() === 0) this.vicIrq |= 1;
+    }
+  };
 
   P.vicRead = function (r) {
-    var line;
+    var line, v;
     switch (r) {
       case 0x11: line = this.rasterLine(); return (this.vic[0x11] & 0x7F) | ((line & 0x100) >> 1);
       case 0x12: return this.rasterLine() & 0xFF;
-      case 0x1E: case 0x1F: return 0;            // no collisions reported
+      case 0x19: return this.vicIrq | 0x70 | ((this.vicIrq & this.vic[0x1A] & 0x0F) ? 0x80 : 0);
+      case 0x1E: this.video.renderTo(this.rasterLine()); v = this.collSS; this.collSS = 0; return v;
+      case 0x1F: this.video.renderTo(this.rasterLine()); v = this.collSB; this.collSB = 0; return v;
       case 0x16: return this.vic[r] | 0xC0;
       case 0x18: return this.vic[r] | 0x01;
-      case 0x19: case 0x1A: return this.vic[r] | 0xF0;
-      case 0x2F: return this.vic[r] | 0xF8;
-      case 0x30: return this.vic[r] | 0xFC;
+      case 0x1A: return this.vic[r] | 0xF0;
+      case 0x2F: return this.model === 'c128' ? this.vic[r] | 0xF8 : 0xFF;
+      case 0x30: return this.model === 'c128' ? this.vic[r] | 0xFC : 0xFF;
     }
     if (r >= 0x20 && r <= 0x2E) return this.vic[r] | 0xF0;
     if (r > 0x30) return 0xFF;
@@ -213,6 +396,7 @@ var C128 = (function () {
       case 1: cia.prb = v; break;
       case 2: cia.ddra = v; break;
       case 3: cia.ddrb = v; break;
+      case 0x0D: if (v & 0x80) cia.icrMask |= v & 0x1F; else cia.icrMask &= ~v; break;
     }
   };
 
@@ -284,9 +468,9 @@ var C128 = (function () {
     return (v << 1) & 0x7E;
   };
 
-  // Voice 3 oscillator output. Only the noise waveform matters here (the
-  // tests use it as a random source), so it is the SID's 23-bit LFSR clocked
-  // by the voice 3 accumulator.
+  // Voice 3 oscillator output. Only the noise waveform matters here (used as a
+  // random source), so it is the SID's 23-bit LFSR clocked by the voice 3
+  // accumulator.
   P.osc3 = function () {
     var now = this.cpu.cycles;
     var freq = this.sid[0x0E] | (this.sid[0x0F] << 8);
@@ -355,8 +539,81 @@ var C128 = (function () {
     this.mouse.y = (this.mouse.y + dy) & 0x3F;
   };
 
+  // ---- debugging -------------------------------------------------------------
+
+  P.setBreak = function (a, on) { this.bpAt[a & 0xFFFF] = on ? 1 : 0; };
+  P.setWatch = function (a, on) { this.wpAt[a & 0xFFFF] = on ? 1 : 0; };
+  P.freeze = function (a, v) {
+    a &= 0xFFFF;
+    if (v === null || v === undefined) { this.frozenAt[a] = 0; delete this.frozen[a]; return; }
+    this.ram[a] = v & 0xFF; this.frozenAt[a] = 1; this.frozen[a] = v & 0xFF;
+  };
+
+  // ---- save / load state -------------------------------------------------------
+
+  var ARRAYS = ['ram', 'colorRam', 'vic', 'sid', 'vdcRam', 'vdcReg', 'mmu', 'vicStart', 'ptrStart', 'keys'];
+  var SCALARS = ['model', 'mmuCR', 'port0', 'port1', 'vicIrq', 'collSS', 'collSB', 'vdcIndex', 'joy2',
+                 'noise', 'noisePhase', 'osc3Time', 'stopped', 'frame', 'frameStart', 'frameEnd',
+                 'frameOpen', 'lastLine'];
+
+  P.saveState = function () {
+    var s = { version: 1, cpu: {}, arrays: {}, cia1: Object.assign({}, this.cia1),
+              cia2: Object.assign({}, this.cia2), mouse: Object.assign({}, this.mouse),
+              vicLog: this.vicLog.slice(), ptrLog: this.ptrLog.slice(), sidLog: this.sidLog.slice()};
+    var self = this;
+    ['a', 'x', 'y', 'sp', 'pc', 'p', 'cycles'].forEach(function (k) { s.cpu[k] = self.cpu[k]; });
+    ARRAYS.forEach(function (k) { if (!(k === 'vdcRam' && self.model === 'c64')) s.arrays[k] = self[k].slice(); });
+    SCALARS.forEach(function (k) { s[k] = self[k]; });
+    return s;
+  };
+
+  P.loadState = function (s) {
+    var self = this;
+    if (s.model !== this.model) throw new Error('state is for a ' + s.model + ', this machine is a ' + this.model);
+    ['a', 'x', 'y', 'sp', 'pc', 'p', 'cycles'].forEach(function (k) { self.cpu[k] = s.cpu[k]; });
+    this.cpu.jam = null;
+    ARRAYS.forEach(function (k) { if (s.arrays[k]) self[k].set(s.arrays[k]); });
+    SCALARS.forEach(function (k) { self[k] = s[k]; });
+    this.cia1 = Object.assign({}, s.cia1); this.cia2 = Object.assign({}, s.cia2);
+    Object.assign(this.mouse, s.mouse);
+    this.vicLog = s.vicLog.slice(); this.ptrLog = s.ptrLog.slice(); this.sidLog = s.sidLog.slice();
+    // frozen addresses are debugger settings, not machine state: they stay and win
+    for (var a in this.frozen) this.ram[a] = this.frozen[a];
+    this.writeLog = null; this.watchHit = null; this.breakInfo = null; this.skipBreakAt = this.cpu.pc;
+    if (this.hooks) this.hooks.resetPending();
+    // re-render the part of the frame that already ran
+    this.video.replay(this.frameOpen ? this.rasterLine() : PAL_LINES);
+  };
+
+  // Compact text form (base64 of a JSON with base64 arrays), for files / storage.
+  P.stateToText = function (s) {
+    s = s || this.saveState();
+    var o = Object.assign({}, s, { arrays: {} });
+    for (var k in s.arrays) o.arrays[k] = b64(s.arrays[k]);
+    return JSON.stringify(o);
+  };
+  P.stateFromText = function (t) {
+    var o = JSON.parse(t);
+    for (var k in o.arrays) o.arrays[k] = unb64(o.arrays[k]);
+    return o;
+  };
+
+  function b64(u8) {
+    if (typeof Buffer !== 'undefined') return Buffer.from(u8).toString('base64');
+    var s = '';
+    for (var i = 0; i < u8.length; i += 0x8000) s += String.fromCharCode.apply(null, u8.subarray(i, i + 0x8000));
+    return btoa(s);
+  }
+  function unb64(t) {
+    if (typeof Buffer !== 'undefined') return new Uint8Array(Buffer.from(t, 'base64'));
+    var s = atob(t), u = new Uint8Array(s.length);
+    for (var i = 0; i < s.length; i++) u[i] = s.charCodeAt(i);
+    return u;
+  }
+
   Machine.FRAME_CYCLES = FRAME_CYCLES;
   Machine.LINE_CYCLES = PAL_LINE_CYCLES;
+  Machine.LINES = PAL_LINES;
   Machine.RETURN_TRAP = RETURN_TRAP;
   return Machine;
 })();

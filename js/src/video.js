@@ -1,11 +1,15 @@
-// Frame renderers: the VIC-IIe screen (40 columns) and the VDC screen
-// (80 columns).
+// Frame renderers: the VIC-II / VIC-IIe screen and the VDC screen (80 columns).
 //
 // The VIC screen is drawn line by line from the register state at each raster
 // position: the machine logs every VIC register write and sprite pointer write
 // with its line and cycle, so raster splits (text strip / bitmap / text strip,
 // colour bars, sprites reused lower on the screen) come out as on the real chip.
 // A write in the middle of a line takes effect from the matching pixel.
+//
+// Rendering is incremental: the machine asks for lines up to the current raster
+// when the program reads the collision registers, when it pauses in the middle
+// of a frame, and at the end of every frame. Sprite-sprite and sprite-background
+// collisions are found while drawing, as the VIC does.
 'use strict';
 
 var SentinelVideo = (function () {
@@ -38,27 +42,78 @@ var SentinelVideo = (function () {
   }
   var VICC = rgba(VIC_PAL), VDCC = rgba(VDC_PAL);
 
-  // ---- VIC-IIe ---------------------------------------------------------------
-
   // Canvas x where a write in cycle c of a line takes effect.
   function cycleX(c) { return c * 8 - 96; }
 
-  // The C128's VIC sees the character ROM at VIC address $1000-$1FFF (found on
-  // the real machine in banks 0 and 1; bank 2 as on the C64).
-  function vicByte(m, bank, off) {
-    if (bank !== 0xC000 && off >= 0x1000 && off < 0x2000) return Font.rom[off & 0x7FF];
-    return m.ram[bank + off];
+  // ---- VIC renderer, one per machine ------------------------------------------
+
+  function Vic(m) {
+    this.m = m;
+    this.px = new Uint32Array(VIC_W * VIC_H);
+    this.regs = new Uint8Array(0x40);
+    this.ptrs = new Uint8Array(512);
+    this.line = new Uint32Array(VIC_W);
+    this.fg = new Uint8Array(VIC_W);      // foreground mask of the line (priority, collisions)
+    this.spr = new Uint8Array(VIC_W);     // sprites that drew each pixel (collisions)
+    this.cols = new Uint8Array(4);
+    this.next = 0;                         // next raster line to draw
+    this.vi = 0; this.pi = 0;              // positions in the machine's logs
   }
 
-  var line = new Uint32Array(VIC_W);     // one rendered line
-  var fgl = new Uint8Array(VIC_W);       // foreground mask of that line (sprite priority)
-  var cols = new Uint8Array(4);
+  var V = Vic.prototype;
 
-  // Render raster line 'raster' with registers v and sprite pointers ptr.
-  function renderLine(m, v, ptr, raster, bank) {
+  V.beginFrame = function () {
+    this.regs.set(this.m.vicStart);
+    this.ptrs.set(this.m.ptrStart);
+    this.next = 0; this.vi = 0; this.pi = 0;
+  };
+
+  // Draw again from the start of the frame up to 'raster' (after load state).
+  V.replay = function (raster) { this.beginFrame(); this.renderTo(raster); };
+
+  // The C64's VIC sees the character ROM at VIC address $1000-$1FFF in banks 0
+  // and 2; the C128's VIC-IIe, as found on the real machine, in banks 0-2.
+  V.vicByte = function (bank, off) {
+    if (off >= 0x1000 && off < 0x2000 && (this.m.model === 'c64' ? (bank === 0 || bank === 0x8000) : bank !== 0xC000)) {
+      return Font.rom[off & 0x7FF];
+    }
+    return this.m.ram[bank + off];
+  };
+
+  // Draw every raster line before 'raster'.
+  V.renderTo = function (raster) {
+    var m = this.m, vl = m.vicLog, pl = m.ptrLog, regs = this.regs, px = this.px;
+    raster = Math.min(raster, 312);
+    var bank = m.vicBank();
+    for (; this.next < raster; this.next++) {
+      var r = this.next;
+      while (this.pi < pl.length && (pl[this.pi] < r || (pl[this.pi] === r && cycleX(pl[this.pi + 1]) <= 0))) {
+        var a = pl[this.pi + 2]; this.ptrs[(a >> 10) * 8 + (a & 7)] = pl[this.pi + 3]; this.pi += 4;
+      }
+      while (this.vi < vl.length && (vl[this.vi] < r || (vl[this.vi] === r && cycleX(vl[this.vi + 1]) <= 0))) {
+        regs[vl[this.vi + 2]] = vl[this.vi + 3]; this.vi += 4;
+      }
+      var row = r - FIRST_LINE, visible = row >= 0 && row < VIC_H;
+      var x0 = 0;
+      while (true) {
+        this.renderLine(regs, r, bank);
+        var x1 = VIC_W;
+        if (this.vi < vl.length && vl[this.vi] === r) x1 = Math.max(x0, Math.min(VIC_W, cycleX(vl[this.vi + 1])));
+        if (visible) for (var x = x0; x < x1; x++) px[row * VIC_W + x] = this.line[x];
+        if (x1 >= VIC_W) break;
+        while (this.vi < vl.length && vl[this.vi] === r && cycleX(vl[this.vi + 1]) <= x1) {
+          regs[vl[this.vi + 2]] = vl[this.vi + 3]; this.vi += 4;
+        }
+        x0 = x1;
+      }
+    }
+  };
+
+  V.renderLine = function (v, raster, bank) {
+    var line = this.line, fg = this.fg;
     var border = VICC[v[0x20] & 15];
     line.fill(border);
-    fgl.fill(0);
+    fg.fill(0);
     var den = v[0x11] & 0x10;
     var rsel = v[0x11] & 0x08, csel = v[0x16] & 0x08;
     var top = rsel ? 51 : 55, bottom = rsel ? 251 : 247;
@@ -69,28 +124,29 @@ var SentinelVideo = (function () {
     if (inWindow) {
       var bg0 = v[0x21] & 15;
       for (var i = wl; i < wr; i++) line[i] = VICC[bg0];
-      var ys = v[0x11] & 7, xs = v[0x16] & 7;
-      var y = raster - 48 - ys;
-      if (y >= 0 && y < 200) drawGraphics(m, v, bank, screen, y, LEFT + xs, bg0);
+      var y = raster - 48 - (v[0x11] & 7);
+      if (y >= 0 && y < 200) this.drawGraphics(v, bank, screen, y, LEFT + (v[0x16] & 7), bg0);
     }
-    drawSprites(m, v, ptr, bank, screen, raster);
-    if (inWindow) {                       // the side borders cover the edge pixels
+    this.drawSprites(v, bank, screen, raster);
+    if (inWindow) {
       for (var a = 0; a < wl; a++) line[a] = border;
       for (var b = wr; b < VIC_W; b++) line[b] = border;
     } else {
       line.fill(border);
     }
-  }
+  };
 
-  function drawGraphics(m, v, bank, screen, y, x0, bg0) {
+  V.drawGraphics = function (v, bank, screen, y, x0, bg0) {
+    var m = this.m, line = this.line, fg = this.fg;
     var bmm = v[0x11] & 0x20, mcm = v[0x16] & 0x10, ecm = v[0x11] & 0x40;
-    var cy = y >> 3, ln = y & 7, x, b, col;
+    var cy = y >> 3, ln = y & 7, x, b, col, o;
     var charBase = (v[0x18] & 0x0E) * 0x400, bmBase = (v[0x18] & 8) ? 0x2000 : 0;
+    function put(x, c, f) { if (x < VIC_W) { line[x] = VICC[c]; fg[x] = f ? 1 : 0; } }
     for (var cx = 0; cx < 40; cx++) {
       var i = cy * 40 + cx;
-      var sc = vicByte(m, bank, screen + i);
+      var sc = this.vicByte(bank, screen + i);
       var cr = m.colorRam[i] & 15;
-      var o = x0 + cx * 8;
+      o = x0 + cx * 8;
       if (bmm) {
         b = m.ram[bank + bmBase + i * 8 + ln];
         if (mcm) {
@@ -104,7 +160,7 @@ var SentinelVideo = (function () {
         }
       } else {
         var code = ecm ? sc & 63 : sc;
-        b = vicByte(m, bank, charBase + code * 8 + ln);
+        b = this.vicByte(bank, charBase + code * 8 + ln);
         var bgc = ecm ? (v[0x21 + (sc >> 6)] & 15) : bg0;
         if (mcm && (cr & 8)) {
           for (x = 0; x < 4; x++) {
@@ -117,78 +173,50 @@ var SentinelVideo = (function () {
         }
       }
     }
-  }
+  };
 
-  function put(x, col, isFg) {
-    if (x >= VIC_W) return;
-    line[x] = VICC[col];
-    fgl[x] = isFg ? 1 : 0;
-  }
-
-  // Sprites visible on this raster line, from the registers of this line. The
-  // shape row is fetched with the pointer of the current screen, as the VIC does.
-  function drawSprites(m, v, ptr, bank, screen, raster) {
+  // Sprites on this raster line, from this line's registers. The shape row is
+  // fetched with the pointer of the current screen, as the VIC does.
+  V.drawSprites = function (v, bank, screen, raster) {
     if (!v[0x15]) return;
+    var m = this.m, line = this.line, fg = this.fg, spr = this.spr, cols = this.cols;
     var ptrBase = ((bank + screen) >> 10) * 8;
+    var any = false, ss = 0, sb = 0;
     for (var s = 7; s >= 0; s--) {
       if (!(v[0x15] & (1 << s))) continue;
       var sy = v[s * 2 + 1], ye = (v[0x17] >> s) & 1;
       var dy = (raster - sy) & 0xFF;          // wraps like the 8-bit compare
-      var h = ye ? 42 : 21;
-      if (dy >= h || raster > 300) continue;
+      if (dy >= (ye ? 42 : 21) || raster > 300) continue;
       var row = ye ? dy >> 1 : dy;
-      var sx = v[s * 2] | (((v[0x10] >> s) & 1) << 8);
-      var data = bank + ptr[ptrBase + s] * 64 + row * 3;
+      var data = bank + this.ptrs[ptrBase + s] * 64 + row * 3;
       var bits = (m.ram[data] << 16) | (m.ram[data + 1] << 8) | m.ram[data + 2];
       if (!bits) continue;
+      if (!any) { spr.fill(0); any = true; }
+      var sx = v[s * 2] | (((v[0x10] >> s) & 1) << 8);
       var mc = (v[0x1C] >> s) & 1, xe = (v[0x1D] >> s) & 1, behind = (v[0x1B] >> s) & 1;
       cols[1] = v[0x25] & 15; cols[2] = v[0x27 + s] & 15; cols[3] = v[0x26] & 15;
       var w = xe ? 2 : 1;
       var px0 = sx - 24 + LEFT;
-      if (sx >= 0x1F8) px0 -= 0x1F8;            // x positions past the right edge wrap (PAL)
+      if (sx >= 0x1F8) px0 -= 0x1F8;          // x positions past the right edge wrap (PAL)
       for (var bx = 0; bx < 24; bx++) {
         var c = mc ? (bits >> (22 - (bx & ~1))) & 3 : ((bits >> (23 - bx)) & 1) << 1;
         if (!c) continue;
         for (var k = 0; k < w; k++) {
           var x = px0 + bx * w + k;
           if (x < 0 || x >= VIC_W) continue;
-          if (behind && fgl[x]) continue;
+          if (spr[x]) ss |= spr[x] | (1 << s);
+          spr[x] |= 1 << s;
+          if (fg[x]) { sb |= 1 << s; if (behind) continue; }
           line[x] = VICC[cols[c]];
         }
       }
     }
-  }
+    if (ss) { if (!m.collSS) m.vicIrq |= 4; m.collSS |= ss; }
+    if (sb) { if (!m.collSB) m.vicIrq |= 2; m.collSB |= sb; }
+  };
 
-  var regs = new Uint8Array(0x40), ptrs = new Uint8Array(512);
-
-  function renderVic(m, px) {            // px: Uint32Array(VIC_W * VIC_H)
-    regs.set(m.vicStart);
-    ptrs.set(m.ptrStart);
-    var vl = m.vicLog, pl = m.ptrLog, vi = 0, pi = 0;
-    var bank = m.vicBank();
-    for (var row = 0; row < VIC_H; row++) {
-      var raster = row + FIRST_LINE, o = row * VIC_W;
-      // pointer writes up to the start of this line
-      while (pi < pl.length && (pl[pi] < raster || (pl[pi] === raster && cycleX(pl[pi + 1]) <= 0))) {
-        var a = pl[pi + 2]; ptrs[(a >> 10) * 8 + (a & 7)] = pl[pi + 3]; pi += 4;
-      }
-      // register writes before the visible part of the line
-      while (vi < vl.length && (vl[vi] < raster || (vl[vi] === raster && cycleX(vl[vi + 1]) <= 0))) {
-        regs[vl[vi + 2]] = vl[vi + 3]; vi += 4;
-      }
-      var x0 = 0;
-      while (true) {
-        renderLine(m, regs, ptrs, raster, bank);
-        var x1 = VIC_W;
-        if (vi < vl.length && vl[vi] === raster) x1 = Math.min(VIC_W, cycleX(vl[vi + 1]));
-        for (var x = x0; x < x1; x++) px[o + x] = line[x];
-        if (x1 >= VIC_W) break;
-        // apply every write that lands at this pixel, then draw the rest of the line
-        while (vi < vl.length && vl[vi] === raster && cycleX(vl[vi + 1]) <= x1) { regs[vl[vi + 2]] = vl[vi + 3]; vi += 4; }
-        x0 = x1;
-      }
-    }
-  }
+  // Compatibility: copy the machine's last picture.
+  function renderVic(m, px) { px.set(m.video.px); }
 
   // ---- VDC -------------------------------------------------------------------
 
@@ -226,7 +254,7 @@ var SentinelVideo = (function () {
 
   return {
     VIC_W: VIC_W, VIC_H: VIC_H, VDC_W: VDC_W, VDC_H: VDC_H,
-    renderVic: renderVic, renderVdc: renderVdc,
+    Vic: Vic, renderVic: renderVic, renderVdc: renderVdc,
   };
 })();
 
