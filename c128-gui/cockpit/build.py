@@ -70,11 +70,40 @@ def put(body, address, data):
     body[offset:end] = data
 
 
+def clean_radar(rows):
+    """The art was captured from the running game: the radar box holds three marks
+    (small H's, colour 3) and a stray pixel, drawn over the ellipse. The cockpit
+    draws its own marks now (RADAR), so the box's inside is cleared to the ellipse
+    (colour 2), which is rebuilt from its mirror images where a mark covered it."""
+    rows = bytearray(rows)
+
+    def get(x, y):
+        r, yy = divmod(y, 8)
+        c, xx = divmod(x, 4)
+        return (rows[r * 320 + c * 8 + yy] >> (6 - 2 * xx)) & 3
+
+    def put(x, y, v):
+        r, yy = divmod(y, 8)
+        c, xx = divmod(x, 4)
+        i = r * 320 + c * 8 + yy
+        rows[i] = (rows[i] & ~(3 << (6 - 2 * xx)) & 255) | (v << (6 - 2 * xx))
+
+    x0, x1, y0, y1 = 48, 111, 2, 36            # the box's inside (rows 18-22, pixels)
+    cx2, cy2 = 2 * 79, 2 * 19                  # twice the ellipse's centre
+    old = {(x, y): get(x, y) for x in range(x0, x1 + 1) for y in range(y0, y1 + 1)}
+    for (x, y), v in old.items():
+        mirrors = ((cx2 - x, y), (x, cy2 - y), (cx2 - x, cy2 - y))
+        ring = v == 2 or any(old.get(m) == 2 for m in mirrors)
+        put(x, y, 2 if ring else 0)
+    return bytes(rows)
+
+
 def place_assets(put):
     """Everything but the code: tables, colours, font, art, sprite shapes, streams.
     put(address, data). Also used by c128-game/build.py."""
     art = open(os.path.join(REF, 'cockpit-art.bin'), 'rb').read()
     screen, color, matrix, bitmap_rows = art[:1000], bytearray(art[1000:2000]), art[2000:3000], art[3000:4600]
+    bitmap_rows = clean_radar(bitmap_rows)
     for r in range(3, 18):                         # the 3D view: stars in light gray
         for c in range(40):
             color[r * 40 + c] = 0x0F
