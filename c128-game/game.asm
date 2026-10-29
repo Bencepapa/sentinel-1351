@@ -3,16 +3,17 @@
 ; This file is only the glue. c128-game/build.py joins three sources into one
 ; program: c128-gui/cockpit/cockpit.asm (unchanged but for a few marked patches),
 ; c128-map/map.asm (every label it defines gets the prefix M_, its code moves to
-; $9D00, its second-display data to $B800) and this file.
+; right after the cockpit's code, its second-display data to $2900) and this file.
 ;
 ; Flow: the cockpit starts in the player's sector (4,2 on the map, SECTOR 05.03,
 ; empty as in the original). C= opens the map (the original's map key): the map
 ; program's grid draw-in, icons, cursor, ticks and second display run as they do
 ; standalone. Fire on another sector jumps there at once (hyperspace comes later);
 ; SPACE returns without a jump. Back in the cockpit, what the map holds for the
-; sector decides what is there: a squadron (STATE 1-3) comes in waves of up to
-; three fighters (all type 1 for now), TARGETS on the HUD shows the sector's ship
-; count (COUNT), each kill lowers it, the last one empties the sector on the map.
+; sector decides what is there: a squadron (STATE 1-3) of COUNT ships is approached
+; group by group with the long range scanner, each group becomes up to three
+; fighters (all type 1 for now); TARGETS on the HUD shows the ships left, each
+; kill lowers the map's COUNT, the last one empties the sector on the map.
 ; Motherships (STATE $80 / $FF) are not ported yet: those sectors are empty here.
 ;
 ; The map and the cockpit share the bitmap at $6000 (the original also redraws
@@ -70,89 +71,28 @@ g_tc1:    JSR SHOWSEC
         STA $D418
         JMP frame
 
-; Into the sector M_SELX / M_SELY: a squadron or nothing.
+; Into the sector M_SELX / M_SELY: its squadron's ships (none for an empty or a
+; mothership sector), then the cockpit's arrival (the approach, ARRIVE).
 SECTORIN:
-        LDA #$00        ; whatever was going on stops
-        STA EFON
-        STA EFVIS
-        STA EXPL
-        STA EXPL2
-        STA HITFL
-        STA FLASHC
-        STA EVIS
-        STA ALIVE
-        STA ALIVE+1
-        STA ALIVE+2
-        LDA #$01        ; (and its fighters are far away)
-        LDX #$05
-g_sin0:   STA ENX,X
-        STA ENY,X
-        STA ENZ,X
-        DEX
-        DEX
-        BPL g_sin0
         JSR SECIDX
-        LDA M_STATE,X
-        BEQ g_sin1        ; empty
-        BMI g_sin1        ; a mothership: not ported yet
+        LDA #$00
+        LDY M_STATE,X
+        BEQ g_sin1      ; empty
+        BMI g_sin1      ; a mothership: not ported yet
         LDA M_COUNT,X
-        BEQ g_sin1
-        JSR SHOWTG
-        JMP NEWWAVE
-g_sin1:   LDA #$00
-        JMP SHOWTG
+g_sin1: STA SQCOUNT
+        JMP ARRIVE
 
-; After a wave: the next one while the squadron has ships.
-SECWAVE:JSR SECIDX
-        LDA M_STATE,X
-        BEQ g_sw9
-        BMI g_sw9
-        LDA M_COUNT,X
-        BEQ g_sw9
-        JMP NEWWAVE
-g_sw9:    RTS
-
-; NEWWAVE's fighters: as many as the squadron still has, up to 3 ($C7B4); the
-; others are put far away like a destroyed one.
-WAVEALIVE:
-        JSR SECIDX
-        LDA M_COUNT,X
-        CMP #$03
-        BCC g_wa1
-        LDA #$03
-g_wa1:    STA WSIZE
-        LDX #$00
-g_wa2:    LDA #$00
-        CPX WSIZE
-        BCS g_wa3
-        LDA ETYPE
-g_wa3:    STA ALIVE,X
-        STA EHITS,X
-        BNE g_wa4
-        TXA
-        ASL A
-        TAY
-        LDA #$01
-        STA ENX+1,Y
-        STA ENY+1,Y
-        STA ENZ+1,Y
-g_wa4:    INX
-        CPX #$03
-        BNE g_wa2
-        RTS
-
-; A kill ($3CD9): the sector's COUNT -1; at 0 the squadron is gone ($3CDE).
+; A kill ($3CD9): the map's COUNT follows; at 0 the squadron is gone ($3CDE).
 SECKILL:STX SKX
         JSR SECIDX
         LDA M_COUNT,X
         BEQ g_sk9
         DEC M_COUNT,X
-        BNE g_sk8
+        BNE g_sk9
         LDA #$00
         STA M_STATE,X
-g_sk8:    LDA M_COUNT,X
-        JSR SHOWTG
-g_sk9:    LDX SKX
+g_sk9:  LDX SKX
         RTS
 
 SECIDX: LDA M_SELY      ; X = row * 10 + column
@@ -164,17 +104,6 @@ SECIDX: LDA M_SELY      ; X = row * 10 + column
         CLC
         ADC M_SELX
         TAX
-        RTS
-
-SHOWTG: LDX #$70        ; A = ships: two digits of TARGETS on the HUD ($FCE9)
-g_stg1:   CMP #10
-        BCC g_stg2
-        SBC #10
-        INX
-        BNE g_stg1
-g_stg2:   STX TARGETS-1
-        ORA #$70
-        STA TARGETS
         RTS
 
 SHOWSEC:LDX M_SELX      ; SECTOR cc.rr on the HUD: column and row from 1

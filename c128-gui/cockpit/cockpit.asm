@@ -41,6 +41,10 @@ HUDE    = $483E         ; the four energy digits of the HUD (original $543E)
 HUDS    = $4832         ; the two shield digits of the HUD (original $5432)
 EFPASS  = 16            ; the original's main loop passes per frame in a fight (enemy fire)
 TARGETS = $4876         ; the last digit of TARGETS on the HUD (original $5476)
+LRTAB   = $3600         ; the long range scanner's scale 0-128 -> 0-99 (original $ED00, build.py)
+DIGF    = $3690         ; the digits drawn under the crosshair (original sprite $64, build.py)
+LRROW   = $4B98         ; text row 23: the long range scanner (original $5798)
+BLPTR   = $36           ; sprite pointers $36-$38: the blip, shapes $4C-$4E
 PASSES  = 8             ; main loop passes of the original per frame in a fight
 SHOTPTR = $F3           ; sprite pointers of the shot shapes $67-$70: $F3-$FC (bitmap rows
                         ; 23-24, never shown as bitmap); the fighters: ENPTR
@@ -123,7 +127,7 @@ set2:   DEY
         STA $D418
         JSR SHIPINIT    ; systems and shields by difficulty
         JSR EFRESET
-        JSR NEWWAVE     ; a type-1 squadron wave
+        JSR SECSTART    ; a squadron in the sector (c128-game: the map's start sector)
         LDA #$80        ; the star field
         STA SEED
         LDX #NSTARS-1
@@ -184,7 +188,10 @@ nolaunch:
         JSR SWEEPSND    ; the phasor sound is swept 6 times a frame while a shot
         JSR SWEEPSND    ; flies: once in $1424, 3 times after it ($0C3B-$0C41),
         JSR SWEEPSND    ; at line 194 ($0C60) and at line 233 ($0CBA)
-        LDA #182        ; the explosions use what is left of the 3D view's time
+        LDA APPR        ; approaching (no phasor then): steering, drift, closing in,
+        BEQ nov         ; arrival
+        JSR APVIEW
+nov:    LDA #182        ; the explosions use what is left of the 3D view's time
                         ; (a point takes up to 11 lines)
         STA EXLIM
         JSR EXPLODE
@@ -225,14 +232,18 @@ w242:   LDA $D012
         STY $D016
 
         JSR INPUT       ; vertical blank: mouse, cursor, guns (at 1 MHz: lines
+        LDA APPR        ; (no shots while approaching: fire chooses a group)
+        BEQ vbf
+        LDA #$00
+        STA FIREFLAG
+vbf:
         LDA #251        ; 242-250 are still in the display window)
         JSR WAITLN
         LDA FAST        ; 2 MHz in the border, lines 251-47: the VIC-IIe fetches
         ORA #$01        ; nothing there (sprites are off, no bad lines), so the
         STA FAST        ; processor gets twice the time (I/O accesses stay 1 MHz)
         JSR STARS       ; the star field
-        JSR STEER       ; steering ($39C1; the original's comes after the movers)
-        JSR EFRAME      ; enemy fire ($C947)
+        JSR VBWORK      ; steering, drift, enemy fire, the radar
 vbw:    BIT $D011       ; after the wrap (line 256-311 read as 0-55 with bit 7
         BMI vbw         ; of $D011 set), the rest of the border: the explosions
         LDA $D012
@@ -328,7 +339,7 @@ sc1:    STA SPRPTR
 sc2:    STA $D010
         LDA CURY
         STA $D001
-        LDA #1
+        LDA NUMCOL      ; white, light green while the target is behind ($3934)
         STA $D027
         LDA SHOTSHP     ; shapes $67-$70 are pointers $F3-$FC here
         CLC
@@ -1392,11 +1403,6 @@ NEWWAVE:LDA #$01        ; type 1
         STA EHITS       ; shots each one takes: the type ($C7B9)
         STA EHITS+1
         STA EHITS+2
-        LDA TARGETS     ; the HUD's TARGETS count: refilled when it runs low (no
-        CMP #$73        ; squadrons yet)
-        BCS nw1
-        LDA #$79
-        STA TARGETS
 nw1:    LDA #$01        ; a step on the next call
         STA SCNT
         STA SCNT+1
@@ -1485,7 +1491,11 @@ wi1:    STA ENX,X
 
 ; One frame of the fight (vertical blank).
 FIGHT:  INC EFRM
-        LDX #$00
+        LDA APPR        ; approaching a group: the long range scanner ($C6A9)
+        BEQ fgdog
+        JSR APFRAME
+        JMP fgcom
+fgdog:  LDX #$00
         JSR MOVEN
         LDX #$02
         JSR MOVEN
@@ -1505,19 +1515,27 @@ fg1:    LDA EFRM
         LDX #$04
         JSR PLACE
 fg2:    JSR SHOTHIT     ; the original tests the shot once a frame ($3244)
-        JSR EXPTICK
+fgcom:  JSR EXPTICK
         JSR EXPTICK2
         LDA EFRM        ; the hit flash, every other frame ($0C90)
         AND #$01
         BNE fg3
         JSR FLASH
-fg3:    LDA ALIVE       ; a wave wiped out: once its explosion is over, the next
-        ORA ALIVE+1     ; one comes (the squadron and wave bookkeeping of the
-        ORA ALIVE+2     ; original, $3CD6-$3D4B, comes with the approach phase)
-        ORA EXPL
+fg3:    LDA APPR        ; the number under the crosshair: every 4th frame in a
+        BNE fg5         ; fight ($2D8F; every frame while approaching, APFRAME),
+        LDA EFRM        ; when the slot has time for it (else the next frame)
+        AND #$03
         BNE fg4
-        JSR NEWWAVE
-fg4:    RTS
+        INC NUMPEND
+fg4:    LDA NUMPEND
+        BEQ fg5
+        LDA $D012
+        CMP #214
+        BCS fg5
+        LDA #$00
+        STA NUMPEND
+        JMP NUMBER
+fg5:    RTS
 
 ; A fighter takes a step of its stream ($2F6D, $2FB9, $3005: one copy per
 ; fighter in the original). X = fighter * 2.
@@ -2290,6 +2308,864 @@ EFDLYT: .BYTE $FF,$B0,$70,$40,$10       ; ($C913) calls between shots
 EFTHRT: .BYTE $03,$03,$03,$02,$02       ; ($C918) passes per call
 EFTAB:  .BYTE $70,$70,$6F,$6F,$6E,$6D,$6D,$6C,$6B,$6B,$6A,$69,$68,$68 ; ($C91D)
 
+; Our shot hits the enemy shot ($3287, X = 0): it bursts like a shot that
+; reached the ship (12 points), the view flashes white / green ($1318), and the
+; shot, still growing unseen, does no harm when it arrives (it is not shown).
+HITSHOT:LDA EXPL2       ; ($3287) one such burst at a time
+        BEQ ht0
+        RTS
+ht0:    LDA EFVX        ; ($328D-$3299: steps not doubled here)
+        STA EVX02
+        LDA EFVY
+        STA EVY02
+        LDA #$00
+        STA EXPB2
+        LDA #$01
+        STA EXPL2
+        STA TORPHIT     ; ($323D) the flash's colours
+        LDA #$00        ; ($32F2)
+        STA HITWIN
+        LDA EFY         ; the burst's centre
+        SEC
+        SBC #$32
+        STA EXPY2
+        LDA EFX
+        SEC
+        SBC #$18
+        LSR A
+        STA EXPX2
+        CMP #$06
+        BCC ht1
+        CMP #$99
+        BCC ht2
+ht1:    LDA #$00
+        STA EXPL2
+ht2:    LDA #$00        ; ($3341) the shot and our shot disappear
+        STA EFVIS
+        STA SHOTVIS
+        JMP HITSND
+
+; ---------------- the approach: groups far away, the long range scanner ----------------
+; (traced in PLAN-C128-COCKPIT.md, "The approach phase and the long range scanner")
+; A squadron of SQCOUNT ships is split into groups of up to 3 (GSIZE), placed far
+; away at random (LAYOUT, $3D58). The long range scanner (row 23 of the text
+; screen) shows the chosen group's side, up and depth readings (LRSCAN, $3776);
+; fire chooses the next group; when it is in front and side and up are both 0-3,
+; the ship rushes toward it (CLOSEIN, $C848). Closer than $0400 the group arrives
+; (GROUPIN, $C749): up to 3 fighters around its place, the dogfight. When they are
+; all down the next group is laid out and approached; the last kill empties the
+; sector. The original runs the approach in its own loop ($C6A9), about 16 passes
+; a frame; per frame the port steers 4 times, drifts twice, rushes the distance
+; of 16 passes at once and checks the arrival every other frame.
+
+ARRIVE: LDA #$00        ; ($FCE1) into a sector with SQCOUNT ships
+        STA EFON
+        STA EFVIS
+        STA EVIS
+        STA BLIPON
+        STA ALIVE
+        STA ALIVE+1
+        STA ALIVE+2
+        STA APRUN
+        STA LRMODE
+        LDA #$01        ; the slots far away until the layout
+        LDX #$05
+arr1:   STA ENX,X
+        STA ENY,X
+        STA ENZ,X
+        DEX
+        DEX
+        BPL arr1
+        LDA SQCOUNT
+        JSR SHOWTG
+        LDA SQCOUNT
+        BEQ arr9
+        LDA #$01
+        STA APPR
+        STA RELAYOUT    ; (the original keeps the slots where hyperspace left them)
+        LDA #$1E        ; ($FCB8) 30 counts of 2 frames before the scanner
+        STA APDLY
+        JSR LRCLEAR
+arr9:   RTS
+
+APFRAME:LDA APRUN
+        BNE af1
+        LDA EFRM        ; ($C64C, every 32 passes) waiting for the scanner
+        AND #$01
+        BNE af0
+        DEC APDLY
+        BNE af0
+        LDA #$01        ; ($C677) the long range scanner
+        STA LRMODE
+        LDA RELAYOUT
+        BEQ afl
+        LDA #$00
+        STA RELAYOUT
+        JSR LAYOUT      ; (the groups are placed in the next frames' vertical blank)
+        INC APDLY       ; wait for it
+        RTS
+afl:    LDA LYACT
+        BEQ afl2
+        INC APDLY
+        RTS
+afl2:   JSR APINIT
+        LDA #$01
+        STA APRUN
+af0:    RTS
+af1:    JSR LRSCAN
+        JMP NUMBER
+
+; Approaching, in the 3D view's time (no phasor then): the original steers every
+; 4 passes, drifts every 8, closes in every pass and checks the arrival every 32.
+APVIEW: LDA APRUN
+        BEQ apv9
+        JSR STEER
+        JSR STEER
+        JSR EDRIFT
+        JSR EDRIFT
+        JSR CLOSEIN
+        LDA EFRM
+        AND #$01
+        BNE apv9
+        JMP ARRCHK
+apv9:   RTS
+
+; The vertical blank's share (2 MHz, after the star field).
+VBWORK: JSR RADAR
+        LDA LYACT       ; laying the groups out: a group a frame
+        BEQ vbw0
+        JSR LYSTEP
+vbw0:   LDA APPR
+        BEQ vbdog
+        LDA APRUN
+        BEQ vbw1
+        JSR STEER       ; ($C6C6) every 4 passes while approaching (the other two
+        JMP STEER       ; in the 3D view's time, APVIEW)
+vbw1:   JMP STEER
+vbdog:  JSR STEER       ; ($2D34) a fight: once a frame, and enemy fire
+        JMP EFRAME
+
+LAYOUT: JSR WAVEINIT    ; ($3D58) the groups: slots 0-2, far away
+        LDA #$00
+        STA GSIZE
+        STA GSIZE+1
+        STA GSIZE+2
+        STA ENZ+1
+        STA ENZ+3
+        STA ENZ+5
+        STA LYY
+        LDA SQCOUNT
+        BNE ly0
+        RTS
+ly0:    STA LYN
+        LDA #$01        ; LYSTEP places one group a call (a placement can take
+        STA LYACT       ; dozens of tries)
+        RTS
+LYSTEP: LDY LYY
+        LDX DIFF
+        LDA LYSPR,X
+        JSR LYPLACE
+        SEC
+        LDA LYN
+        SBC #$03
+        STA LYN
+        BMI ly3
+        LDA #$03
+        STA GSIZE,Y
+        INY
+        STY LYY
+        CPY #$03
+        BNE ly4
+        JMP ly5
+ly3:    CLC
+        ADC #$03
+        BEQ ly5
+        STA GSIZE,Y
+ly5:    LDA #$00
+        STA LYACT
+        LDA DIFF        ; ($C69B) the easy levels: all groups level with the ship
+        CMP #$02
+        BCS ly4
+        LDA #$88
+        STA ENY+1
+        STA ENY+3
+        STA ENY+5
+ly4:    RTS
+
+LYPLACE:STA LYMASK      ; ($3DA6) group Y at random, at least $4000 away
+        STY LYG
+lp1:    LDA LYG
+        ASL A
+        TAX
+        LDY DIFF
+        JSR RANDOM      ; (the carry RANDOM leaves goes into the sums, as the
+        AND LYMASK      ; original's)
+        ADC LYBASE,Y
+        STA ENX+1,X
+        JSR RANDOM
+        AND LYMASK
+        ADC LYBASE,Y
+        STA ENY+1,X
+        JSR RANDOM
+        AND LYMASK
+        ADC LYBASE,Y
+        STA ENZ+1,X
+        LDX LYG
+        JSR DIST
+        LDA DSTH
+        CMP #$40
+        BCC lp1
+        LDY LYG
+        RTS
+
+; Distance of slot X ($2C43): |x - $88A0| + |y - $8890| + depth from $8690, in
+; DSTL / DSTH; A (and N) = $01 in front, $FF behind (by the depth's high byte).
+DIST:   STX DSX
+        TXA
+        ASL A
+        TAX
+        SEC
+        LDA ENX,X
+        SBC #$A0
+        STA DSTL
+        LDA ENX+1,X
+        SBC #$88
+        STA DSTH
+        BCS ds1
+        SEC
+        LDA #$A0
+        SBC ENX,X
+        STA DSTL
+        LDA #$88
+        SBC ENX+1,X
+        STA DSTH
+ds1:    SEC
+        LDA ENY,X
+        SBC #$90
+        STA DT0
+        LDA ENY+1,X
+        SBC #$88
+        STA DT1
+        BCS ds2
+        SEC
+        LDA #$90
+        SBC ENY,X
+        STA DT0
+        LDA #$88
+        SBC ENY+1,X
+        STA DT1
+ds2:    JSR DSADD
+        LDA ENZ+1,X
+        CMP #$86
+        BCS ds3
+        LDA #$FF
+        STA DSIGN
+        SEC
+        LDA #$90
+        SBC ENZ,X
+        STA DT0
+        LDA #$86
+        SBC ENZ+1,X
+        STA DT1
+        JMP ds4
+ds3:    LDA #$01
+        STA DSIGN
+        SEC
+        LDA ENZ,X
+        SBC #$90
+        STA DT0
+        LDA ENZ+1,X
+        SBC #$86
+        STA DT1
+ds4:    JSR DSADD
+        LDX DSX
+        LDA DSIGN
+        RTS
+DSADD:  CLC
+        LDA DSTL
+        ADC DT0
+        STA DSTL
+        LDA DSTH
+        ADC DT1
+        STA DSTH
+        RTS
+
+APINIT: LDA #$4C        ; ($3736) the blip: shapes $4C-$4E, cyan
+        STA BLSHP
+        LDA #$03
+        STA $D02B
+        LDA #$00
+        STA GSEL
+        STA NUMT
+        LDA #$01
+        STA BLDIR
+        STA BLIPON
+        JSR BLIPPOS
+        JSR LRCLEAR
+        JMP LRSND
+
+BLIPPOS:LDA EVIS        ; ($38E8) sprite 4 on the chosen group's radar mark
+        ORA #$10
+        STA EVIS
+        LDA EMSB
+        AND #$EF
+        STA EMSB
+        LDX GSEL
+        LDA RBX,X
+        ASL A
+        CLC
+        ADC #$0F
+        STA ESH
+        LDA RBY,X
+        CLC
+        ADC #$29
+        STA ESH+1
+        RTS
+
+LRCLEAR:LDY #39         ; ($3918) the scanner's row: light green, empty
+lc1:    LDA #$0D
+        STA COLOR+920,Y
+        LDA #$60
+        STA LRROW,Y
+        DEY
+        BPL lc1
+        LDA #$01        ; ($3927) X, Y, Z in white
+        STA COLOR+929
+        STA COLOR+937
+        STA COLOR+945
+        RTS
+
+LRSND:  LDA #$00        ; ($38D0) voice 1: the scanner's beep
+        STA $D404
+        STA $D406
+        LDA #$32
+        STA $D401
+        LDA #$09
+        STA $D405
+        LDA #$21
+        STA $D404
+        RTS
+
+LRSCAN: LDY SQCOUNT     ; ($37BA) the last group: (ships - 1) / 3
+        DEY
+        LDX #$00
+lr1:    DEY
+        DEY
+        DEY
+        BMI lr2
+        INX
+        BPL lr1
+lr2:    STX GLAST
+        JSR BLIPPOS
+        LDY BLDIR       ; ($37D6) the blip's shape: $4C, $4D, $4E, $4D, ...
+        TYA
+        BPL lr3
+        CLC
+        ADC BLSHP
+        CMP #$4D
+        BCS lr4
+        LDY #$01
+        JMP lr4
+lr3:    CLC
+        ADC BLSHP
+        CMP #$4E
+        BCC lr4
+        LDY #$FF
+lr4:    STY BLDIR
+        STA BLSHP
+        LDA JOY         ; ($3801) fire chooses the group before (needs the long
+        AND #$10        ; range scan sequencer, system 6)
+        BEQ lr5
+        LDA #$00
+        STA FLATCH
+        JMP lr7
+lr5:    LDA FLATCH
+        BNE lr7
+        INC FLATCH
+        LDA SYSHP+6
+        BEQ lr7
+        LDY GSEL
+        DEY
+        BPL lr6
+        LDY GLAST
+lr6:    STY GSEL
+        STY NUMT
+        JSR LRSND
+lr7:    LDA #$7B        ; ($3839) the readings: X (side), Y (up), Z (depth)
+        STA LRROW+9
+        LDA GSEL
+        ASL A
+        TAX
+        LDA ENX+1,X
+        JSR LRVAL
+        STY LRROW+11
+        LDY #11
+        JSR LRDIGS
+        STY LRROW+12
+        STY LRDIG
+        STX LRROW+13
+        STX LRDIG+1
+        LDA #$7C
+        STA LRROW+17
+        LDA GSEL
+        ASL A
+        TAX
+        LDA ENY+1,X
+        JSR LRVAL
+        PHA
+        TYA
+        EOR #$06        ; (up is the other way round)
+        TAY
+        PLA
+        STY LRROW+19
+        LDY #19
+        JSR LRDIGS
+        STY LRROW+20
+        STY LRDIG+2
+        STX LRROW+21
+        STX LRDIG+3
+        LDA #$7D
+        STA LRROW+25
+        LDA GSEL
+        ASL A
+        TAX
+        LDA ENZ+1,X
+        JSR LRVAL
+        STY LRROW+27
+        LDY #27
+        JSR LRDIGS
+        STY LRROW+28
+        STX LRROW+29
+        RTS
+
+LRVAL:  SEC             ; ($389C) A = high byte: size and sign glyph (Y)
+        SBC #$08
+        BMI lv1
+        EOR #$7F
+        CLC
+        ADC #$01
+        LDY #$6D
+        RTS
+lv1:    AND #$7F
+        LDY #$6B
+        RTS
+
+LRDIGS: STY LRPOS       ; ($38AE) A = size: 0-99 (LRTAB), two digits Y / X;
+        TAY             ; no sign when 0 (LRPOS = the sign's column)
+        LDA LRTAB,Y
+        JSR BCD
+        LDA BCDT
+        ORA BCDO
+        BNE ld1
+        LDY LRPOS
+        LDA #$60
+        STA LRROW,Y
+ld1:    LDA BCDT
+        CLC
+        ADC #$70
+        TAY
+        LDA BCDO
+        CLC
+        ADC #$70
+        TAX
+        RTS
+
+BCD:    LDX #$00        ; A -> hundreds BCDH, tens BCDT, ones BCDO ($9636)
+bc1:    CMP #100
+        BCC bc2
+        SBC #100
+        INX
+        BNE bc1
+bc2:    STX BCDH
+        LDX #$00
+bc3:    CMP #10
+        BCC bc4
+        SBC #10
+        INX
+        BNE bc3
+bc4:    STX BCDT
+        STA BCDO
+        RTS
+
+CLOSEIN:LDX GSEL        ; ($C848) the chosen group in front, side and up 0-3:
+        JSR DIST        ; the ship rushes toward it
+        BPL ci1
+        LDA #$00
+        STA INFRONT
+        RTS
+ci1:    LDA #$01
+        STA INFRONT
+        LDA LRDIG
+        CMP #$70
+        BNE ci9
+        LDA LRDIG+1
+        CMP #$70
+        BCC ci9
+        CMP #$74
+        BCS ci9
+        LDA #$70
+        STA LRROW+13
+        LDA LRDIG+2
+        CMP #$70
+        BNE ci9
+        LDA LRDIG+3
+        CMP #$70
+        BCC ci9
+        CMP #$74
+        BCS ci9
+        LDA #$70
+        STA LRROW+21
+        LDX #$04        ; 16 passes of 12 depth steps of 6 ($C89F, $C81E)
+ci2:    SEC
+        LDA ENZ,X
+        SBC #$80
+        STA ENZ,X
+        LDA ENZ+1,X
+        SBC #$04
+        STA ENZ+1,X
+        DEX
+        DEX
+        BPL ci2
+ci9:    RTS
+
+ARRCHK: LDX #$02        ; ($C730) a group closer than $0400 arrives
+ac1:    LDA GSIZE,X
+        BEQ ac2
+        JSR DIST
+        SEC             ; ($2CDE)
+        LDA #$00
+        SBC DSTL
+        LDA #$04
+        SBC DSTH
+        BCS GROUPIN
+ac2:    DEX
+        BPL ac1
+        RTS
+
+GROUPIN:STX CURG        ; ($C749) the group becomes up to 3 fighters around its
+        LDA #$00        ; place
+        STA BLIPON
+        LDA EVIS
+        AND #$EF
+        STA EVIS
+        TXA
+        ASL A
+        TAX
+        LDA ENX,X
+        STA OFX
+        SEC
+        LDA ENX+1,X
+        SBC #$88
+        STA OFX+1
+        LDA ENY,X
+        STA OFY
+        SEC
+        LDA ENY+1,X
+        SBC #$88
+        STA OFY+1
+        LDA ENZ,X
+        STA OFZ
+        SEC
+        LDA ENZ+1,X
+        SBC #$86
+        STA OFZ+1
+        JSR NEWWAVE     ; ($FF1B) the wave's start positions and streams
+        LDA #$00        ; ($C7A6)
+        STA ALIVE
+        STA ALIVE+1
+        STA ALIVE+2
+        STA EHITS
+        STA EHITS+1
+        STA EHITS+2
+        LDX #$04
+gi1:    CLC
+        LDA ENX,X
+        ADC OFX
+        STA ENX,X
+        LDA ENX+1,X
+        ADC OFX+1
+        STA ENX+1,X
+        CLC
+        LDA ENY,X
+        ADC OFY
+        STA ENY,X
+        LDA ENY+1,X
+        ADC OFY+1
+        STA ENY+1,X
+        CLC
+        LDA ENZ,X
+        ADC OFZ
+        STA ENZ,X
+        LDA ENZ+1,X
+        ADC OFZ+1
+        STA ENZ+1,X
+        DEX
+        DEX
+        BPL gi1
+        LDX CURG        ; ($C7A6) as many fighters as the group has
+        LDY GSIZE,X
+gi2:    LDA ETYPE
+        STA EHITS-1,Y
+        STA ALIVE-1,Y
+        DEY
+        BNE gi2
+        LDX #$00        ; ($C7C2) the others far away
+gi3:    LDA ALIVE,X
+        BNE gi4
+        TXA
+        ASL A
+        TAY
+        LDA #$00
+        STA ENX+1,Y
+gi4:    INX
+        CPX #$03
+        BNE gi3
+        LDA #$00        ; ($C7DC) the dogfight
+        STA APPR
+        STA APRUN
+        STA LRMODE
+        STA FIREFLAG
+        LDA #$FF        ; ($C807) the first enemy shot comes late
+        STA EFTHR
+        RTS
+
+; The number under the crosshair ($3935): the distance of the chosen group, or of
+; the first live fighter, high byte / 2 in three digits drawn into the crosshair's
+; shape ($5F70); white in front, light green behind. 000 with no ships left.
+NUMBER: LDA APPR
+        BNE nm0
+        LDX #$00
+nm1:    LDA ALIVE,X
+        BNE nm2
+        INX
+        CPX #$03
+        BNE nm1
+nm0:    LDX GSEL
+nm2:    STX NUMT
+        JSR DIST
+        BMI nm3
+        LDA #$01
+        BNE nm4
+nm3:    LDA #$0D
+nm4:    STA NUMCOL
+        LDA DSTH
+        LSR A
+        JSR BCD
+        LDA SQCOUNT
+        BNE nm5
+        STA BCDH
+        STA BCDT
+        STA BCDO
+nm5:    LDX #$00
+        LDY BCDH
+        JSR DIGIT
+        LDX #$01
+        LDY BCDT
+        JSR DIGIT
+        LDX #$02
+        LDY BCDO
+DIGIT:  LDA DIGOFS,Y    ; ($39A2) 5 rows of digit Y into column X of the
+        TAY             ; crosshair (sprite rows 16-20)
+        LDA #$05
+        STA DGN
+dg1:    LDA DIGF,Y
+        STA $4C30,X
+        INY
+        INY
+        INY
+        INX
+        INX
+        INX
+        DEC DGN
+        BNE dg1
+        RTS
+DIGOFS: .BYTE $00,$01,$02,$0F,$10,$11,$1E,$1F,$20,$2D
+
+; The radar ($305F, once a frame, one slot each time): a small H in the scanner's
+; box for each slot within range. Close (the fight): x $86A0-$8AA0 and depth
+; $8201-$8A01, 1/16 scale, needs the short range scanner. Long range (the
+; approach): 1/1024 scale, only groups that exist, needs the long range scanner.
+RADAR:  LDY RSLOT
+        DEY
+        BPL rd1
+        LDY #$02
+rd1:    STY RSLOT
+        TYA
+        ASL A
+        TAX
+        SEC
+        LDA ENX,X
+        SBC #$A0
+        STA DT0
+        LDA ENX+1,X
+        SBC #$86
+        STA DT1
+        BCS rq1
+        JMP rdout
+rq1:    LDA #$A0
+        SBC ENX,X
+        LDA #$8A
+        SBC ENX+1,X
+        BCS rq2
+        JMP rdout
+rq2:    LDA LRMODE
+        BNE rd2
+        LDA DT0
+        LSR DT1
+        ROR A
+        LSR DT1
+        ROR A
+        LSR DT1
+        ROR A
+        LSR DT1
+        ROR A
+        JMP rd3
+rd2:    LDA DT1
+        LSR A
+        LSR A
+rd3:    STA RBXN
+        SEC
+        LDA ENZ,X
+        SBC #$01
+        STA DT0
+        LDA ENZ+1,X
+        SBC #$82
+        STA DT1
+        BCS rq3
+        JMP rdout
+rq3:    LDA #$01
+        SBC ENZ,X
+        LDA #$8A
+        SBC ENZ+1,X
+        BCS rq4
+        JMP rdout
+rq4:    LDA LRMODE
+        BNE rd4
+        LDA DT1
+        ASL DT0
+        ROL A
+        ASL DT0
+        ROL A
+        LDX SYSHP+2
+        BNE rd5
+        JMP rdout
+rd4:    LDA DT1
+        LSR A
+        LSR A
+        LSR A
+        LDX GSIZE,Y
+        BNE rq5
+        JMP rdout
+rq5:    LDX SYSHP+1
+        BNE rq6
+        JMP rdout
+rq6:
+rd5:    STA RBZN
+        CLC             ; (port: nothing to do when the mark stays)
+        LDA RBXN
+        ADC #$2D
+        STA RBXN
+        SEC
+        LDA #$B1
+        SBC RBZN
+        STA RBZN
+        LDA RBON,Y
+        BEQ rd6
+        LDA RBXN
+        CMP RBX,Y
+        BNE rd6
+        LDA RBZN
+        CMP RBY,Y
+        BEQ rd7
+rd6:    LDA RBX,Y       ; the old mark goes, the new one comes
+        STA POSX
+        LDA RBY,Y
+        STA POSY
+        JSR MERASE
+        LDA RBXN
+        STA RBX,Y
+        STA POSX
+        LDA RBZN
+        STA RBY,Y
+        STA POSY
+        LDA #$01
+        STA RBON,Y
+        JMP MARKER
+rd7:    RTS
+rdout:  LDA RBON,Y      ; (port: only a mark that is there)
+        BEQ rd7
+        LDA #$00
+        STA RBON,Y
+        LDA RBX,Y
+        STA POSX
+        LDA RBY,Y
+        STA POSY
+        JMP MERASE
+
+; The radar's mark ($3166 / $3138): an H of 7 pixels, colour 3, leaving colour 2
+; alone ($EF53 / $EEE6). Rows 0-2 hold sprite shapes in the port: not there.
+MARKER: LDA #$00
+        BEQ mk0
+MERASE: LDA #$01
+mk0:    STA MKE
+        STY MKY
+        LDY #$00
+mk1:    LDA MKDX,Y
+        CLC
+        ADC POSX
+        STA MKX0
+        LDA MKDY,Y
+        CLC
+        ADC POSY
+        CMP #24
+        BCC mk3
+        STA MKY0
+        STY MKI
+        LDA MKX0
+        STA POSX
+        LDA MKY0
+        STA POSY
+        JSR PIXADDR
+        LDA (PTR),Y
+        AND MASK3,X
+        CMP MASK2,X
+        BEQ mk2
+        LDA (PTR),Y
+        AND CLEARM,X
+        LDY MKE
+        BNE mk4
+        ORA MASK3,X
+mk4:    LDY #$00
+        STA (PTR),Y
+mk2:    LDY MKI
+        LDA MKX0        ; (PIXADDR took POSX / POSY: back to the mark's corner)
+        SEC
+        SBC MKDX,Y
+        STA POSX
+        LDA MKY0
+        SEC
+        SBC MKDY,Y
+        STA POSY
+mk3:    INY
+        CPY #$07
+        BNE mk1
+        LDY MKY
+        RTS
+MKDX:   .BYTE 0,0,0,2,2,2,1
+MKDY:   .BYTE 0,1,2,2,1,0,1
+MASK2:  .BYTE $80,$20,$08,$02
+
+SHOWTG: LDX #$70        ; A = ships: TARGETS on the HUD, two digits ($FCE9)
+stg1:   CMP #10
+        BCC stg2
+        SBC #10
+        INX
+        BNE stg1
+stg2:   STX TARGETS-1
+        ORA #$70
+        STA TARGETS
+        RTS
+
 ; ---------------- hits and explosions ----------------
 ; The shot against the fighters ($3244 / $324C), once a frame. During the last 10
 ; points of its path a shot hits a fighter shown within 12 pixels across and 10
@@ -2298,7 +3174,20 @@ EFTAB:  .BYTE $70,$70,$6F,$6F,$6E,$6D,$6D,$6C,$6B,$6B,$6A,$69,$68,$68 ; ($C91D)
 SHOTHIT:LDA HITWIN      ; ($1616)
         BNE hx0
         RTS
-hx0:    LDX #$00        ; fighter 0-2 = sprites 4-6 (the original's X = 2-4)
+hx0:    LDA EFVIS       ; ($3271, X = 0) the enemy shot, sprite 2: it can be shot
+        BEQ hxf         ; down
+        LDA EFX         ; (HITBOX reads ESH,Y: the shot goes behind the fighters)
+        STA ESH+6
+        LDA EFY
+        STA ESH+7
+        LDY #$06
+        JSR HITBOX
+        BEQ hxf
+        LDA EFY
+        CMP #$C3
+        BCS hxf
+        JMP HITSHOT
+hxf:    LDX #$00        ; fighter 0-2 = sprites 4-6 (the original's X = 2-4)
 hx1:    LDA EVIS
         AND ENBIT,X
         BEQ hx9
@@ -2411,11 +3300,43 @@ hbyes:  LDA #$01
 hbno:   LDA #$00
         RTS
 
-KILL:   DEC TARGETS     ; ($3CC4) one target less on the HUD, one more kill
+KILL:   STX KLX         ; ($3CC4) one ship less in the sector, one more kill
+        DEC SQCOUNT
+        LDA SQCOUNT
+        JSR SHOWTG
         INC KILLS
         BNE kl1
         INC KILLS+1
-kl1:    RTS
+kl1:    JSR KILLHK
+        LDA SQCOUNT
+        BNE kl2
+        LDA #$00        ; ($3CDE) the squadron is destroyed
+        STA GSIZE
+        STA GSIZE+1
+        STA GSIZE+2
+        STA APPR
+        STA APRUN
+        JSR EMPTYHK
+        LDX KLX
+        RTS
+kl2:    LDX CURG        ; ($3D23) the group: when it is gone, the next one is
+        DEC GSIZE,X     ; approached
+        BNE kl3
+        LDA #$01
+        STA APPR
+        STA RELAYOUT
+        LDA #$00
+        STA APRUN
+        LDA #$0F
+        STA APDLY
+kl3:    LDX KLX
+        RTS
+KILLHK: RTS             ; (c128-game: the map's COUNT follows)
+EMPTYHK:JMP SECSTART    ; standalone: the next squadron arrives (c128-game: none)
+SECSTART:
+        LDA #$09        ; (c128-game: from the map)
+        STA SQCOUNT
+        JMP ARRIVE
 
 HITSND: LDA #$01        ; ($3349) voice 2 noise, and the flash starts
         STA HITFL
@@ -2459,10 +3380,16 @@ fl2:    LDA #$03
         STA HITFL
         STA FLC0
         STA OWNHIT
+        STA TORPHIT
         RTS
 fl3:    LDA OWNHIT      ; ($137D) our shot hit: $130A, the ship was hit: $1303
         BEQ fl4
+        LDA TORPHIT     ; (our shot hit the enemy shot: $1318)
+        BNE fl5
         LDA FLTAB,X
+        STA FLASHC
+        RTS
+fl5:    LDA FLTAB3,X
         STA FLASHC
         RTS
 fl4:    LDA FLTAB2,X
@@ -2873,6 +3800,7 @@ qps4:    RTS
 
 MASK1:  .BYTE $40,$10,$04,$01
 FLTAB:  .BYTE $00,$06,$01,$0E,$06,$0E
+FLTAB3: .BYTE $00,$01,$05,$01,$05,$01  ; ($1318) the enemy shot shot down: white, green
 FLTAB2: .BYTE $00,$02,$01,$08,$0A,$01  ; ($1303) the ship hit: white, light red, orange, white, red
 PVX:    .BYTE $FE,$FC,$FE,$03,$02,$04,$FC,$FD,$FE,$03,$02,$04,$FC,$FC,$FD,$FC,$00,$03,$04,$04,$FC,$FD,$00,$03,$04,$05
 PVY:    .BYTE $FC,$FE,$FD,$FC,$FD,$FE,$03,$02,$04,$03,$03,$02,$FD,$FD,$FB,$00,$FC,$FC,$FD,$00,$03,$04,$04,$04,$03,$03
@@ -3115,7 +4043,13 @@ spe1:   LDA ESHP,X
         STA SPRPTR+4,X
         DEX
         BPL spe1
-        RTS
+        LDA BLIPON      ; approaching: sprite 4 is the chosen group's blip
+        BEQ spe2
+        LDA BLSHP
+        CLC
+        ADC #BLPTR-76
+        STA SPRPTR+4
+spe2:   RTS
 
 ENBIT:  .BYTE $10,$20,$40
 ENMASK: .BYTE $EF,$DF,$BF
@@ -3137,6 +4071,7 @@ SCNT:   .BYTE 1,1,1     ; calls until the next step ($2F6A-$2F6C)
 SPG:    .BYTE 0,0,0     ; stream pages left ($2F62-$2F64)
 SBASE:  .BYTE 0,0,0     ; first page of the x, y, depth streams ($2F65-$2F67)
 ESH:    .BYTE 0,0,0,0,0,0   ; sprite x / y of fighters 1-3 ($EF-$F4)
+        .BYTE 0,0           ; (the enemy shot's, for HITBOX)
 EMSB:   .BYTE 0         ; their x bit 8, bits 4-6 ($F7)
 EVIS:   .BYTE 0         ; which are shown, bits 4-6 ($98)
 ESHP:   .BYTE $20,$20,$20   ; their shapes, original numbering ($B4-$B6)
@@ -3203,7 +4138,7 @@ POY2:   .BYTE 0,0,0,0,0,0,0,0,0,0,0,0
 PNX2:   .BYTE 0,0,0,0,0,0,0,0,0,0,0,0
 PNY2:   .BYTE 0,0,0,0,0,0,0,0,0,0,0,0
 OWNHIT: .BYTE 0         ; the flash is for our hit on a fighter ($1320)
-DIFF:   .BYTE 1         ; difficulty 0-4 ($E0): 1 = assault
+DIFF:   .BYTE 0         ; difficulty 0-4 ($E0): 0 = skirmish (fire every 255 calls)
 SYSHP:  .BYTE 0,0,0,0,0,0,0,0   ; the systems' hit points ($39-$40)
 SHLD:   .BYTE 0         ; shields ($844F)
 HITS:   .BYTE 0,0       ; hits taken ($F432)
@@ -3227,3 +4162,53 @@ EFSHP:  .BYTE $67
 EFVIS:  .BYTE 0
 ATMP2:  .BYTE 0
 GFRM:   .BYTE 0         ; frame counter for the guns ($A0)
+SQCOUNT:.BYTE 0         ; ships left in the sector ($0378,X)
+GSIZE:  .BYTE 0,0,0     ; ships in each group ($C593)
+GSEL:   .BYTE 0         ; the chosen group ($3731)
+GLAST:  .BYTE 0         ; the last group ($381E)
+CURG:   .BYTE 0         ; the group being fought ($C596)
+APRUN:  .BYTE 0         ; the approach loop runs (port)
+APDLY:  .BYTE 0         ; ($C598)
+RELAYOUT:.BYTE 0        ; lay the groups out again ($C597)
+LRMODE: .BYTE 0         ; the radar at long range ($D3 bit 7)
+BLIPON: .BYTE 0         ; sprite 4 is the blip
+BLSHP:  .BYTE $4C       ; ($3733)
+BLDIR:  .BYTE 1         ; ($3732)
+FLATCH: .BYTE 0         ; ($3735)
+NUMT:   .BYTE 0         ; ($5B)
+NUMCOL: .BYTE 1         ; ($3934)
+TORPHIT:.BYTE 0         ; ($323D)
+KLX:    .BYTE 0
+LYN:    .BYTE 0
+LYMASK: .BYTE 0
+LYG:    .BYTE 0
+LYSPR:  .BYTE 63,63,63,79,79    ; ($3D4C) spread by difficulty
+LYBASE: .BYTE 102,102,102,85,85 ; ($3D52) base
+DSX:    .BYTE 0
+DSTL:   .BYTE 0         ; ($2B, $2C)
+DSTH:   .BYTE 0
+DT0:    .BYTE 0
+DT1:    .BYTE 0
+DSIGN:  .BYTE 0
+LRPOS:  .BYTE 0
+BCDH:   .BYTE 0         ; ($9C-$9E)
+BCDT:   .BYTE 0
+BCDO:   .BYTE 0
+OFX:    .BYTE 0,0
+OFY:    .BYTE 0,0
+OFZ:    .BYTE 0,0
+DGN:    .BYTE 0
+RSLOT:  .BYTE 0         ; ($3051)
+RBXN:   .BYTE 0         ; ($3052, $3055)
+RBZN:   .BYTE 0
+RBX:    .BYTE $30,$30,$30       ; the marks' places ($3058, $305B)
+RBY:    .BYTE $A8,$A8,$A8
+MKE:    .BYTE 0
+MKY:    .BYTE 0
+MKI:    .BYTE 0
+MKX0:   .BYTE 0
+MKY0:   .BYTE 0
+RBON:   .BYTE 0,0,0     ; a mark is drawn (port)
+LYACT:  .BYTE 0         ; laying out (port)
+LYY:    .BYTE 0
+NUMPEND:.BYTE 0         ; the number is due (port)

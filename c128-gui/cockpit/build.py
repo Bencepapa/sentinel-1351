@@ -100,6 +100,10 @@ def place_assets(put):
         put(slot(0xF3 + original - 0x67), shape(original))
     for original in range(0x20, 0x30):                     # type-1 fighters, $20-$2F
         put(slot(fighter_pointer(original)), shape(original))
+    for new, original in enumerate((0x4C, 0x4D, 0x4E)):    # the approach's blip: pointers $36-$38
+        put(0x4D80 + new * 64, shape(original))
+    put(0x3690, shape(0x64))                                # the crosshair's digits (DIGF)
+    put(0x3600, open(os.path.join(REF, 'lrscale-ed00.bin'), 'rb').read())   # LRTAB
     put(STREAMS, open(os.path.join(REF, 'streams-e800.bin'), 'rb').read())
     put(0x4800, screen)
     put(0x6000 + 18 * 320, bitmap_rows)

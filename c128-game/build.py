@@ -6,8 +6,8 @@ Sources: c128-gui/cockpit/cockpit.asm and c128-map/map.asm stay standalone
 programs; this script joins them with c128-game/game.asm (the glue):
 
 - the map's source: every label and constant it defines gets the prefix M_
-  (except the ship's shared variables below), its code moves to $9D00 and its
-  second-display data from $4000-$43FF to $B800-$BBFF (the cockpit's font lives
+  (except the ship's shared variables below), its code moves right after the cockpit's second chunk and its
+  second-display data from $4000-$43FF to $2900-$2CFF (the cockpit's font lives
   at $4000); a few patches (PATCHES_MAP) turn it into the game's map screen;
 - the cockpit's source: a few patches (PATCHES_COCKPIT) hook in the map key, the
   sectors and the squadron counts;
@@ -19,8 +19,9 @@ $3800-$3FFF (c128-map/build.py):
   $5000  master copies of the cockpit picture (the VIC-IIe cannot use $5000-$5FFF,
          the CPU can): bitmap rows 0-2 (sprite shapes), the shot slots in rows
          23-24, the cockpit art (rows 18-22), the colour matrix rows 3-22
-  $9D00  the map's code, then the glue
-  $B800  the map's second-display data (VDC characters, planet, row tables, texts)
+  $2900  the map's second-display data (VDC characters, planet, row tables, texts),
+         between the cockpit's first code chunk and its tables
+  $xx00  the map's code, then the glue: right after the cockpit's second chunk
 """
 
 import os
@@ -40,8 +41,8 @@ import build as map_build                          # noqa: E402
 LOAD = 0x1C01
 ENTRY = 0x1D00
 CODE2 = 0x8C00
-MAPCODE = 0x9D00
-VDCDATA = 0xB800
+MAPCODE = 0xA500         # provisional: assemble() puts the map right after the cockpit's code
+VDCDATA = 0x2900
 OUT = os.path.join(HERE, 'sentinel-c128-game.prg')
 
 SHARED = {'SHLD', 'HITS', 'SHIPLOST', 'DIFF', 'SYSHP'}    # the cockpit's, used by the map
@@ -54,7 +55,6 @@ PATCHES_MAP = [
     ('HITS:   .BYTE 0\n', ''),
     ('SHIPDEAD:.BYTE 0\n', ''),
     # code and data addresses
-    ('        * = $1D00\n', '        * = $9D00\n'),
     # the set-up part of START becomes a subroutine (TOMAP calls it)
     ('        LDA CIA2PA\n        AND #$FC\n        ORA #$02        ; VIC bank 1: $4000-$7FFF\n        STA CIA2PA\n        LDA #$3B',
      'MSETUP: LDA CIA2PA\n        AND #$FC\n        ORA #$02        ; VIC bank 1: $4000-$7FFF\n        STA CIA2PA\n        LDA #$3B'),
@@ -82,7 +82,7 @@ GENDONE:.BYTE 0
 """
 
 PATCHES_COCKPIT = [
-    ('        JSR NEWWAVE     ; a type-1 squadron wave\n',
+    ('        JSR SECSTART    ; a squadron in the sector (c128-game: the map\'s start sector)\n',
      '        JSR GAMEINIT    ; (game) the world and the start sector\n'),
     # SPACE leaves only on a new press; C= opens the map
     ('        LDA CIA1PB\n        AND #$10\n        BNE nospace\n        JMP EXIT\nnospace:LDA #$BF        ; port 2 pots for the next frame\n',
@@ -90,16 +90,9 @@ PATCHES_COCKPIT = [
      'nospace:LDA #$00\n        STA SPREV\nnosp2:  LDA CIA1PB      ; (game) C= opens the map (the original\'s map key)\n'
      '        AND #$20\n        BNE nomapk\n        LDA CPREV\n        BNE nomap\n        JMP TOMAP\nnomapk: LDA #$00\n        STA CPREV\n'
      'nomap:  LDA #$BF        ; port 2 pots for the next frame\n'),
-    # waves come from the sector's squadron
-    ('        LDA ETYPE       ; all three alive: the flags get the type ($C7B9), after\n'
-     '        STA ALIVE       ; WAVEINIT, which clears them\n        STA ALIVE+1\n        STA ALIVE+2\n'
-     '        STA EHITS       ; shots each one takes: the type ($C7B9)\n        STA EHITS+1\n        STA EHITS+2\n'
-     '        LDA TARGETS     ; the HUD\'s TARGETS count: refilled when it runs low (no\n'
-     '        CMP #$73        ; squadrons yet)\n        BCS nw1\n        LDA #$79\n        STA TARGETS\n',
-     '        JSR WAVEALIVE   ; (game) as many as the squadron has, up to 3\n'),
-    ('        ORA EXPL\n        BNE fg4\n        JSR NEWWAVE\n', '        ORA EXPL\n        BNE fg4\n        JSR SECWAVE     ; (game)\n'),
-    ('KILL:   DEC TARGETS     ; ($3CC4) one target less on the HUD, one more kill\n',
-     'KILL:   JSR SECKILL     ; (game) the sector\'s COUNT -1, shown as TARGETS\n'),
+    # the squadron's ships are the map's COUNT
+    ('KILLHK: RTS             ; (c128-game: the map\'s COUNT follows)\n', 'KILLHK: JMP SECKILL     ; (game)\n'),
+    ('EMPTYHK:JMP SECSTART    ; standalone: the next squadron arrives (c128-game: none)\n', 'EMPTYHK:RTS             ; (game) the sector is empty now\n'),
 ]
 
 
@@ -151,15 +144,25 @@ def assemble():
         if not old:
             raise SystemExit(f'map: constant {name} = ${value:04X} not found')
         mapsrc = mapsrc.replace(old.group(0), '%s = $%04X' % (name, value - 0x4000 + VDCDATA))
-    source = cockpit + '\n' + prefix_map(mapsrc) + '\n' + read('c128-game', 'game.asm')
-    return asm(source)
+    mapsrc = prefix_map(mapsrc)
+    glue = read('c128-game', 'game.asm')
+    global MAPCODE
+    for _ in range(3):              # the map's code goes right after the cockpit's second chunk
+        source = cockpit + '\n' + mapsrc.replace('        * = $1D00\n', '        * = $%04X\n' % MAPCODE) + '\n' + glue
+        chunks, symbols = asm(source)
+        end = CODE2 + len(chunks[CODE2])
+        want = (end + 0xFF) & 0xFF00
+        if want == MAPCODE:
+            return chunks, symbols
+        MAPCODE = want
+    raise SystemExit('the map code address does not settle')
 
 
 def main():
     chunks, symbols = assemble()
     if set(chunks) != {ENTRY, CODE2, MAPCODE}:
         raise SystemExit(f'unexpected assembly chunks: {[hex(c) for c in chunks]}')
-    for start, limit in ((ENTRY, cockpit_build.YLO), (CODE2, MAPCODE), (MAPCODE, VDCDATA)):
+    for start, limit in ((ENTRY, VDCDATA), (CODE2, MAPCODE), (MAPCODE, 0xC000)):
         if start + len(chunks[start]) > limit:
             raise SystemExit(f'code from ${start:04X} ends at ${start + len(chunks[start]):04X}, past ${limit:04X}')
 

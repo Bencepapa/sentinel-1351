@@ -19,10 +19,12 @@ In the browser page: **Program → C128 game (cockpit + map)**.
   attack) and the second display, all as in the standalone map program.
 - **Fire on another sector** jumps there at once (hyperspace replaces this
   later). **SPACE** on the map goes back to the cockpit without a jump.
-- In the cockpit the map decides what is there: a squadron's sector brings
-  waves of up to three fighters (all type 1 for now, whatever the squadron's
-  type), TARGETS on the HUD shows the sector's ship count, each kill lowers it,
-  the last one empties the sector on the map. SECTOR on the HUD follows the jump.
+- In the cockpit the map decides what is there: a squadron's sector starts the
+  approach (the cockpit's long range scanner: groups far away, fire chooses one,
+  aligned in front the ship rushes in, the group becomes up to three fighters;
+  all type 1 for now, whatever the squadron's type). TARGETS on the HUD shows the
+  sector's ship count, each kill lowers it, the last one empties the sector on
+  the map. SECTOR on the HUD follows the jump.
 - Mothership sectors are empty in the cockpit for now.
 - The ship (systems, shields, hits, difficulty) is one: the cockpit's model, and
   the map's second display shows it.
@@ -32,8 +34,8 @@ In the browser page: **Program → C128 game (cockpit + map)**.
 `build.py` reads both sources and `game.asm` (the glue):
 
 - the map's source: every label and constant it defines gets the prefix `M_`
-  (except the ship's shared variables), its code moves to `$9D00`, its
-  second-display data from `$4000` to `$B800` (the cockpit's font is at `$4000`);
+  (except the ship's shared variables), its code moves right after the cockpit's second code chunk, its
+  second-display data from `$4000` to `$2900` (the cockpit's font is at `$4000`);
   a few patches make its set-up a subroutine, send SPACE and the sector choice
   back to the cockpit, make the start layout only once and start the cursor on
   the ship's sector;
@@ -51,5 +53,6 @@ Tests (`js/test/run.js`, "game:"): the start sector, the map opening, a jump int
 a squadron's sector (fighters = the squadron's count up to 3, TARGETS), the HUD's
 sector, the restored picture, kills emptying the sector, SPACE going back.
 
-Not yet: hyperspace, the approach phase (groups, long range scanner), types 2
-and 3, motherships, the world ticking while in the cockpit.
+Next (planned): the map drawn over the cockpit with the fight going on behind it,
+the world ticking while in the cockpit. Not yet: hyperspace, types 2 and 3,
+motherships.

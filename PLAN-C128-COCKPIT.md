@@ -188,7 +188,26 @@ sector (hyperspace later). How:
 - **Keys**: the right button / C= opens the map (as in the original), choosing a
   sector and fire jumps at once (hyperspace, step 3, replaces this later).
 
-### B. The approach phase and the long range scanner (traced)
+### B. The approach phase and the long range scanner (traced, ported)
+
+**Ported** (cockpit and c128-game): arrival (`ARRIVE`), the groups' layout
+(`LAYOUT` / `LYPLACE`, `$3D58` / `$3DA6`), the long range scanner's row with its
+readings and blip (`LRSCAN`, `APINIT`, `BLIPPOS`, `$3776` / `$3736` / `$38E8`), fire
+choosing a group, closing in (`CLOSEIN`, `$C848`), the arrival check and the group
+becoming fighters (`ARRCHK`, `GROUPIN`, `$C730` / `$C749`), the next group after a
+group is down (`KILL`, `$3D23`), the radar marks in the scanner box in both modes
+(`RADAR`, `MARKER`, `$305F` / `$3166` / `$3138`), the number under the crosshair and
+its colour (`NUMBER`, `DIST`, `$3935` / `$2C43`), and shooting down the enemy shot
+(`HITSHOT`, `$3287`). The test compares distance, readings, radar marks and the
+number with the original in 600 random cases; a play test aligns a group, rushes
+in and sees it arrive. Per frame the port steers 4 times, drifts twice and rushes
+the distance of 16 passes at once; the layout runs a group a frame in the vertical
+blank; the approach's work uses the 3D view's time (no phasor then). Not ported:
+the arrival messages (`$9BE5`), the radar ellipse's size change between the modes
+(`$3194`), the engine sound of the rush, sprites for groups that come close.
+On arrival the original leaves the groups where hyperspace put them; the port lays
+them out at once.
+
 
 What happens on arrival in a squadron's sector (`$FCE1-$FD7A`, `$C6A9`):
 

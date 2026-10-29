@@ -44,6 +44,14 @@ function boot(name, mode) {
   return { m, hooks, ported, p };
 }
 
+// The cockpit starts by approaching a squadron; tests of the fight put it in a
+// dogfight with ships to spare.
+function dogfight(k) {
+  const K = k.m.ram, s = k.p.symbols;
+  K[s.APPR] = 0; K[s.APRUN] = 0; K[s.LRMODE] = 0; K[s.SQCOUNT] = 200; K[s.CURG] = 0;
+  K[s.GSIZE] = K[s.GSIZE + 1] = K[s.GSIZE + 2] = 200;
+}
+
 function run(m, hooks, frames, each) {
   for (let i = 0; i < frames; i++) {
     if (each) each(i);
@@ -267,7 +275,7 @@ function report(hooks, label) {
   const o = boot('c64game', 'trace'), os = o.p.symbols;
   run(o.m, o.hooks, 250);                    // unpacked: the game's code is in memory
   const k = boot('cockpit', 'trace'), ks = k.p.symbols;
-  run(k.m, k.hooks, 5);
+  run(k.m, k.hooks, 5); dogfight(k);
   const R = o.m.ram, K = k.m.ram;
   // the original, as the game runs it: the IRQ's $1424, then $1467 from the main loop
   const orig = {
@@ -326,7 +334,7 @@ function report(hooks, label) {
   // in the running cockpit the sound is swept 6 times per frame while a shot flies, like the original
   const run2 = boot('cockpit', 'trace');
   run2.hooks.trace('SWEEPSND');
-  run(run2.m, run2.hooks, 10);
+  run(run2.m, run2.hooks, 10); dogfight(run2);
   const sweeps = [];
   run(run2.m, run2.hooks, 12, i => { run2.m.mouse.left = i < 2; if (i > 3) sweeps.push(run2.hooks.handlers[run2.p.symbols.SWEEPSND].callsLastFrame); });
   check(sweeps.every(n => n === 6), `phasor: sound swept 6 times per frame in flight (${sweeps.join(',')})`);
@@ -353,7 +361,7 @@ function report(hooks, label) {
     c.p = p;
   }
   const o = boot('c64game', 'trace'); run(o.m, o.hooks, 250);
-  const k = boot('cockpit', 'trace'); run(k.m, k.hooks, 5);
+  const k = boot('cockpit', 'trace'); run(k.m, k.hooks, 5); dogfight(k);
   const R = o.m.ram, K = k.m.ram, ks = k.p.symbols;
   // the original: a type-1 wave as $C749-$C7C0 starts it (offset 0)
   R[0xA5] = 1; R[0xBA] = 0; R[0xFB] = 0;
@@ -394,7 +402,7 @@ function report(hooks, label) {
     c.p = p;
   }
   const o = boot('c64game', 'trace'); run(o.m, o.hooks, 250);
-  const k = boot('cockpit', 'trace'); run(k.m, k.hooks, 5);
+  const k = boot('cockpit', 'trace'); run(k.m, k.hooks, 5); dogfight(k);
   const R = o.m.ram, K = k.m.ram, ks = k.p.symbols;
   R[0xA5] = 1; R[0xBA] = 0; R[0xFB] = 0;
   callAt(o.m, 0xFF1B);
@@ -434,7 +442,7 @@ function report(hooks, label) {
     c.p = p;
   }
   const o = boot('c64game', 'trace'); run(o.m, o.hooks, 250);
-  const k = boot('cockpit', 'trace'); run(k.m, k.hooks, 5);
+  const k = boot('cockpit', 'trace'); run(k.m, k.hooks, 5); dogfight(k);
   const R = o.m.ram, K = k.m.ram, ks = k.p.symbols;
   // the original's bookkeeping after a kill ($3CC4) must not end the fight here
   R[0x92] = 0; R[0x93] = 0; for (let i = 0; i < 60; i++) { R[0x0378 + i] = 50; R[0xBDED + i] = 50; }
@@ -444,8 +452,8 @@ function report(hooks, label) {
   R[0x5F] = R[0x60] = R[0x61] = 1; R[0x2F6A] = R[0x2F6B] = R[0x2F6C] = 1; R[0xC59A] = R[0xC59B] = R[0xC59C] = 1;
   callAt(k.m, ks.NEWWAVE);
   R[0xC59B] = 2; K[ks.EHITS + 1] = 2;          // fighter 2 takes two shots: the other path
-  const state = (M, o) => o ? [M[0x5F], M[0x60], M[0x61], M[0xC59A], M[0xC59B], M[0xC59C], M[0x98] & 0x70, M[0x160A] ? 1 : 0, M[0x160C], M[0x160D], M[0x1614], M[0x1615], M[0x1616], M[0x1416], M[0x5476], ...M.subarray(0x16, 0x28)].join()
-    : [M[ks.ALIVE], M[ks.ALIVE + 1], M[ks.ALIVE + 2], ...M.subarray(ks.EHITS, ks.EHITS + 3), M[ks.EVIS] & 0x70, M[ks.EXPL] ? 1 : 0, M[ks.EXPX], M[ks.EXPY], M[ks.EVX0], M[ks.EVY0], M[ks.HITWIN], M[ks.SHIDX], M[ks.TARGETS], ...M.subarray(ks.ENX, ks.ENX + 6), ...M.subarray(ks.ENY, ks.ENY + 6), ...M.subarray(ks.ENZ, ks.ENZ + 6)].join();
+  const state = (M, o) => o ? [M[0x5F], M[0x60], M[0x61], M[0xC59A], M[0xC59B], M[0xC59C], M[0x98] & 0x70, M[0x160A] ? 1 : 0, M[0x160C], M[0x160D], M[0x1614], M[0x1615], M[0x1616], M[0x1416], ...M.subarray(0x16, 0x28)].join()
+    : [M[ks.ALIVE], M[ks.ALIVE + 1], M[ks.ALIVE + 2], ...M.subarray(ks.EHITS, ks.EHITS + 3), M[ks.EVIS] & 0x70, M[ks.EXPL] ? 1 : 0, M[ks.EXPX], M[ks.EXPY], M[ks.EVX0], M[ks.EVY0], M[ks.HITWIN], M[ks.SHIDX], ...M.subarray(ks.ENX, ks.ENX + 6), ...M.subarray(ks.ENY, ks.ENY + 6), ...M.subarray(ks.ENZ, ks.ENZ + 6)].join();
   // reorder the original's $16-$27 the same way (x, y, z blocks are already in that order)
   let first = null, tries = 0, kills = 0, wounds = 0, misses = 0;
   for (let n = 1; n <= 3000 && !first; n++) {
@@ -487,7 +495,7 @@ function report(hooks, label) {
   for (const [x, y, vx, vy] of ex) {
     R[0x160C] = x; R[0x160D] = y; R[0x1614] = vx; R[0x1615] = vy; R[0x160A] = 1; R[0x160B] = 0;
     K[ks.EXPX] = x; K[ks.EXPY] = y; K[ks.EVX0] = vx; K[ks.EVY0] = vy; K[ks.EXPL] = 1; K[ks.EXPB] = 0; K[ks.EXLIM] = 255;
-    callAt(o.m, 0x16B3); callAt(k.m, ks.EXPLODE);
+    callAt(o.m, 0x16B3); for (let g = 0; g < 50 && !K[ks.EXPB]; g++) callAt(k.m, ks.EXPLODE);
     for (let st = 0; st < 25 && R[0x160A] && !bad; st++) {
       const n0 = R[0x160E];
       for (let g = 0; g < 100 && R[0x160A] && R[0x160E] === n0; g++) callAt(o.m, 0x16B3);
@@ -515,7 +523,7 @@ function report(hooks, label) {
     c.p = p;
   }
   const o = boot('c64game', 'trace'); run(o.m, o.hooks, 250);
-  const k = boot('cockpit', 'trace'); run(k.m, k.hooks, 5);
+  const k = boot('cockpit', 'trace'); run(k.m, k.hooks, 5); dogfight(k);
   const R = o.m.ram, K = k.m.ram, ks = k.p.symbols;
   for (const diff of [1, 3]) {
     R[0xA5] = 1; R[0xBA] = 0; R[0xFB] = 0;
@@ -574,6 +582,88 @@ function report(hooks, label) {
     `ship: 25 shields, 26 hits take 26 system points and lose the ship (HUD shows ${String.fromCharCode(K[ks.HUDS] - 0x40, K[ks.HUDS + 1] - 0x40)})`);
 }
 
+// ---- the approach: DIST / LRSCAN / RADAR / NUMBER against $2C43 / $3839 / $305F / $3935 ----
+{
+  function callAt(m, addr, regs) {
+    const c = m.cpu, ret = 0xFFF4, p = c.p;
+    Object.assign(c, regs || {});
+    c.push(((ret - 1) >> 8) & 255); c.push((ret - 1) & 255); c.pc = addr; c.p |= 4;
+    for (let i = 0; i < 2e6 && c.pc !== ret; i++) { c.step(); if (c.jam) throw new Error(c.jam); }
+    c.p = p;
+  }
+  const o = boot('c64game', 'trace'); run(o.m, o.hooks, 250);
+  const k = boot('cockpit', 'trace'); run(k.m, k.hooks, 5); dogfight(k);
+  const R = o.m.ram, K = k.m.ram, ks = k.p.symbols;
+  let seed = 12345; const rnd = () => (seed = (seed * 1103515245 + 12345) & 0x7FFFFFFF) >> 8 & 255;
+  let bad = null, n = 0;
+  R[0x3A] = R[0x3B] = 1; K[ks.SYSHP + 1] = K[ks.SYSHP + 2] = 1;
+  R[0x5476] = 0x75; K[ks.SQCOUNT] = 5; R[0xE1] = 0;
+  for (let t = 0; t < 600 && !bad; t++) {
+    // random places: near (the fight's radar range) or far (groups)
+    const near = t & 1;
+    for (let i = 0; i < 6; i++) {
+      const hiX = near ? 0x86 + (rnd() & 3) : rnd(), hiY = near ? 0x87 + (rnd() & 1) : rnd(), hiZ = near ? 0x82 + (rnd() & 7) : rnd();
+      const v = [rnd(), hiX, rnd(), hiY, rnd(), hiZ];
+      if (i < 3) { R[0x16 + 2 * i] = K[ks.ENX + 2 * i] = v[0]; R[0x17 + 2 * i] = K[ks.ENX + 2 * i + 1] = v[1];
+        R[0x1C + 2 * i] = K[ks.ENY + 2 * i] = v[2]; R[0x1D + 2 * i] = K[ks.ENY + 2 * i + 1] = v[3];
+        R[0x22 + 2 * i] = K[ks.ENZ + 2 * i] = v[4]; R[0x23 + 2 * i] = K[ks.ENZ + 2 * i + 1] = v[5]; }
+    }
+    const g = t % 3, sizes = [rnd() % 4, rnd() % 4, rnd() % 4];
+    for (let i = 0; i < 3; i++) { R[0xC593 + i] = K[ks.GSIZE + i] = sizes[i]; R[0x5F + i] = K[ks.ALIVE + i] = (rnd() & 1); }
+    // distance
+    callAt(o.m, 0x2C43, { x: g }); const oa = o.m.cpu.a;
+    callAt(k.m, ks.DIST, { x: g }); const ka = k.m.cpu.a;
+    const d1 = [R[0x2B], R[0x2C], oa].join(), d2 = [K[ks.DSTL], K[ks.DSTH], ka].join();
+    if (d1 !== d2) { bad = { what: 'DIST', a: d1, b: d2 }; break; }
+    // the long range scanner's readings for group g
+    R[0x3730] = 2 * g; R[0x3731] = g; K[ks.GSEL] = g;
+    callAt(o.m, 0x3839); callAt(k.m, ks.lr7);
+    const t1 = [...R.subarray(0x57A1, 0x57B6), ...R.subarray(0x372C, 0x3730)].join(), t2 = [...K.subarray(ks.LRROW + 9, ks.LRROW + 30), ...K.subarray(ks.LRDIG, ks.LRDIG + 4)].join();
+    if (t1 !== t2) { bad = { what: 'scanner', a: t1, b: t2 }; break; }
+    // the radar, one slot a call, close or long range
+    R[0xD3] = near ? 0 : 0x80; K[ks.LRMODE] = near ? 0 : 1;
+    for (let c = 0; c < 3; c++) {
+      callAt(o.m, 0x305F); callAt(k.m, ks.RADAR);
+      const s = R[0x3051];
+      const r1 = R[0x3058 + s] + ',' + R[0x305B + s], r2 = K[ks.RBX + s] + ',' + K[ks.RBY + s];
+      if (R[0x3051] !== K[ks.RSLOT] || (K[ks.RBON + s] && r1 !== r2)) { bad = { what: 'radar slot ' + s, a: r1, b: r2 }; break; }
+    }
+    // the number under the crosshair: approach (group g) or the first live fighter
+    R[0xE3] = K[ks.APPR] = t & 2 ? 1 : 0; R[0x5B] = 0;
+    callAt(o.m, 0x3935); callAt(k.m, ks.NUMBER);
+    const n1 = [...R.subarray(0x5F70, 0x5F7F), R[0x3934], R[0x5B]].join(), n2 = [...K.subarray(0x4C30, 0x4C3F), K[ks.NUMCOL], K[ks.NUMT]].join();
+    if (n1 !== n2) { bad = { what: 'number', a: n1, b: n2 }; break; }
+    n++;
+  }
+  if (bad) console.log('      ' + bad.what + '\n      orig ' + bad.a + '\n      port ' + bad.b);
+  check(!bad, `approach: distance, scanner readings, radar marks and the crosshair number match the original (${n} random cases)`);
+  K[ks.APPR] = 0; K[ks.LRMODE] = 0;
+}
+
+// ---- the approach as it plays (standalone cockpit: a squadron of 9) ----
+{
+  const { m, hooks, p } = boot('cockpit', 'trace');
+  const s = p.symbols, K = m.ram;
+  let f = 0;
+  while (!K[s.APRUN] && f < 200) { m.runFrame(); f++; }
+  m.runFrame();
+  const sizes = [...K.subarray(s.GSIZE, s.GSIZE + 3)];
+  const row = String.fromCharCode(...[...K.subarray(s.LRROW + 9, s.LRROW + 30)].map(c => c - 0x40));
+  check(K[s.APRUN] && sizes.join() === '3,3,3' && K[s.LRROW + 9] === 0x7B && K[s.LRROW + 17] === 0x7C && K[s.LRROW + 25] === 0x7D,
+    `approach: after ${f} frames the scanner runs, groups ${sizes.join('/')}, row 23 "${row}"`);
+  const g0 = K[s.GSEL];
+  m.mouse.left = true; m.runFrame(); m.runFrame(); m.mouse.left = false; m.runFrame();
+  check(K[s.GSEL] === 2 && g0 === 0 && !K[s.SHOTON], `approach: fire chooses the next group (${g0} -> ${K[s.GSEL]}), no shot`);
+  // put the chosen group straight ahead, far: the ship rushes to it and it arrives
+  const g = K[s.GSEL];
+  K[s.ENX + 2 * g] = 0xA0; K[s.ENX + 2 * g + 1] = 0x88; K[s.ENY + 2 * g] = 0x90; K[s.ENY + 2 * g + 1] = 0x88;
+  K[s.ENZ + 2 * g] = 0x00; K[s.ENZ + 2 * g + 1] = 0x96;
+  let fr = 0; while (K[s.APPR] && fr < 100) { m.runFrame(); fr++; }
+  const alive = K[s.ALIVE] + K[s.ALIVE + 1] + K[s.ALIVE + 2];
+  check(!K[s.APPR] && K[s.CURG] === g && alive === 3, `approach: aligned in front, the ship rushes in; after ${fr} frames the group arrives: ${alive} fighters`);
+  check(K[s.OVRUN] === 0, 'approach: no frame overran');
+}
+
 // ---- 2 MHz mode: the raster runs at half the processor's cycles ----
 {
   const m = new C128('c128');
@@ -600,15 +690,15 @@ function report(hooks, label) {
   const idx = st.findIndex(v => v >= 1 && v <= 3), n0 = K[s.M_COUNT + idx];
   K[s.M_CURX] = idx % 10; K[s.M_CURY] = Math.floor(idx / 10);
   run(m, hooks, 4, i => { m.mouse.left = i < 2; }); run(m, hooks, 10);
-  const alive = K[s.ALIVE] + K[s.ALIVE + 1] + K[s.ALIVE + 2];
-  check(!m.stopped && K[s.M_SELY] * 10 + K[s.M_SELX] === idx && alive === Math.min(3, n0) && +tg() === n0,
-    `game: fire on a squadron's sector jumps there: ${alive} fighters, TARGETS ${tg()} (COUNT ${n0})`);
+  check(!m.stopped && K[s.M_SELY] * 10 + K[s.M_SELX] === idx && K[s.APPR] === 1 && K[s.SQCOUNT] === n0 && +tg() === n0,
+    `game: fire on a squadron's sector jumps there: the approach of ${n0} ships begins, TARGETS ${tg()}`);
   check(K[s.M_SELX] + 1 === K[s.HUDSEC + 1] - 0x70 && K[s.M_SELY] + 1 === K[s.HUDSEC + 4] - 0x70, 'game: the HUD shows the new sector');
   const bitmapOk = [...K.subarray(0x6000, 0x63C0)].every((v, i) => v === K[s.MSPR + i]) &&
                    [...K.subarray(0x7680, 0x7CC0)].every((v, i) => v === K[s.MART + i]);
   check(bitmapOk, 'game: back from the map, the sprite shapes and the cockpit art are restored');
   // every kill lowers the sector's COUNT; the last one empties it on the map
   const callAt = (addr) => { const c = m.cpu, ret = 0xFFF4; c.push(((ret - 1) >> 8) & 255); c.push((ret - 1) & 255); c.pc = addr; const sp = c.p; c.p |= 4; for (let i = 0; i < 1e6 && c.pc !== ret; i++) c.step(); c.p = sp; };
+  K[s.CURG] = 0; K[s.GSIZE] = 9;
   for (let i = 0; i < n0; i++) { m.cpu.x = 0; callAt(s.KILL); }
   check(K[s.M_COUNT + idx] === 0 && K[s.M_STATE + idx] === 0 && tg() === '00', `game: ${n0} kills empty the sector (COUNT 0, STATE 0, TARGETS ${tg()})`);
   run(m, hooks, 3, () => m.setKey(7, 5, true)); m.setKey(7, 5, false);

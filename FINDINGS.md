@@ -81,6 +81,25 @@ Hits after the shields are gone still take hit points from the systems (from
 | `$8301-$83FC` | The message reads "STELLER GRID UPDATE DESTROYED". | (messages not ported yet) |
 | `$C947` | Enemy fire and the guns (`$9568`, every 16th frame) run at the speed of the main loop or the frame counter, so they are slower than they look: the guns follow the crosshair one step per 16 frames. | the port calls them at the same rates |
 
+## How the enemy shot and our hits work (for players)
+
+- **Our hits.** The shot can only hit during the last 10 points of its path, that
+  is where the crosshair was when it was fired. It hits a fighter whose sprite is
+  within 12 pixels across and 10 down of the shot's sprite (both measured from the
+  sprites' corners), so: put the crosshair on the fighter, and lead a moving one so
+  that it is there when the shot arrives. One hit per shot.
+- **The enemy shot can be shot down** (`$3287`): our shot's hit test checks
+  sprite 2, the enemy shot, first. A hit bursts it (12 points), the view flashes
+  white and green, and the shot, still growing unseen, does no harm when it
+  arrives, because the arrival only hurts if the sprite is still shown (`$CA71`).
+- **It can miss by itself**: it moves away from the middle of the view as it grows
+  (`$CB6C` / `$CBAA`); one fired from near an edge leaves the screen (x past the
+  edge, y above `$59` or from `$F0` down) before it is full size, and is gone.
+- **Fire rate**: a fighter fires when the delay runs out (by difficulty: 255, 176,
+  112, 64, 16 calls of `$C947`, every 3rd main loop pass, about 16 passes a frame)
+  and only while it is shown in the middle of the view. The C128 port's default
+  difficulty was 1; it is now 0 (skirmish, the slowest).
+
 ## Misnamed in earlier notes
 
 - `$E3`, `$C847` and `$372C-$372F` (read by the steering `$39C1`) belong to the
