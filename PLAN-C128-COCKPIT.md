@@ -157,7 +157,10 @@ destroyed system disables.
 
 ## Next (from the user, 2026-10-29): one program, the approach, the scanners
 
-### A. The map and the cockpit as one program (first step done: `c128-game/`)
+### A. The map and the cockpit as one program (done: `c128-game/`)
+
+Second step done: the map opens in the 3D view with the fight going on behind
+it, the world's clock runs all the time (see `c128-game/README.md`).
 
 Done: `c128-game/` joins both programs (see its README): C= opens the map, fire on
 another sector jumps there at once, the sector's squadron comes in waves, TARGETS

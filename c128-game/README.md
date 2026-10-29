@@ -14,20 +14,28 @@ In the browser page: **Program → C128 game (cockpit + map)**.
 ## How it plays
 
 - The ship starts in sector 05.03 (map cell 4,2), empty as in the original.
-- **C=** (Alt in the page) opens the map: the grid draw-in, the squadrons,
-  motherships and planet, the cursor, the ticks (squadrons move, motherships
-  attack) and the second display, all as in the standalone map program.
-- **Fire on another sector** jumps there at once (hyperspace replaces this
-  later). **SPACE** on the map goes back to the cockpit without a jump.
-- In the cockpit the map decides what is there: a squadron's sector starts the
-  approach (the cockpit's long range scanner: groups far away, fire chooses one,
-  aligned in front the ship rushes in, the group becomes up to three fighters;
-  all type 1 for now, whatever the squadron's type). TARGETS on the HUD shows the
-  sector's ship count, each kill lowers it, the last one empties the sector on
-  the map. SECTOR on the HUD follows the jump.
+- **C=** (Alt in the page) opens the map **in the cockpit's 3D view**, as in the
+  original in flight: the view turns white, wipes a row a frame, and the grid
+  draws in with its beeps; the HUD, the radar, the guns and the scanner row stay.
+  C= again closes it (the view wipes back, the stars return).
+- **The fight goes on behind the map**: the fighters fly behind its lines and
+  icons, enemy shots still hit the ship. While the map is open the mouse moves
+  its cursor (no phasor, no steering).
+- **Fire on another sector** closes the map and jumps there at once (hyperspace
+  replaces this later).
+- **The world runs all the time**: the map's clock (squadrons move every 16th
+  tick, motherships attack, the planet's ring) ticks every frame whether the map
+  is open or not; the icons are only drawn while it is open (cells that changed
+  are drawn a few a frame).
+- In a squadron's sector the cockpit's approach begins (the long range scanner:
+  groups far away, fire chooses one, aligned in front the ship rushes in, the
+  group becomes up to three fighters; all type 1 for now, whatever the squadron's
+  type). TARGETS shows the sector's ship count, each kill lowers the map's COUNT,
+  the last one empties the sector on the map. SECTOR on the HUD follows the jump.
 - Mothership sectors are empty in the cockpit for now.
-- The ship (systems, shields, hits, difficulty) is one: the cockpit's model, and
-  the map's second display shows it.
+- The ship (systems, shields, hits, difficulty) is one: the cockpit's model.
+- The second display (VDC) is off in this program for now: its updates take more
+  time than a frame has to spare while the cockpit runs.
 
 ## How it is built
 
@@ -41,18 +49,19 @@ In the browser page: **Program → C128 game (cockpit + map)**.
   the ship's sector;
 - the cockpit's source: patches for the map key (C=, on a new press; SPACE too),
   the start, the waves and the kills;
-- the bitmap at `$6000` is shared: coming back from the map, `RESTORE` copies the
-  cockpit's picture back from master copies at `$5000-$5FDF` (CPU RAM the
-  VIC-IIe cannot use): the sprite shapes kept in bitmap rows 0-2 and 23-24, the
-  cockpit art, the colour matrix; the 3D view is cleared.
+- the map draws into the 3D view's bitmap rows 3-17; opening and closing wipe
+  those rows a row a frame and set their colours (yellow lines, brown boxes; or
+  the cockpit's again, the matrix from a master copy at `$5000`, CPU RAM the
+  VIC-IIe cannot use); the cockpit's hooks (`INPUTV`, `VIEWVB`, `TICKHK`,
+  `KILLHK`, `EMPTYHK`) call the map's input, frame work and clock.
 
 Every patch is checked to match exactly once, so a change in either program that
 breaks the join stops the build with the patch that no longer fits.
 
-Tests (`js/test/run.js`, "game:"): the start sector, the map opening, a jump into
-a squadron's sector (fighters = the squadron's count up to 3, TARGETS), the HUD's
-sector, the restored picture, kills emptying the sector, SPACE going back.
+Tests (`js/test/run.js`, "game:"): the start sector, the world ticking with the
+map closed, the map opening in the view (art and HUD untouched, no overrun), a
+jump into a squadron's sector (the approach begins, TARGETS), the HUD's sector,
+the view's colours back, kills emptying the sector, C= closing the map.
 
-Next (planned): the map drawn over the cockpit with the fight going on behind it,
-the world ticking while in the cockpit. Not yet: hyperspace, types 2 and 3,
-motherships.
+Not yet: hyperspace, types 2 and 3, motherships, the second display while
+flying, what a squadron moving into or out of the ship's sector does to a fight.

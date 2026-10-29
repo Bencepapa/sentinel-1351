@@ -171,12 +171,16 @@ frame:  LDA $D012       ; still in the border of the old frame (lines 251-255)? 
         STA $D018
         LDA #76
         JSR WAITLN
-        LDA FLASHC      ; black, or the colour of a hit flash ($0B26, $0A4D)
-        STA BG
+        LDA FLASHC      ; black (white with the map open: VIEWBG), or the colour
+        BNE vbg1        ; of a hit flash ($0B26, $0A4D)
+        LDA VIEWBG
+vbg1:   STA BG
         LDA #77
         JSR WAITLN
         LDA FLASHC
-        STA BORDER
+        BNE vbg2
+        LDA VIEWBG
+vbg2:   STA BORDER
         LDA #78
         JSR WAITLN
         JSR SPRCROSS    ; the crosshair
@@ -231,7 +235,7 @@ w242:   LDA $D012
         STX BG
         STY $D016
 
-        JSR INPUT       ; vertical blank: mouse, cursor, guns (at 1 MHz: lines
+        JSR INPUTV      ; vertical blank: mouse, cursor, guns (at 1 MHz: lines
         LDA APPR        ; (no shots while approaching: fire chooses a group)
         BEQ vbf
         LDA #$00
@@ -242,8 +246,9 @@ vbf:
         LDA FAST        ; 2 MHz in the border, lines 251-47: the VIC-IIe fetches
         ORA #$01        ; nothing there (sprites are off, no bad lines), so the
         STA FAST        ; processor gets twice the time (I/O accesses stay 1 MHz)
-        JSR STARS       ; the star field
+        JSR VIEWVB      ; the star field (or the map's frame, c128-game)
         JSR VBWORK      ; steering, drift, enemy fire, the radar
+        JSR TICKHK      ; (c128-game: the world's clock, $BE29)
 vbw:    BIT $D011       ; after the wrap (line 256-311 read as 0-55 with bit 7
         BMI vbw         ; of $D011 set), the rest of the border: the explosions
         LDA $D012
@@ -330,7 +335,13 @@ SPRCROSS:
 sc1:    STA SPRPTR
         LDA XPOS
         STA $D000
+        LDA MAPSHOWN    ; (the map open: sprite 1 is its planet, set by the map)
+        BEQ scs
         LDA $D010
+        AND #$FE
+        ORA XMSB
+        JMP sc2
+scs:    LDA $D010
         AND #$FC
         ORA XMSB
         LDX SHOTXH      ; sprite 1: the phasor shot
@@ -341,16 +352,18 @@ sc2:    STA $D010
         STA $D001
         LDA NUMCOL      ; white, light green while the target is behind ($3934)
         STA $D027
+        JSR SPRENEMY    ; sprites 4-6: the fighters
+        LDA MAPSHOWN
+        BNE scm
         LDA SHOTSHP     ; shapes $67-$70 are pointers $F3-$FC here
         CLC
         ADC #$8C        ; SHOTPTR - $67
         STA SPRPTR+1
-        JSR SPRENEMY    ; sprites 4-6: the fighters
         LDA SHOTX
         STA $D002
         LDA SHOTY
         STA $D003
-        LDA EFX         ; sprite 2: the enemy shot
+scm:    LDA EFX         ; sprite 2: the enemy shot
         STA $D004
         LDA EFY
         STA $D005
@@ -362,10 +375,14 @@ sc2:    STA $D010
         CLC
         ADC #$8C
         STA SPRPTR+2
-        LDA SHOTVIS
+        LDA MAPSHOWN    ; the map open: no crosshair, sprite 1 is the planet
+        BEQ scv
+        LDA #$02
+        BNE scv2
+scv:    LDA SHOTVIS
         ASL A
         ORA #1
-        ORA EVIS
+scv2:   ORA EVIS
         ORA EFVIS
         STA VICENA
         RTS
@@ -3166,6 +3183,24 @@ stg2:   STX TARGETS-1
         STA TARGETS
         RTS
 
+; Hooks for c128-game (the map over the 3D view). Standalone the map never opens.
+INPUTV: LDA MAPSHOWN
+        BEQ iv1
+        LDA #$FF        ; no steering, no fire while the map is open
+        STA JOY
+        LDA #$00
+        STA FIREFLAG
+        JMP MAPINHK
+iv1:    JMP INPUT
+VIEWVB: LDA MAPSHOWN
+        ORA WIPE
+        BEQ vv1
+        JMP MAPVBHK
+vv1:    JMP STARS
+MAPINHK:RTS             ; (c128-game: the map's mouse, cursor and choice)
+MAPVBHK:RTS             ; (c128-game: the map's draw-in, blink, planet)
+TICKHK: RTS             ; (c128-game: the map's TICKER)
+
 ; ---------------- hits and explosions ----------------
 ; The shot against the fighters ($3244 / $324C), once a frame. During the last 10
 ; points of its path a shot hits a fighter shown within 12 pixels across and 10
@@ -3449,8 +3484,10 @@ et2:    STA EXPD
         RTS
 
 EXPLODE:LDA EXPL
-        BNE ex0
-        RTS
+        BEQ ex9
+        LDA MAPSHOWN    ; (none over the map)
+        BEQ ex0
+ex9:    RTS
 ex0:    LDA EXPB
         BNE ex5
         LDA EXLIM       ; the start takes about 12 lines: only with time left
@@ -3662,8 +3699,10 @@ qet2:    STA EXPD2
         RTS
 
 EXPLODE2:LDA EXPL2
-        BNE qex0
-        RTS
+        BEQ qex9
+        LDA MAPSHOWN
+        BEQ qex0
+qex9:   RTS
 qex0:    LDA EXPB2
         BNE qex5
         LDA EXLIM       ; the start takes about 12 lines: only with time left
@@ -4031,8 +4070,9 @@ SPRENEMY:
         LDA $D017
         AND #$8F
         STA $D017
-        LDA $D01B
+        LDA $D01B       ; (behind the map's lines and icons while it is open)
         AND #$8F
+        ORA MAPPRIO
         STA $D01B
         LDX #$02        ; pointers from the shapes ($20-$2F -> ENPTR)
 spe1:   LDA ESHP,X
@@ -4212,3 +4252,7 @@ RBON:   .BYTE 0,0,0     ; a mark is drawn (port)
 LYACT:  .BYTE 0         ; laying out (port)
 LYY:    .BYTE 0
 NUMPEND:.BYTE 0         ; the number is due (port)
+MAPSHOWN:.BYTE 0        ; the map is open over the 3D view (c128-game)
+MAPPRIO:.BYTE 0         ; $70 while it is: the fighters behind it
+VIEWBG: .BYTE 0         ; the 3D view's background: black, white with the map
+WIPE:   .BYTE 0         ; rows of the 3D view still to wipe (c128-game: map open / close)

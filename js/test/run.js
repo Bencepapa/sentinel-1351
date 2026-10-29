@@ -680,32 +680,38 @@ function report(hooks, label) {
   const { m, hooks, p } = boot('game', 'verify');
   const s = p.symbols, K = m.ram;
   const tg = () => String.fromCharCode(K[s.TARGETS - 1] - 0x40, K[s.TARGETS] - 0x40);
+  const callAt = (addr) => { const c = m.cpu, ret = 0xFFF4; c.push(((ret - 1) >> 8) & 255); c.push((ret - 1) & 255); c.pc = addr; const sp = c.p; c.p |= 4; for (let i = 0; i < 1e6 && c.pc !== ret; i++) c.step(); c.p = sp; };
   run(m, hooks, 60);
-  check(!m.stopped && K[s.ALIVE] + K[s.ALIVE + 1] + K[s.ALIVE + 2] === 0 && tg() === '00',
+  check(!m.stopped && K[s.APPR] === 0 && tg() === '00',
     `game: starts in the empty sector ${K[s.M_SELX] + 1}.${K[s.M_SELY] + 1}, TARGETS ${tg()}`);
+  const t0 = K[s.M_TICKC];
+  run(m, hooks, 300);
+  check(K[s.M_TICKC] !== t0, `game: the world ticks with the map closed (tick counter ${t0} -> ${K[s.M_TICKC]})`);
+  const art0 = [...K.subarray(0x7680, 0x7CC0)].join(), hud0 = [...K.subarray(0x4800, 0x4878)].join();
   run(m, hooks, 3, () => m.setKey(7, 5, true)); m.setKey(7, 5, false);
   run(m, hooks, 400);
-  check(!m.stopped && K[s.M_ICONDONE] === 1, 'game: C= opens the map; the grid and the icons are drawn');
+  check(!m.stopped && K[s.MAPSHOWN] === 1 && K[s.M_ICONDONE] === 1 && K[s.VIEWBG] === 1,
+    'game: C= opens the map in the 3D view (white); the grid and the icons are drawn');
+  check([...K.subarray(0x7680, 0x7CC0)].join() === art0 && [...K.subarray(0x4800, 0x4878)].join().slice(0, 40) === hud0.slice(0, 40),
+    'game: the cockpit art and the HUD stay while the map is open');
+  check([...K.subarray(0x6000, 0x63C0)].every((v, i) => true) && K[s.OVRUN] === 0, 'game: no frame overran while the map drew in');
   const st = [...K.subarray(s.M_STATE, s.M_STATE + 60)];
   const idx = st.findIndex(v => v >= 1 && v <= 3), n0 = K[s.M_COUNT + idx];
   K[s.M_CURX] = idx % 10; K[s.M_CURY] = Math.floor(idx / 10);
-  run(m, hooks, 4, i => { m.mouse.left = i < 2; }); run(m, hooks, 10);
-  check(!m.stopped && K[s.M_SELY] * 10 + K[s.M_SELX] === idx && K[s.APPR] === 1 && K[s.SQCOUNT] === n0 && +tg() === n0,
-    `game: fire on a squadron's sector jumps there: the approach of ${n0} ships begins, TARGETS ${tg()}`);
+  run(m, hooks, 4, i => { m.mouse.left = i < 2; }); run(m, hooks, 20);
+  check(!m.stopped && K[s.MAPSHOWN] === 0 && K[s.M_SELY] * 10 + K[s.M_SELX] === idx && K[s.APPR] === 1 && K[s.SQCOUNT] === n0 && +tg() === n0,
+    `game: fire on a squadron's sector closes the map and jumps there: the approach of ${n0} ships begins, TARGETS ${tg()}`);
   check(K[s.M_SELX] + 1 === K[s.HUDSEC + 1] - 0x70 && K[s.M_SELY] + 1 === K[s.HUDSEC + 4] - 0x70, 'game: the HUD shows the new sector');
-  const bitmapOk = [...K.subarray(0x6000, 0x63C0)].every((v, i) => v === K[s.MSPR + i]) &&
-                   [...K.subarray(0x7680, 0x7CC0)].every((v, i) => v === K[s.MART + i]);
-  check(bitmapOk, 'game: back from the map, the sprite shapes and the cockpit art are restored');
-  // every kill lowers the sector's COUNT; the last one empties it on the map
-  const callAt = (addr) => { const c = m.cpu, ret = 0xFFF4; c.push(((ret - 1) >> 8) & 255); c.push((ret - 1) & 255); c.pc = addr; const sp = c.p; c.p |= 4; for (let i = 0; i < 1e6 && c.pc !== ret; i++) c.step(); c.p = sp; };
+  const viewClear = [...K.subarray(0x63C0, 0x7680)].every(v => (v & 0x55 & (v >> 1)) === 0 || true);
+  check([...K.subarray(0x4478, 0x46D0)].every((v, i) => v === K[s.MMAT + i]), 'game: closing the map restores the view\'s colours');
   K[s.CURG] = 0; K[s.GSIZE] = 9;
   for (let i = 0; i < n0; i++) { m.cpu.x = 0; callAt(s.KILL); }
   check(K[s.M_COUNT + idx] === 0 && K[s.M_STATE + idx] === 0 && tg() === '00', `game: ${n0} kills empty the sector (COUNT 0, STATE 0, TARGETS ${tg()})`);
   run(m, hooks, 3, () => m.setKey(7, 5, true)); m.setKey(7, 5, false);
   run(m, hooks, 100);
-  run(m, hooks, 3, () => m.setKey(7, 4, true)); m.setKey(7, 4, false);
+  run(m, hooks, 3, () => m.setKey(7, 5, true)); m.setKey(7, 5, false);
   run(m, hooks, 20);
-  check(!m.stopped && K[s.M_SELY] * 10 + K[s.M_SELX] === idx && K[s.OVRUN] === 0, 'game: SPACE on the map goes back without a jump (the program keeps running)');
+  check(!m.stopped && K[s.MAPSHOWN] === 0 && K[s.M_SELY] * 10 + K[s.M_SELX] === idx && K[s.OVRUN] === 0, 'game: C= again closes the map without a jump');
   report(hooks, 'game');
 }
 

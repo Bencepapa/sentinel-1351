@@ -54,23 +54,32 @@ PATCHES_MAP = [
     ('SHLD:   .BYTE 0\n', ''),
     ('HITS:   .BYTE 0\n', ''),
     ('SHIPDEAD:.BYTE 0\n', ''),
-    # code and data addresses
-    # the set-up part of START becomes a subroutine (TOMAP calls it)
-    ('        LDA CIA2PA\n        AND #$FC\n        ORA #$02        ; VIC bank 1: $4000-$7FFF\n        STA CIA2PA\n        LDA #$3B',
-     'MSETUP: LDA CIA2PA\n        AND #$FC\n        ORA #$02        ; VIC bank 1: $4000-$7FFF\n        STA CIA2PA\n        LDA #$3B'),
-    ('        JSR RESET\n\nframe:', '        JMP RESET       ; (game: MSETUP ends here)\n\nframe:'),
-    # SPACE goes back to the cockpit
-    ('        BNE nospace\n        JMP EXIT\nnospace:', '        BNE nospace\n        JMP TOCOCK\nnospace:'),
+    # the map opens in the cockpit's 3D view: its set-up clears only the view's
+    # bitmap rows and colour matrix rows (the rest is the cockpit's)
+    ('RESET:  LDA #<BITMAP\n        STA PTR\n        LDA #>BITMAP\n        STA PTR+1\n        LDX #32\n        LDY #0\n'
+     '        TYA\nclearb: STA (PTR),Y\n        INY\n        BNE clearb\n        INC PTR+1\n        DEX\n        BNE clearb\n',
+     'RESET:                  ; (game) the 3D view is wiped before (MAPVB)\n'),
+    ('        LDX #0          ; icon colors live in the color matrix: clear it\nclrmat: LDA #0\n        STA SCREEN,X\n'
+     '        STA SCREEN+256,X\n        STA SCREEN+512,X\n        STA SCREEN+768,X\n        INX\n        BNE clrmat\n',
+     '                        ; (game) the view\'s matrix rows are wiped before (MAPVB)\n'),
     # fire on another sector: the jump
-    ('        JSR CURSOR\n        JSR TICKER', '        JSR CURSOR\n        LDA MJUMPF\n        BEQ nojump\n        JMP TOCOCK\nnojump: JSR TICKER'),
     ('        STA BR\n        LDA #1\n        STA BV\n        JSR BOX\n        JMP BLIP\n',
      '        STA BR\n        LDA #1\n        STA BV\n        JSR BOX\n        JSR BLIP\n        LDA #1          ; (game) jump there\n        STA MJUMPF\n        RTS\n'),
-    # the world is made once; the cursor starts on the ship's sector
+    # the world is made once and ticks all the time; drawn only while the map is open
     ('        JSR PLINIT\n        JSR SHIPINIT\n', '        JSR PLINIT\n'),
     ('        BNE iconret\n        JSR GENERATE\n', '        BNE iconret\n        JSR GENONCE\n'),
+    ('TICKER: LDA ICONDONE\n', 'TICKER: LDA GENDONE     ; (game) the world exists\n'),
+    ('tickdr: LDA #1\n        STA MODE\n        JSR DRAWALL\n',
+     'tickdr: LDA #1          ; (game) changed cells stay marked: DRAWSOME draws them\n        STA MODE\n'),
+    ('icnovdc:JSR DRAWALL\n', 'icnovdc:JSR MARKALL     ; (game) a few cells a frame: DRAWSOME\n'),
+    ('BLINK:  LDA ICONDONE\n        BEQ blret\n', 'BLINK:  LDA MAPSHOWN     ; (game)\n        BEQ blret\n        LDA ICONDONE\n        BEQ blret\n'),
+    # the cursor starts on the ship's sector
     ('        LDA #4\n        STA CURX\n        STA SELX\n        LDA #2\n        STA CURY\n        STA SELY\n',
      '        LDA SELX        ; (game) the ship\'s sector\n        STA CURX\n        LDA SELY\n        STA CURY\n'),
     ('SELX:   .BYTE 0\nSELY:   .BYTE 0\n', 'SELX:   .BYTE 4\nSELY:   .BYTE 2\n'),
+    # the second display (VDC) is off: its updates take more than a frame's
+    # spare time while the cockpit runs (to be spread over frames later)
+    ('VDCON:  .BYTE 1', 'VDCON:  .BYTE 0'),
 ]
 MAP_EXTRA = """
 GENONCE:LDA GENDONE     ; (game) the start layout only once
@@ -84,13 +93,17 @@ GENDONE:.BYTE 0
 PATCHES_COCKPIT = [
     ('        JSR SECSTART    ; a squadron in the sector (c128-game: the map\'s start sector)\n',
      '        JSR GAMEINIT    ; (game) the world and the start sector\n'),
-    # SPACE leaves only on a new press; C= opens the map
+    # SPACE leaves only on a new press; C= opens and closes the map
     ('        LDA CIA1PB\n        AND #$10\n        BNE nospace\n        JMP EXIT\nnospace:LDA #$BF        ; port 2 pots for the next frame\n',
      '        LDA CIA1PB\n        AND #$10\n        BNE nospace\n        LDA SPREV\n        BNE nosp2\n        JMP EXIT\n'
-     'nospace:LDA #$00\n        STA SPREV\nnosp2:  LDA CIA1PB      ; (game) C= opens the map (the original\'s map key)\n'
-     '        AND #$20\n        BNE nomapk\n        LDA CPREV\n        BNE nomap\n        JMP TOMAP\nnomapk: LDA #$00\n        STA CPREV\n'
+     'nospace:LDA #$00\n        STA SPREV\nnosp2:  LDA CIA1PB      ; (game) C= opens / closes the map (the original\'s map key)\n'
+     '        AND #$20\n        BNE nomapk\n        LDA CPREV\n        BNE nomap\n        LDA #$01\n        STA CPREV\n        JSR MAPTOG\n'
+     '        JMP nomap\nnomapk: LDA #$00\n        STA CPREV\n'
      'nomap:  LDA #$BF        ; port 2 pots for the next frame\n'),
-    # the squadron's ships are the map's COUNT
+    # the hooks
+    ('MAPINHK:RTS ', 'MAPINHK:JMP MAPIN '),
+    ('MAPVBHK:RTS ', 'MAPVBHK:JMP MAPVB '),
+    ('TICKHK: RTS ', 'TICKHK: JMP WORLD '),
     ('KILLHK: RTS             ; (c128-game: the map\'s COUNT follows)\n', 'KILLHK: JMP SECKILL     ; (game)\n'),
     ('EMPTYHK:JMP SECSTART    ; standalone: the next squadron arrives (c128-game: none)\n', 'EMPTYHK:RTS             ; (game) the sector is empty now\n'),
 ]
@@ -173,13 +186,8 @@ def main():
     cockpit_build.place_assets(p)                   # the cockpit's picture wins where they meet
     for address, data in chunks.items():
         p(address, data)
-    # master copies for RESTORE (game.asm)
-    get = lambda a, n: bytes(body[a - LOAD:a - LOAD + n])
-    for src, dst, n in ((0x6000, symbols['MSPR'], 960), (0x7CC0, symbols['MSHOT'], 704),
-                        (0x7680, symbols['MART'], 1600), (0x4478, symbols['MMAT'], 800)):
-        p(dst, get(src, n))
-    if symbols['MMAT'] + 800 > 0x6000:
-        raise SystemExit('master copies past $5FFF')
+    # master copy of the colour matrix's view rows for MAPCLOSE (game.asm)
+    p(symbols['MMAT'], bytes(body[0x4478 - LOAD:0x4478 - LOAD + 600]))
 
     with open(OUT, 'wb') as f:
         f.write(bytes((LOAD & 255, LOAD >> 8)) + body)
