@@ -271,7 +271,13 @@ function report(hooks, label) {
       R[0x118F] = 0x20; R[0x1190] = 0x1F; R[0x1191] = 0xCF; R[0x1192] = 0xCF;
     },
     // the input code sets $D0 when fire is pressed and never clears it ($02CB-$02D6)
-    frame(fire) { if (fire) R[0xD0] = 1; callAt(o.m, 0x1424); if (R[0xD1]) callAt(o.m, 0x1467); },
+    // and the IRQ sweeps the sound 5 more times a frame ($0C3B, $0C3E, $0C41, $0C60, $0CBA);
+    // the carry going in is forced (it comes from unrelated code in both programs)
+    frame(fire) {
+      if (fire) R[0xD0] = 1; o.m.cpu.p |= 1; callAt(o.m, 0x1424); if (R[0xD1]) callAt(o.m, 0x1467);
+      for (let i = 0; i < 5; i++) { o.m.cpu.p |= 1; callAt(o.m, 0x15E0); }
+    },
+    sid: () => [0, 1, 2, 3, 4, 5, 6].map(r => o.m.sid[r]).join('/'),
     state: () => [R[0xD2], R[0xB1], R[0xE9] | ((R[0xF7] & 2) << 7), R[0xEA], o.m.vic[0x28] & 15, R[0x1416]],
     path: () => [...R.subarray(0x400, 0x400 + R[0x1415])].map((x, i) => x + ',' + R[0x500 + i]).join(' '),
   };
@@ -281,7 +287,11 @@ function report(hooks, label) {
       K[ks.CURX] = cx; K[ks.CURY] = cy; K[ks.GUNSEL] = gunsel; K[ks.FRAC] = 0;
       K[ks.G1X] = 0x20; K[ks.G2X] = 0x1F; K[ks.G1Y] = 0xCF; K[ks.G2Y] = 0xCF;
     },
-    frame(fire) { if (fire) K[ks.FIREFLAG] = 1; callAt(k.m, ks.FIREPH); if (K[ks.SHOTARM]) callAt(k.m, ks.LAUNCH); },
+    frame(fire) {
+      if (fire) K[ks.FIREFLAG] = 1; k.m.cpu.p |= 1; callAt(k.m, ks.FIREPH); if (K[ks.SHOTARM]) callAt(k.m, ks.LAUNCH);
+      for (let i = 0; i < 5; i++) { k.m.cpu.p |= 1; callAt(k.m, ks.SWEEPSND); }
+    },
+    sid: () => [0, 1, 2, 3, 4, 5, 6].map(r => k.m.sid[r]).join('/'),
     state: () => [K[ks.SHOTON], K[ks.SHOTSHP], K[ks.SHOTX] | (K[ks.SHOTXH] << 8), K[ks.SHOTY], k.m.vic[0x28] & 15, K[ks.SHIDX]],
     path: () => [...K.subarray(ks.PATHX, ks.PATHX + K[ks.NGEN])].map((x, i) => x + ',' + K[ks.PATHY + i]).join(' '),
   };
@@ -296,6 +306,7 @@ function report(hooks, label) {
       orig.frame(f < hold ? 1 : 0); port.frame(f < hold ? 1 : 0);
       if (K[ks.NGEN] === K[ks.NPTS] && port.path() === orig.path()) complete = true;
       const a = orig.state(), b = port.state();
+      if (orig.sid() !== port.sid()) { ok = false; if (shown++ < 6) console.log('      sound differs', cx, cy, 'frame', f, orig.sid(), port.sid()); }
       if (f > 0 && a.join() !== b.join()) { ok = false; if (shown++ < 6) console.log('     ', cx, cy, 'frame', f, 'orig', a.join('/'), 'port', b.join('/')); }
     }
     // the port makes the path in parts: what it has made so far must be the original's
@@ -305,7 +316,14 @@ function report(hooks, label) {
     if (hold < 40 && (R[0xD2] || K[ks.SHOTON])) { ok = false; console.log('      a tapped shot did not reach its end', cx, cy); }
     if (ok) same++;
   }
-  check(same === cases.length, `phasor: the cockpit port matches the original in ${same} of ${cases.length} shots (path, shape, position, colour, step)`);
+  check(same === cases.length, `phasor: the cockpit port matches the original in ${same} of ${cases.length} shots (path, shape, position, colour, step, SID voice 1)`);
+  // in the running cockpit the sound is swept 6 times per frame while a shot flies, like the original
+  const run2 = boot('cockpit', 'trace');
+  run2.hooks.trace('SWEEPSND');
+  run(run2.m, run2.hooks, 10);
+  const sweeps = [];
+  run(run2.m, run2.hooks, 12, i => { run2.m.mouse.left = i < 2; if (i > 3) sweeps.push(run2.hooks.handlers[run2.p.symbols.SWEEPSND].callsLastFrame); });
+  check(sweeps.every(n => n === 6), `phasor: sound swept 6 times per frame in flight (${sweeps.join(',')})`);
   check(K[ks.HUDE + 2] !== 0x79 || K[ks.HUDE + 1] !== 0x79, 'phasor: shots cost energy on the HUD');
   // timing: the longest launch and the busiest flight frame fit between lines 78 and 194
   const cyc = (addr) => { const c0 = k.m.cpu.cycles; callAt(k.m, addr); return k.m.cpu.cycles - c0; };

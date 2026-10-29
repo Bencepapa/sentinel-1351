@@ -171,9 +171,13 @@ frame:  LDA $D012       ; still in the border of the old frame (lines 251-255)? 
         BEQ nolaunch    ; $2DFC; here the time until line 194 is free)
         JSR LAUNCH
 nolaunch:
+        JSR SWEEPSND    ; the phasor sound is swept 6 times a frame while a shot
+        JSR SWEEPSND    ; flies: once in $1424, 3 times after it ($0C3B-$0C41),
+        JSR SWEEPSND    ; at line 194 ($0C60) and at line 233 ($0CBA)
         LDA #194
         JSR WAITLN
         JSR SPRGUNS     ; sprites 0 and 3 become the two guns
+        JSR SWEEPSND
         LDA #230
         JSR WAITLN
         LDA #0
@@ -189,6 +193,7 @@ nolaunch:
         STA $D016
         LDA #$20
         STA $D018
+        JSR SWEEPSND
         LDX #0          ; black below it: written as early as possible in line 242
         LDY #$08
 w242:   LDA $D012
