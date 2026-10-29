@@ -38,6 +38,9 @@ COLORDATA = $3000
 PATHX   = $3400         ; phasor shot path, x / 2 (original $0400)
 PATHY   = $3500         ; and y (original $0500)
 HUDE    = $483E         ; the four energy digits of the HUD (original $543E)
+TARGETS = $4876         ; the last digit of TARGETS on the HUD (original $5476)
+STEERL2 = 214           ; raster limit for steering in the fight slot
+PASSES  = 8             ; main loop passes of the original per frame in a fight
 SHOTPTR = $F3           ; sprite pointers of the shot shapes $67-$70: $F3-$FC (bitmap rows
                         ; 23-24, never shown as bitmap); the fighters: ENPTR
 STREAMS = $8000         ; type-1 movement streams (original $E800-$ECFF): pages $80-$84
@@ -161,11 +164,11 @@ frame:  LDA $D012       ; still in the border of the old frame (lines 251-255)? 
         STA $D018
         LDA #76
         JSR WAITLN
-        LDA #0
+        LDA FLASHC      ; black, or the colour of a hit flash ($0B26, $0A4D)
         STA BG
         LDA #77
         JSR WAITLN
-        LDA #0
+        LDA FLASHC
         STA BORDER
         LDA #78
         JSR WAITLN
@@ -178,12 +181,35 @@ nolaunch:
         JSR SWEEPSND    ; the phasor sound is swept 6 times a frame while a shot
         JSR SWEEPSND    ; flies: once in $1424, 3 times after it ($0C3B-$0C41),
         JSR SWEEPSND    ; at line 194 ($0C60) and at line 233 ($0CBA)
+        LDA #182        ; steering takes up to 18 lines (6 a fighter): here as
+        STA STLIM       ; far as the phasor leaves time, the rest after the movers
+        LDA STPEND
+        BEQ st0
+        LDA $D012
+        CMP #182
+        BCS st1
+        JSR STEERGO     ; (a fighter left over from the last frame)
+st0:    LDA STPEND
+        BNE st1
+        LDA $D012
+        CMP #182
+        BCS st1
+        JSR STEER
+        INC STEERED
+st1:    LDA #$00
+        STA STLIM
+        LDA #186        ; an explosion uses what is left of the 3D view's time
+        STA EXLIM
+        JSR EXPLODE
         LDA #194
         JSR WAITLN
         JSR SPRGUNS     ; sprites 0 and 3 become the two guns
         JSR SWEEPSND
         JSR FIGHT       ; the fighters (the time until line 230 is free; the star
                         ; field fills the vertical blank)
+        LDA #222
+        STA EXLIM
+        JSR EXPLODE
         LDA #230
         JSR WAITLN
         LDA #0
@@ -1328,8 +1354,8 @@ L5A:    .BYTE 0
 ; indexed 0, 2, 4 like the original's $16 / $1C / $22,X). Each flies its movement
 ; stream (one step per frame; the original's main loop runs it every 16 passes,
 ; about once a frame), drifts back toward the middle every other frame, and is
-; turned into sprite 4-6 every 4th frame. Not yet: steering, the hit test,
-; enemy fire, the approach phase.
+; turned into sprite 4-6 every 4th frame. Steering turns them around the ship.
+; Not yet: the hit test, enemy fire, the approach phase.
 
 NEWWAVE:LDA #$01        ; type 1
         STA ETYPE
@@ -1338,7 +1364,15 @@ NEWWAVE:LDA #$01        ; type 1
         STA ALIVE       ; WAVEINIT, which clears them
         STA ALIVE+1
         STA ALIVE+2
-        LDA #$01        ; a step on the next call
+        STA EHITS       ; shots each one takes: the type ($C7B9)
+        STA EHITS+1
+        STA EHITS+2
+        LDA TARGETS     ; the HUD's TARGETS count: refilled when it runs low (no
+        CMP #$73        ; squadrons yet)
+        BCS nw1
+        LDA #$79
+        STA TARGETS
+nw1:    LDA #$01        ; a step on the next call
         STA SCNT
         STA SCNT+1
         STA SCNT+2
@@ -1432,6 +1466,18 @@ FIGHT:  INC EFRM
         JSR MOVEN
         LDX #$04
         JSR MOVEN
+        LDA #STEERL2    ; steering (the original's comes right after the movers,
+        STA STLIM       ; $2D34) mostly runs in the 3D view's time; what is left
+        LDA STPEND      ; of it runs here, and in a frame where the phasor left
+        BEQ fgs0        ; no time there, here as far as time allows (a fighter
+        JSR STEERGO     ; left over is steered at the start of the next frame)
+        JMP fgst
+fgs0:   LDA STEERED
+        BNE fgst
+        JSR STEER
+fgst:   LDA #$00
+        STA STEERED
+        STA STLIM
         LDA EFRM
         AND #$01
         BEQ fg1
@@ -1445,7 +1491,19 @@ fg1:    LDA EFRM
         JSR PLACE
         LDX #$04
         JSR PLACE
-fg2:    RTS
+fg2:    JSR SHOTHIT     ; the original tests the shot once a frame ($3244)
+        JSR EXPTICK
+        LDA EFRM        ; the hit flash, every other frame ($0C90)
+        AND #$01
+        BNE fg3
+        JSR FLASH
+fg3:    LDA ALIVE       ; a wave wiped out: once its explosion is over, the next
+        ORA ALIVE+1     ; one comes (the squadron and wave bookkeeping of the
+        ORA ALIVE+2     ; original, $3CD6-$3D4B, comes with the approach phase)
+        ORA EXPL
+        BNE fg4
+        JSR NEWWAVE
+fg4:    RTS
 
 ; A fighter takes a step of its stream ($2F6D, $2FB9, $3005: one copy per
 ; fighter in the original). X = fighter * 2.
@@ -1513,6 +1571,810 @@ mv3:    TYA
         LDA #$02
         STA SPG,X
         RTS
+
+
+; Steering ($39C1): the joystick byte (JOY, with the mouse patch's steering mask:
+; directions held while the crosshair is off centre) rotates every fighter
+; around the ship: up / down turn y and depth around y $8832, left / right turn
+; x and depth around x $88A0, by shifts of the offsets (a rotation in small
+; steps). Translated instruction for instruction from the original's
+; disassembly (each line keeps its address); the original first returns when the
+; ship's sector holds no squadron, and its checks of MSFLAG, MSFLAG2 and MSDIG
+; ($E3, $C847, $372C-$372F) only matter near a mothership, so here they stay 0.
+STEER:
+         LDA JOY    ; $39CE
+         STA SJ1    ; $39D0
+         STA SJ2    ; $39D3
+         LDX #$00    ; $39D6
+         LDY #$02    ; $39D8
+st39DA:  LDA MSFLAG    ; $39DA
+         BEQ st39FA    ; $39DC
+         LDA MSFLAG2    ; $39DE
+         BEQ st39FA    ; $39E1
+         LDA MSDIG+2    ; $39E3
+         CMP #$70    ; $39E6
+         BNE st39FA    ; $39E8
+         LDA MSDIG+3    ; $39EA
+         CMP #$70    ; $39ED
+         BNE st39FA    ; $39EF
+         LSR SJ1    ; $39F1
+         LSR SJ1    ; $39F4
+         JMP st3B25    ; $39F7
+st39FA:  LSR SJ1    ; $39FA
+         BCC st3A02    ; $39FD
+         JMP st3A8E    ; $39FF
+st3A02:  SEC    ; $3A02
+         LDA #$32    ; $3A03
+         SBC ENY,X    ; $3A05
+         LDA #$88    ; $3A07
+         SBC ENY+1,X    ; $3A09
+         BCC st3A30    ; $3A0B
+         SEC    ; $3A0D
+         LDA #$32    ; $3A0E
+         SBC ENY,X    ; $3A10
+         STA T2B    ; $3A12
+         LDA #$88    ; $3A14
+         SBC ENY+1,X    ; $3A16
+         ASL T2B    ; $3A18
+         ROL A    ; $3A1A
+         ASL T2B    ; $3A1B
+         ROL A    ; $3A1D
+         STA T2C    ; $3A1E
+         SEC    ; $3A20
+         LDA ENZ,X    ; $3A21
+         SBC T2C    ; $3A23
+         STA T2B    ; $3A25
+         LDA ENZ+1,X    ; $3A27
+         SBC #$00    ; $3A29
+         STA T2C    ; $3A2B
+         JMP st3A4B    ; $3A2D
+st3A30:  SEC    ; $3A30
+         LDA ENY,X    ; $3A31
+         SBC #$32    ; $3A33
+         STA T2B    ; $3A35
+         LDA ENY+1,X    ; $3A37
+         SBC #$88    ; $3A39
+         ASL T2B    ; $3A3B
+         ROL A    ; $3A3D
+         ASL T2B    ; $3A3E
+         ROL A    ; $3A40
+         ADC ENZ,X    ; $3A41
+         STA T2B    ; $3A43
+         LDA ENZ+1,X    ; $3A45
+         ADC #$00    ; $3A47
+         STA T2C    ; $3A49
+st3A4B:  LDA ENZ+1,X    ; $3A4B
+         CMP #$86    ; $3A4D
+         BCS st3A6E    ; $3A4F
+         SEC    ; $3A51
+         LDA #$00    ; $3A52
+         SBC ENZ,X    ; $3A54
+         STA T2D    ; $3A56
+         LDA #$86    ; $3A58
+         SBC ENZ+1,X    ; $3A5A
+         ASL T2D    ; $3A5C
+         ROL A    ; $3A5E
+         ASL T2D    ; $3A5F
+         ROL A    ; $3A61
+         CLC    ; $3A62
+         ADC ENY,X    ; $3A63
+         STA ENY,X    ; $3A65
+         BCC st3A6B    ; $3A67
+         INC ENY+1,X    ; $3A69
+st3A6B:  JMP st3A86    ; $3A6B
+st3A6E:  SEC    ; $3A6E
+         LDA ENZ,X    ; $3A6F
+         SBC #$00    ; $3A71
+         STA T2D    ; $3A73
+         LDA ENZ+1,X    ; $3A75
+         SBC #$86    ; $3A77
+         STA T2E    ; $3A79
+         SEC    ; $3A7B
+         LDA ENY,X    ; $3A7C
+         SBC T2E    ; $3A7E
+         STA ENY,X    ; $3A80
+         BCS st3A86    ; $3A82
+         DEC ENY+1,X    ; $3A84
+st3A86:  LDA T2B    ; $3A86
+         STA ENZ,X    ; $3A88
+         LDA T2C    ; $3A8A
+         STA ENZ+1,X    ; $3A8C
+st3A8E:  LSR SJ1    ; $3A8E
+         BCC st3A96    ; $3A91
+         JMP st3B25    ; $3A93
+st3A96:  SEC    ; $3A96
+         LDA #$32    ; $3A97
+         SBC ENY,X    ; $3A99
+         LDA #$88    ; $3A9B
+         SBC ENY+1,X    ; $3A9D
+         BCC st3AC0    ; $3A9F
+         SEC    ; $3AA1
+         LDA #$32    ; $3AA2
+         SBC ENY,X    ; $3AA4
+         STA T2B    ; $3AA6
+         LDA #$88    ; $3AA8
+         SBC ENY+1,X    ; $3AAA
+         ASL T2B    ; $3AAC
+         ROL A    ; $3AAE
+         ASL T2B    ; $3AAF
+         ROL A    ; $3AB1
+         CLC    ; $3AB2
+         ADC ENZ,X    ; $3AB3
+         STA T2B    ; $3AB5
+         LDA ENZ+1,X    ; $3AB7
+         ADC #$00    ; $3AB9
+         STA T2C    ; $3ABB
+         JMP st3AE0    ; $3ABD
+st3AC0:  SEC    ; $3AC0
+         LDA ENY,X    ; $3AC1
+         SBC #$32    ; $3AC3
+         STA T2B    ; $3AC5
+         LDA ENY+1,X    ; $3AC7
+         SBC #$88    ; $3AC9
+         ASL T2B    ; $3ACB
+         ROL A    ; $3ACD
+         ASL T2B    ; $3ACE
+         ROL A    ; $3AD0
+         STA T2C    ; $3AD1
+         SEC    ; $3AD3
+         LDA ENZ,X    ; $3AD4
+         SBC T2C    ; $3AD6
+         STA T2B    ; $3AD8
+         LDA ENZ+1,X    ; $3ADA
+         SBC #$00    ; $3ADC
+         STA T2C    ; $3ADE
+st3AE0:  LDA ENZ+1,X    ; $3AE0
+         CMP #$86    ; $3AE2
+         BCS st3B07    ; $3AE4
+         SEC    ; $3AE6
+         LDA #$00    ; $3AE7
+         SBC ENZ,X    ; $3AE9
+         STA T2D    ; $3AEB
+         LDA #$86    ; $3AED
+         SBC ENZ+1,X    ; $3AEF
+         ASL T2D    ; $3AF1
+         ROL A    ; $3AF3
+         ASL T2D    ; $3AF4
+         ROL A    ; $3AF6
+         STA T2E    ; $3AF7
+         SEC    ; $3AF9
+         LDA ENY,X    ; $3AFA
+         SBC T2E    ; $3AFC
+         STA ENY,X    ; $3AFE
+         BCS st3B04    ; $3B00
+         DEC ENY+1,X    ; $3B02
+st3B04:  JMP st3B1D    ; $3B04
+st3B07:  SEC    ; $3B07
+         LDA ENZ,X    ; $3B08
+         SBC #$00    ; $3B0A
+         STA T2D    ; $3B0C
+         LDA ENZ+1,X    ; $3B0E
+         SBC #$86    ; $3B10
+         STA T2D    ; $3B12
+         CLC    ; $3B14
+         ADC ENY,X    ; $3B15
+         STA ENY,X    ; $3B17
+         BCC st3B1D    ; $3B19
+         INC ENY+1,X    ; $3B1B
+st3B1D:  LDA T2B    ; $3B1D
+         STA ENZ,X    ; $3B1F
+         LDA T2C    ; $3B21
+         STA ENZ+1,X    ; $3B23
+st3B25:  LDA MSFLAG    ; $3B25
+         BEQ st3B3F    ; $3B27
+         LDA MSFLAG2    ; $3B29
+         BEQ st3B3F    ; $3B2C
+         LDA MSDIG    ; $3B2E
+         CMP #$70    ; $3B31
+         BNE st3B3F    ; $3B33
+         LDA MSDIG+1    ; $3B35
+         CMP #$70    ; $3B38
+         BNE st3B3F    ; $3B3A
+         JMP st3C75    ; $3B3C
+st3B3F:  LSR SJ1    ; $3B3F
+         BCC st3B47    ; $3B42
+         JMP st3BDA    ; $3B44
+st3B47:  SEC    ; $3B47
+         LDA #$A0    ; $3B48
+         SBC ENX,X    ; $3B4A
+         LDA #$88    ; $3B4C
+         SBC ENX+1,X    ; $3B4E
+         BCC st3B71    ; $3B50
+         SEC    ; $3B52
+         LDA #$A0    ; $3B53
+         SBC ENX,X    ; $3B55
+         STA T2B    ; $3B57
+         LDA #$88    ; $3B59
+         SBC ENX+1,X    ; $3B5B
+         ASL T2B    ; $3B5D
+         ROL A    ; $3B5F
+         ASL T2B    ; $3B60
+         ROL A    ; $3B62
+         CLC    ; $3B63
+         ADC ENZ,X    ; $3B64
+         STA T2B    ; $3B66
+         LDA ENZ+1,X    ; $3B68
+         ADC #$00    ; $3B6A
+         STA T2C    ; $3B6C
+         JMP st3B91    ; $3B6E
+st3B71:  SEC    ; $3B71
+         LDA ENX,X    ; $3B72
+         SBC #$A0    ; $3B74
+         STA T2B    ; $3B76
+         LDA ENX+1,X    ; $3B78
+         SBC #$88    ; $3B7A
+         ASL T2B    ; $3B7C
+         ROL A    ; $3B7E
+         ASL T2B    ; $3B7F
+         ROL A    ; $3B81
+         STA T2C    ; $3B82
+         SEC    ; $3B84
+         LDA ENZ,X    ; $3B85
+         SBC T2C    ; $3B87
+         STA T2B    ; $3B89
+         LDA ENZ+1,X    ; $3B8B
+         SBC #$00    ; $3B8D
+         STA T2C    ; $3B8F
+st3B91:  LDA ENZ+1,X    ; $3B91
+         CMP #$86    ; $3B93
+         BCS st3BB8    ; $3B95
+         SEC    ; $3B97
+         LDA #$00    ; $3B98
+         SBC ENZ,X    ; $3B9A
+         STA T2D    ; $3B9C
+         LDA #$86    ; $3B9E
+         SBC ENZ+1,X    ; $3BA0
+         ASL T2D    ; $3BA2
+         ROL A    ; $3BA4
+         ASL T2D    ; $3BA5
+         ROL A    ; $3BA7
+         STA T2E    ; $3BA8
+         SEC    ; $3BAA
+         LDA ENX,X    ; $3BAB
+         SBC T2E    ; $3BAD
+         STA ENX,X    ; $3BAF
+         BCS st3BB5    ; $3BB1
+         DEC ENX+1,X    ; $3BB3
+st3BB5:  JMP st3BD2    ; $3BB5
+st3BB8:  SEC    ; $3BB8
+         LDA ENZ,X    ; $3BB9
+         SBC #$00    ; $3BBB
+         STA T2D    ; $3BBD
+         LDA ENZ+1,X    ; $3BBF
+         SBC #$86    ; $3BC1
+         ASL T2D    ; $3BC3
+         ROL A    ; $3BC5
+         ASL T2D    ; $3BC6
+         ROL A    ; $3BC8
+         CLC    ; $3BC9
+         ADC ENX,X    ; $3BCA
+         STA ENX,X    ; $3BCC
+         BCC st3BD2    ; $3BCE
+         INC ENX+1,X    ; $3BD0
+st3BD2:  LDA T2B    ; $3BD2
+         STA ENZ,X    ; $3BD4
+         LDA T2C    ; $3BD6
+         STA ENZ+1,X    ; $3BD8
+st3BDA:  LSR SJ1    ; $3BDA
+         BCC st3BE2    ; $3BDD
+         JMP st3C75    ; $3BDF
+st3BE2:  SEC    ; $3BE2
+         LDA #$A0    ; $3BE3
+         SBC ENX,X    ; $3BE5
+         LDA #$88    ; $3BE7
+         SBC ENX+1,X    ; $3BE9
+         BCC st3C10    ; $3BEB
+         SEC    ; $3BED
+         LDA #$A0    ; $3BEE
+         SBC ENX,X    ; $3BF0
+         STA T2B    ; $3BF2
+         LDA #$88    ; $3BF4
+         SBC ENX+1,X    ; $3BF6
+         ASL T2B    ; $3BF8
+         ROL A    ; $3BFA
+         ASL T2B    ; $3BFB
+         ROL A    ; $3BFD
+         STA T2C    ; $3BFE
+         SEC    ; $3C00
+         LDA ENZ,X    ; $3C01
+         SBC T2C    ; $3C03
+         STA T2B    ; $3C05
+         LDA ENZ+1,X    ; $3C07
+         SBC #$00    ; $3C09
+         STA T2C    ; $3C0B
+         JMP st3C2C    ; $3C0D
+st3C10:  SEC    ; $3C10
+         LDA ENX,X    ; $3C11
+         SBC #$A0    ; $3C13
+         STA T2B    ; $3C15
+         LDA ENX+1,X    ; $3C17
+         SBC #$88    ; $3C19
+         ASL T2B    ; $3C1B
+         ROL A    ; $3C1D
+         ASL T2B    ; $3C1E
+         ROL A    ; $3C20
+         CLC    ; $3C21
+         ADC ENZ,X    ; $3C22
+         STA T2B    ; $3C24
+         LDA ENZ+1,X    ; $3C26
+         ADC #$00    ; $3C28
+         STA T2C    ; $3C2A
+st3C2C:  LDA ENZ+1,X    ; $3C2C
+         CMP #$86    ; $3C2E
+         BCS st3C4F    ; $3C30
+         SEC    ; $3C32
+         LDA #$00    ; $3C33
+         SBC ENZ,X    ; $3C35
+         STA T2D    ; $3C37
+         LDA #$86    ; $3C39
+         SBC ENZ+1,X    ; $3C3B
+         ASL T2D    ; $3C3D
+         ROL A    ; $3C3F
+         ASL T2D    ; $3C40
+         ROL A    ; $3C42
+         CLC    ; $3C43
+         ADC ENX,X    ; $3C44
+         STA ENX,X    ; $3C46
+         BCC st3C4C    ; $3C48
+         INC ENX+1,X    ; $3C4A
+st3C4C:  JMP st3C6D    ; $3C4C
+st3C4F:  SEC    ; $3C4F
+         LDA ENZ,X    ; $3C50
+         SBC #$00    ; $3C52
+         STA T2D    ; $3C54
+         LDA ENZ+1,X    ; $3C56
+         SBC #$86    ; $3C58
+         ASL T2D    ; $3C5A
+         ROL A    ; $3C5C
+         ASL T2D    ; $3C5D
+         ROL A    ; $3C5F
+         STA T2E    ; $3C60
+         SEC    ; $3C62
+         LDA ENX,X    ; $3C63
+         SBC T2E    ; $3C65
+         STA ENX,X    ; $3C67
+         BCS st3C6D    ; $3C69
+         DEC ENX+1,X    ; $3C6B
+st3C6D:  LDA T2B    ; $3C6D
+         STA ENZ,X    ; $3C6F
+         LDA T2C    ; $3C71
+         STA ENZ+1,X    ; $3C73
+st3C75:  LDA SJ2    ; $3C75
+         STA SJ1    ; $3C78
+         INX    ; $3C7B
+         INX    ; $3C7C
+         DEY    ; $3C7D
+         BMI st3C83    ; $3C7E
+         LDA STLIM      ; (port: out of the slot's time, the next fighter is
+         BEQ stgo       ; steered in the next slot, STEERGO)
+         LDA $D012
+         CMP STLIM
+         BCC stgo
+         STX STSX
+         STY STSY
+         LDA #$01
+         STA STPEND
+         RTS
+stgo:    JMP st39DA    ; $3C80
+st3C83:  LDA #$00
+         STA STPEND
+         RTS    ; $3C83
+
+STEERGO:LDX STSX        ; the rest of a STEER that ran out of time
+        LDY STSY
+        JMP st39DA
+
+
+; ---------------- hits and explosions ----------------
+; The shot against the fighters ($3244 / $324C), once a frame. During the last 10
+; points of its path a shot hits a fighter shown within 12 pixels across and 10
+; down of it (the original compares the low bytes of the sprite x only). A fighter
+; takes ETYPE shots (type 1: one). A hit that does not destroy it ends the shot.
+SHOTHIT:LDA HITWIN      ; ($1616)
+        BNE hx0
+        RTS
+hx0:    LDX #$00        ; fighter 0-2 = sprites 4-6 (the original's X = 2-4)
+hx1:    LDA EVIS
+        AND ENBIT,X
+        BEQ hx9
+        TXA
+        ASL A
+        TAY
+        JSR HITBOX      ; ($3371)
+        BEQ hx9
+        LDA ESH+1,Y     ; ($327C) too low on the screen: no hit
+        CMP #$C3
+        BCC hx2
+hx9:    INX
+        CPX #$03
+        BNE hx1
+        RTS
+hx2:    DEC EHITS,X     ; ($32A7)
+        BEQ hxkill
+        BMI hxkill
+        LDA ENZ+1,Y     ; (closer than depth $8700 it goes down at once)
+        CMP #$86
+        BEQ hxkill
+        LDA NPTS        ; ($32B5) the shot ends at its next step
+        STA SHIDX
+        JMP HITSND
+hxkill: LDA EXPL        ; ($32BE) one explosion at a time (the fighter's count
+        BEQ hk1         ; stays at 0: the next hit destroys it)
+        RTS
+hk1:    STY HTY
+        LDA SPX,Y       ; the fighter's current x and y steps make the
+        STA PTR         ; explosion drift ($32C6, stream pointers $04 / $0A)
+        LDA SPX+1,Y
+        STA PTR+1
+        LDY SIDX,X
+        LDA (PTR),Y
+        STA EVX0
+        LDY HTY
+        LDA SPY,Y
+        STA PTR
+        LDA SPY+1,Y
+        STA PTR+1
+        LDY SIDX,X
+        LDA (PTR),Y
+        STA EVY0
+        LDA #$00
+        STA ALIVE,X
+        LDY HTY
+        LDA #$01        ; far away in every direction
+        STA ENX+1,Y
+        STA ENY+1,Y
+        STA ENZ+1,Y
+        STA EXPL
+        LDA #$00        ; ($32F2)
+        STA HITWIN
+        STA EXPB
+        LDA ESH,Y       ; the explosion's centre in bitmap pixels
+        SEC
+        SBC #$18
+        LSR A
+        PHA
+        LDA ESH+1,Y
+        SEC
+        SBC #$32
+        STA EXPY        ; ($3320)
+        CMP #$0A
+        BCC hk2
+        CMP #$BE
+        BCS hk2
+        PLA
+        STA EXPX
+        CMP #$0A
+        BCC hk3
+        CMP #$91
+        BCC hk4
+        BCS hk3
+hk2:    PLA             ; (the original leaves this byte on the stack, $3337)
+hk3:    LDA #$00        ; off the view: no explosion
+        STA EXPL
+hk4:    JSR KILL
+        LDA EVIS        ; the fighter and the shot disappear
+        AND ENMASK,X
+        STA EVIS
+        LDA #$00
+        STA SHOTVIS
+        JMP HITSND
+
+HITBOX: LDA ESH,Y       ; ($337D) A = 1: the shot is on the fighter (Y = 2 x fighter)
+        CMP SHOTX
+        BCS hb1
+        LDA SHOTX
+        SBC ESH,Y       ; (carry clear: one more, as the original)
+        CMP #$0C
+        BCS hbno
+        BCC hb2
+hb1:    SBC SHOTX
+        CMP #$0C
+        BCS hbno
+hb2:    LDA ESH+1,Y
+        CMP SHOTY
+        BCS hb3
+        LDA SHOTY
+        SBC ESH+1,Y
+        CMP #$0A
+        BCS hbno
+        BCC hbyes
+hb3:    SBC SHOTY
+        CMP #$0A
+        BCS hbno
+hbyes:  LDA #$01
+        RTS
+hbno:   LDA #$00
+        RTS
+
+KILL:   DEC TARGETS     ; ($3CC4) one target less on the HUD, one more kill
+        INC KILLS
+        BNE kl1
+        INC KILLS+1
+kl1:    RTS
+
+HITSND: LDA #$01        ; ($3349) voice 2 noise, and the flash starts
+        STA HITFL
+        LDA #$0F
+        STA $D418
+        LDA #$00
+        STA $D40B
+        STA $D40D
+        STA $D407
+        LDA #$6B
+        STA $D40C
+        LDA #$06
+        STA $D408
+        LDA #$81
+        STA $D40B
+        RTS
+
+; The hit flash ($1321, every other frame): the 3D view's background and border
+; go light blue, blue, light blue, white, blue, black, 6 frames each.
+FLASH:  LDA HITFL
+        BNE fl0
+        RTS
+fl0:    LDA FLC0
+        BNE fl1
+        LDA #$06
+        STA FLN
+        LDA #$03
+        STA FLD
+        STA FLC0
+        JSR HITSND2
+fl1:    DEC FLD
+        BEQ fl2
+        RTS
+fl2:    LDA #$03
+        STA FLD
+        DEC FLN
+        LDX FLN
+        BPL fl3
+        LDA #$00
+        STA HITFL
+        STA FLC0
+        RTS
+fl3:    LDA FLTAB,X     ; ($130A)
+        STA FLASHC
+        RTS
+
+HITSND2:LDA #$00        ; ($C3A8) the second noise of a hit
+        STA $D407
+        STA $D40B
+        STA $D40D
+        STA $D417
+        LDA #$0F
+        STA $D418
+        LDA #$8F
+        STA $D416
+        LDA #$04
+        STA $D408
+        LDA #$0A
+        STA $D40C
+        LDA #$81
+        STA $D40B
+        RTS
+
+; The explosion ($16B3): 26 points (the first 12 two pixels tall) fly apart from
+; the fighter's place in white (colour 01) into empty pixels, drifting with the
+; fighter's last step, in 20 steps that come faster and faster. The original
+; counts its main loop passes between steps (15 down to 2, about 8 passes a
+; frame in a fight); EXPTICK counts 8 a frame. A step plots and erases up to 76
+; pixels, more than one slot of free time, so EXPLODE works through the points
+; until the raster reaches EXLIM and goes on in the next free slot.
+EXPTICK:LDA EXPL
+        BEQ et9
+        LDA EXPB
+        BEQ et9
+        LDA EXPEND
+        ORA EXPRUN
+        BNE et9
+        SEC             ; ($1733)
+        LDA EXPC
+        SBC #PASSES
+        BEQ et1
+        BCC et1
+        STA EXPC
+et9:    RTS
+et1:    SEC             ; ($1739)
+        LDA EXPD
+        SBC #$01
+        CMP #$03
+        BCS et2
+        LDA #$02
+et2:    STA EXPD
+        STA EXPC
+        LDA #$01
+        STA EXPRUN
+        LDA #$00
+        STA EXPI
+        RTS
+
+EXPLODE:LDA EXPL
+        BNE ex0
+        RTS
+ex0:    LDA EXPB
+        BNE ex5
+        LDA EXLIM       ; the start takes about 12 lines: only with time left
+        SEC
+        SBC #14
+        CMP $D012
+        BCS ex1
+        RTS
+ex1:    LDA #$14        ; ($16C1) 20 steps
+        STA EXPN
+        LDA EVX0        ; the drift: half the step, sign and size
+        JSR HALFSTEP
+        STA EDX
+        LDA EVY0
+        JSR HALFSTEP
+        STA EDY
+        LDA EXPX        ; (the original checks the same centre for each point)
+        CMP #$91
+        BCS ex2
+        CMP #$05
+        BCC ex2
+        LDA EXPY
+        CMP #$05
+        BCC ex2
+        CMP #$C3
+        BCC ex3
+ex2:    LDA #$00
+        STA EXPL
+        STA EXPB
+        RTS
+ex3:    LDX #25
+        LDY EXPX
+ex4:    TYA
+        STA PNX,X
+        STA POX,X
+        LDA EXPY
+        STA PNY,X
+        STA POY,X
+        DEX
+        BPL ex4
+        LDA #$0F
+        STA EXPC
+        STA EXPD
+        STA EXPL
+        STA EXPB
+        LDA #$00
+        STA EXPI
+        STA EXPRUN
+        STA EXPEND
+        RTS
+ex5:    LDA EXPEND
+        BNE exclr
+        LDA EXPRUN
+        BNE exs0
+        RTS
+exs0:   LDX EXPI
+exs1:   LDA $D012
+        CMP EXLIM
+        BCC exs2
+        STX EXPI        ; out of time: on in the next slot
+        RTS
+exs2:   JSR PSTEP
+        INX
+        CPX #26
+        BNE exs1
+        LDA #$00
+        STA EXPI
+        STA EXPRUN
+        DEC EXPN        ; ($17FF)
+        BEQ exs3
+        RTS
+exs3:   LDA #$01        ; ($1805) the end: the points are erased
+        STA EXPEND
+exclr:  LDX EXPI
+exc1:   LDA $D012
+        CMP EXLIM
+        BCC exc2
+        STX EXPI
+        RTS
+exc2:   LDA PNX,X
+        STA POSX
+        LDA PNY,X
+        STA POSY
+        JSR EERASE
+        CPX #12
+        BCS exc3
+        INC POSY
+        JSR EERASE
+exc3:   INX
+        CPX #26
+        BNE exc1
+        LDA #$00
+        STA EXPL
+        STA EXPB
+        STA EXPEND
+        STA EXPI
+        STA HITWIN      ; ($180D)
+        RTS
+
+HALFSTEP:               ; A = sign and size: half of it as a signed byte
+        CMP #$80
+        BCS hs1
+        LSR A
+        RTS
+hs1:    AND #$7F
+        LSR A
+        EOR #$FF
+        CLC
+        ADC #$01
+        RTS
+
+PSTEP:  CLC             ; ($174D / $17AB) point X: move, plot, erase the old one
+        LDA PNX,X
+        STA POX,X
+        ADC PVX,X
+        CLC
+        ADC EDX
+        CMP #$9E
+        BCC ps1
+        LDA PNY,X       ; off the side: it stays where it was, erased
+        STA POY,X
+        JMP ps3
+ps1:    STA POSX
+        STA PNX,X
+        CLC
+        LDA PNY,X
+        STA POY,X
+        ADC PVY,X
+        CLC
+        ADC EDY
+        CMP #$B5
+        BCS ps3
+        STA PNY,X
+        STA POSY
+        JSR EPLOT
+        CPX #12
+        BCS ps3
+        INC POSY
+        JSR EPLOT
+ps3:    LDA POX,X
+        STA POSX
+        LDA POY,X
+        STA POSY
+        JSR EERASE
+        CPX #12
+        BCS ps4
+        INC POSY
+        JSR EERASE
+ps4:    RTS
+
+EPLOT:  LDA POSY        ; ($EF30) colour 01 into an empty pixel. Not in rows 0-2:
+        CMP #24         ; in the port they hold sprite shapes (hidden by the HUD)
+        BCC ep9
+        STX EXSAV
+        JSR PIXADDR
+        LDA (PTR),Y
+        AND MASK3,X
+        BNE ep8
+        LDA (PTR),Y
+        ORA MASK1,X
+        STA (PTR),Y
+ep8:    LDX EXSAV
+ep9:    RTS
+
+EERASE: LDA POSY        ; ($EF1B) clears a pixel only if it has colour 01
+        CMP #24
+        BCC ee9
+        STX EXSAV
+        JSR PIXADDR
+        LDA (PTR),Y
+        AND MASK3,X
+        CMP MASK1,X
+        BNE ee8
+        LDA (PTR),Y
+        AND CLEARM,X
+        STA (PTR),Y
+ee8:    LDX EXSAV
+ee9:    RTS
+
+MASK1:  .BYTE $40,$10,$04,$01
+FLTAB:  .BYTE $00,$06,$01,$0E,$06,$0E
+PVX:    .BYTE $FE,$FC,$FE,$03,$02,$04,$FC,$FD,$FE,$03,$02,$04,$FC,$FC,$FD,$FC,$00,$03,$04,$04,$FC,$FD,$00,$03,$04,$05
+PVY:    .BYTE $FC,$FE,$FD,$FC,$FD,$FE,$03,$02,$04,$03,$03,$02,$FD,$FD,$FB,$00,$FC,$FC,$FD,$00,$03,$04,$04,$04,$03,$03
 
 ; A signed step (bit 7 = minus) added to x, y or depth ($2BEF, $2C0B, $2C27).
 ADDX:   BMI ax1
@@ -1784,3 +2646,45 @@ MX:     .BYTE 0
 MIDX:   .BYTE 0
 ATMP:   .BYTE 0         ; ($2B)
 ZT:     .BYTE 0,0       ; ($67, $68)
+T2B:    .BYTE 0         ; steering temporaries ($2B-$2E)
+T2C:    .BYTE 0
+T2D:    .BYTE 0
+T2E:    .BYTE 0
+SJ1:    .BYTE 0         ; the joystick byte, shifted per direction ($39BF)
+SJ2:    .BYTE 0         ; and its copy for the next fighter ($39C0)
+MSFLAG: .BYTE 0         ; mothership checks of the steering ($E3, $C847, $372C-$372F)
+MSFLAG2:.BYTE 0
+MSDIG:  .BYTE 0,0,0,0
+EHITS:  .BYTE 0,0,0     ; shots each fighter can still take ($C59A)
+KILLS:  .BYTE 0,0       ; fighters destroyed ($F434)
+HTY:    .BYTE 0
+HITFL:  .BYTE 0         ; a hit flash runs ($DD, $1320)
+FLC0:   .BYTE 0         ; ($1300)
+FLN:    .BYTE 0         ; colour index ($1301)
+FLD:    .BYTE 0         ; calls per colour ($1302)
+FLASHC: .BYTE 0         ; the 3D view's background and border
+EXPL:   .BYTE 0         ; an explosion runs ($160A)
+EXPB:   .BYTE 0         ; it has started ($160B)
+EXPX:   .BYTE 0         ; centre ($160C, $160D)
+EXPY:   .BYTE 0
+EXPN:   .BYTE 0         ; steps left ($160E)
+EXPD:   .BYTE 0         ; passes between steps ($160F)
+EXPC:   .BYTE 0         ; passes to the next step ($1610)
+EDX:    .BYTE 0         ; drift per step ($1612, $1613)
+EDY:    .BYTE 0
+EVX0:   .BYTE 0         ; the fighter's last step ($1614, $1615)
+EVY0:   .BYTE 0
+EXPRUN: .BYTE 0         ; a step is under way (port)
+EXPEND: .BYTE 0         ; the final erase is under way (port)
+EXPI:   .BYTE 0         ; next point of the step (port)
+EXLIM:  .BYTE 0         ; raster line where the slot's time ends (port)
+EXSAV:  .BYTE 0
+POX:    .BYTE 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0         ; old points ($164B, $1665)
+POY:    .BYTE 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+PNX:    .BYTE 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0         ; new points ($167F, $1699)
+PNY:    .BYTE 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+STEERED:.BYTE 0         ; STEER already ran this frame
+STLIM:  .BYTE 0         ; raster limit for STEER (0: none)
+STPEND: .BYTE 0         ; fighters left to steer this frame
+STSX:   .BYTE 0
+STSY:   .BYTE 0

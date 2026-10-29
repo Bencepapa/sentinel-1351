@@ -82,8 +82,47 @@ HUD and bottom text strips and never shown as bitmap, so the VIC can use them as
 lines). In the original the carry going into the drift's comparisons comes from
 unrelated code; the test sets it, so in play a drift step can differ by one unit.
 
-Not yet: steering, hits, enemy fire, the approach and the arrival of the wave,
-more waves.
+### Steering, hits and explosions, steps (b) and (c) (this branch)
+
+- **Steering** (`STEER`, original `$39C1`): translated instruction for
+  instruction from the disassembly (every line keeps its address as a comment).
+  The joystick byte (with the mouse patch's mask: the crosshair off centre steers)
+  rotates every fighter around the ship. The test runs the original and the port
+  with a scripted joystick for 2000 frames: identical. Steering takes up to 18
+  lines a frame, so it runs in the time the phasor leaves in the 3D view (lines
+  78-186), one fighter at a time, and what does not fit runs after the movers
+  (in a frame with a heavy phasor, a fighter can be left to the start of the next
+  frame).
+- **Hit test** (`SHOTHIT` / `HITBOX`, `$3244` / `$324C` / `$3371`), once a frame:
+  in the last 10 points of its path the shot hits a fighter shown within 12
+  pixels across and 10 down. A fighter takes `ETYPE` shots (`EHITS`, `$C59A`); a
+  hit that does not destroy it ends the shot. A kill: the fighter is gone, the
+  shot disappears, TARGETS on the HUD counts down (`$3CC4`), kills are counted.
+  The test fires at fighters in both programs (kills, a two-shot fighter, misses):
+  identical.
+- **Hit sound and flash** (`HITSND` `$3349`, `FLASH` `$1321`, `HITSND2` `$C3A8`):
+  voice 2 noise, and the 3D view's background and border go light blue, blue,
+  light blue, white, blue, black (6 frames each).
+- **Explosion** (`EXPLODE` / `EXPTICK` / `PSTEP`, `$16B3`): 26 white points (the
+  first 12 two pixels tall) fly apart from the fighter's place, drifting with its
+  last step, in 20 steps that come faster; plotted only into empty pixels and
+  erased only where still white. The test runs 3 explosions in both on the same
+  bitmap: points and bitmap identical at every step. The original counts main
+  loop passes between steps (about 8 a frame in a fight), the port counts 8 a
+  frame; a step (up to 76 pixels) is spread over the free time of the 3D view
+  and the fight slot, with a raster check per point.
+- When all three are destroyed a new wave of three comes (the squadron and wave
+  bookkeeping, `$3CD6-$3D4B`, belongs to the approach phase, not done yet).
+
+Found in the original: a kill with the fighter's sprite above y 60 (or at 240
+and below) jumps from `$3320` to `$3337` with a byte still on the stack, so the
+interrupt's RTS goes astray (a crash, presumably rare in play); the port pulls
+the byte. The explosion's points can reach bitmap rows 0-2, which in the port
+hold sprite shapes, so the port does not plot there (hidden behind the HUD
+anyway).
+
+Not yet: enemy fire and the player being hit, the approach and the arrival of the
+wave, the tracking computer, types 2 and 3, the squadron count.
 
 ## Next, in a suggested order
 

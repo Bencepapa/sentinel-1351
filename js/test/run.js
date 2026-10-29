@@ -378,5 +378,126 @@ function report(hooks, label) {
   check(shown > 300, `fighters: they come into view (${shown} frames with at least one on screen)`);
 }
 
+// ---- steering: the cockpit's STEER against the original's $39C1 -------------------
+{
+  function callAt(m, addr, x) {
+    const c = m.cpu, ret = 0xFFF4, p = c.p;
+    if (x !== undefined) c.x = x;
+    c.push(((ret - 1) >> 8) & 255); c.push((ret - 1) & 255); c.pc = addr; c.p |= 4;
+    for (let i = 0; i < 2e6 && c.pc !== ret; i++) { c.step(); if (c.jam) throw new Error(c.jam); }
+    c.p = p;
+  }
+  const o = boot('c64game', 'trace'); run(o.m, o.hooks, 250);
+  const k = boot('cockpit', 'trace'); run(k.m, k.hooks, 5);
+  const R = o.m.ram, K = k.m.ram, ks = k.p.symbols;
+  R[0xA5] = 1; R[0xBA] = 0; R[0xFB] = 0;
+  callAt(o.m, 0xFF1B);
+  R[0x5F] = R[0x60] = R[0x61] = 1; R[0x2F6A] = R[0x2F6B] = R[0x2F6C] = 1;
+  R[0xE3] = 0; R[0xC847] = 0; for (let i = 0; i < 4; i++) R[0x372C + i] = 0;
+  callAt(k.m, ks.NEWWAVE);
+  const pos = (M, base) => [...M.subarray(base, base + 6)];
+  // scripted joystick (active low, bits 0-3 up, down, left, right): runs of each direction and diagonals
+  const pats = [0xFF, 0xFE, 0xFD, 0xFB, 0xF7, 0xFA, 0xF5, 0xF9, 0xF6, 0xFF];
+  let first = null, frames = 0, moved = 0;
+  for (let n = 1; n <= 2000; n++) {
+    const j = pats[(n >> 5) % pats.length];
+    callAt(o.m, 0x2F6D); callAt(o.m, 0x2FB9); callAt(o.m, 0x3005);
+    for (const x of [0, 2, 4]) callAt(k.m, ks.MOVEN, x);
+    const before = pos(K, ks.ENX).join();
+    R[0x96] = j; callAt(o.m, 0x39CE);
+    K[ks.JOY] = j; callAt(k.m, ks.STEER);
+    if (j !== 0xFF && pos(K, ks.ENX).join() !== before) moved++;
+    if (n & 1) { o.m.cpu.p |= 1; callAt(o.m, 0x33B6); k.m.cpu.p |= 1; callAt(k.m, ks.EDRIFT); }
+    if ((n & 3) === 0) for (const x of [0, 2, 4]) { callAt(o.m, 0x2E36, x); callAt(k.m, ks.PLACE, x); }
+    const a = [pos(R, 0x16), pos(R, 0x1C), pos(R, 0x22), R[0x98] & 0x70].join('|');
+    const b = [pos(K, ks.ENX), pos(K, ks.ENY), pos(K, ks.ENZ), K[ks.EVIS] & 0x70].join('|');
+    if (a !== b) { if (!first) first = { n, j, a, b }; } else frames++;
+  }
+  if (first) console.log('      first difference at frame', first.n, 'joy', first.j.toString(16), '\n      orig', first.a, '\n      port', first.b);
+  check(!first, `steering: the cockpit port matches the original for ${frames} of 2000 frames of scripted joystick`);
+  check(moved > 200, `steering: the joystick turns the fighters (${moved} frames moved by steering)`);
+}
+
+// ---- hits and explosions: the cockpit's SHOTHIT / EXPLODE against $324C / $16B3 ----
+{
+  function callAt(m, addr, x) {
+    const c = m.cpu, ret = 0xFFF4, p = c.p;
+    if (x !== undefined) c.x = x;
+    c.push(((ret - 1) >> 8) & 255); c.push((ret - 1) & 255); c.pc = addr; c.p |= 4;
+    for (let i = 0; i < 2e6 && c.pc !== ret; i++) { c.step(); if (c.jam) throw new Error(c.jam); }
+    c.p = p;
+  }
+  const o = boot('c64game', 'trace'); run(o.m, o.hooks, 250);
+  const k = boot('cockpit', 'trace'); run(k.m, k.hooks, 5);
+  const R = o.m.ram, K = k.m.ram, ks = k.p.symbols;
+  // the original's bookkeeping after a kill ($3CC4) must not end the fight here
+  R[0x92] = 0; R[0x93] = 0; for (let i = 0; i < 60; i++) { R[0x0378 + i] = 50; R[0xBDED + i] = 50; }
+  R[0xC596] = 0; R[0xC593] = 50; R[0x5476] = 0x79; K[ks.TARGETS] = 0x79;
+  R[0xA5] = 1; R[0xBA] = 0; R[0xFB] = 0;
+  callAt(o.m, 0xFF1B);
+  R[0x5F] = R[0x60] = R[0x61] = 1; R[0x2F6A] = R[0x2F6B] = R[0x2F6C] = 1; R[0xC59A] = R[0xC59B] = R[0xC59C] = 1;
+  callAt(k.m, ks.NEWWAVE);
+  R[0xC59B] = 2; K[ks.EHITS + 1] = 2;          // fighter 2 takes two shots: the other path
+  const state = (M, o) => o ? [M[0x5F], M[0x60], M[0x61], M[0xC59A], M[0xC59B], M[0xC59C], M[0x98] & 0x70, M[0x160A] ? 1 : 0, M[0x160C], M[0x160D], M[0x1614], M[0x1615], M[0x1616], M[0x1416], M[0x5476], ...M.subarray(0x16, 0x28)].join()
+    : [M[ks.ALIVE], M[ks.ALIVE + 1], M[ks.ALIVE + 2], ...M.subarray(ks.EHITS, ks.EHITS + 3), M[ks.EVIS] & 0x70, M[ks.EXPL] ? 1 : 0, M[ks.EXPX], M[ks.EXPY], M[ks.EVX0], M[ks.EVY0], M[ks.HITWIN], M[ks.SHIDX], M[ks.TARGETS], ...M.subarray(ks.ENX, ks.ENX + 6), ...M.subarray(ks.ENY, ks.ENY + 6), ...M.subarray(ks.ENZ, ks.ENZ + 6)].join();
+  // reorder the original's $16-$27 the same way (x, y, z blocks are already in that order)
+  let first = null, tries = 0, kills = 0, wounds = 0, misses = 0;
+  for (let n = 1; n <= 3000 && !first; n++) {
+    callAt(o.m, 0x2F6D); callAt(o.m, 0x2FB9); callAt(o.m, 0x3005);
+    for (const x of [0, 2, 4]) callAt(k.m, ks.MOVEN, x);
+    if (n & 1) { o.m.cpu.p |= 1; callAt(o.m, 0x33B6); k.m.cpu.p |= 1; callAt(k.m, ks.EDRIFT); }
+    if ((n & 3) === 0) for (const x of [0, 2, 4]) { callAt(o.m, 0x2E36, x); callAt(k.m, ks.PLACE, x); }
+    if (n % 7) continue;
+    const i = (n / 7) % 3 | 0;
+    if (!(R[0x98] & (0x10 << i))) continue;
+    // (a kill with the sprite above y 60 or below 240 crashes the original: $3320
+    // jumps to $3337 with a byte still pushed, so its RTS returns to garbage)
+    if (R[0xF0 + 2 * i] < 0x3C || R[0xF0 + 2 * i] >= 0xF0) continue;
+    // a shot near fighter i: on it, or just outside the box
+    const dx = [3, -11, 12, 0, 5][tries % 5], dy = [2, 9, -10, 0, -4][tries % 5]; tries++;
+    const sx = (R[0xEF + 2 * i] + dx) & 255, sy = (R[0xF0 + 2 * i] + dy) & 255;
+    R[0x98] &= 0x73; R[0xE9] = sx; R[0xEA] = sy; R[0x1616] = R[0x3370] = 5; R[0x1415] = 40; R[0x1416] = 30; R[0x160A] = 0;
+    K[ks.SHOTX] = sx; K[ks.SHOTY] = sy; K[ks.HITWIN] = 5; K[ks.NPTS] = 40; K[ks.SHIDX] = 30; K[ks.EXPL] = 0;
+    const before = R[0x5F + i] + R[0xC59A + i];
+    callAt(o.m, 0x324C); callAt(k.m, ks.SHOTHIT);
+    const a = state(R, true), b = state(K, false);
+    if (a !== b) first = { n, i, dx, dy, a, b };
+    if (!R[0x5F + i]) kills++; else if (R[0x5F + i] + R[0xC59A + i] < before) wounds++; else misses++;
+    if (!(R[0x5F] | R[0x60] | R[0x61])) {     // a new wave on both
+      callAt(o.m, 0xFF1B); R[0x5F] = R[0x60] = R[0x61] = 1; R[0x2F6A] = R[0x2F6B] = R[0x2F6C] = 1; R[0xC59A] = R[0xC59B] = R[0xC59C] = 1;
+      callAt(k.m, ks.NEWWAVE); R[0x5476] = K[ks.TARGETS];
+    }
+  }
+  if (first) console.log('      first difference at frame', first.n, 'fighter', first.i, 'offset', first.dx, first.dy, '\n      orig', first.a, '\n      port', first.b);
+  check(!first, `hits: the cockpit port's hit test matches the original (${kills} kills, ${wounds} wounds, ${misses} misses)`);
+  check(kills > 5 && wounds > 0 && misses > 5, 'hits: kills, a two-shot fighter and misses all came up');
+
+  // the explosion, step by step, on the same bitmap (rows 3-22)
+  const B0 = 0x6000 + 3 * 320, B1 = 0x6000 + 23 * 320;
+  K.set(R.subarray(B0, B1), B0);
+  const pts = (M, base) => [...M.subarray(base, base + 26)].join(',');
+  const ex = [[80, 130, 0x83, 0x00], [40, 60, 0x06, 0x85], [140, 100, 0x00, 0x02]];
+  let bad = null, steps = 0, oFrames = 0;
+  for (const [x, y, vx, vy] of ex) {
+    R[0x160C] = x; R[0x160D] = y; R[0x1614] = vx; R[0x1615] = vy; R[0x160A] = 1; R[0x160B] = 0;
+    K[ks.EXPX] = x; K[ks.EXPY] = y; K[ks.EVX0] = vx; K[ks.EVY0] = vy; K[ks.EXPL] = 1; K[ks.EXPB] = 0; K[ks.EXLIM] = 255;
+    callAt(o.m, 0x16B3); callAt(k.m, ks.EXPLODE);
+    for (let st = 0; st < 25 && R[0x160A] && !bad; st++) {
+      const n0 = R[0x160E];
+      for (let g = 0; g < 100 && R[0x160A] && R[0x160E] === n0; g++) callAt(o.m, 0x16B3);
+      for (let g = 0; g < 100 && K[ks.EXPL] && K[ks.EXPN] === n0; g++) { callAt(k.m, ks.EXPTICK); callAt(k.m, ks.EXPLODE); }
+      while (K[ks.EXPL] && K[ks.EXPEND]) callAt(k.m, ks.EXPLODE);
+      steps++;
+      const a = [R[0x160A] ? 1 : 0, R[0x160E], pts(R, 0x167F), pts(R, 0x1699)].join('|');
+      const b = [K[ks.EXPL] ? 1 : 0, K[ks.EXPN], pts(K, ks.PNX), pts(K, ks.PNY)].join('|');
+      let diff = -1;
+      for (let q = B0; q < B1; q++) if (R[q] !== K[q]) { diff = q; break; }
+      if (a !== b || diff >= 0) bad = { x, y, st, a, b, diff };
+    }
+  }
+  if (bad) console.log('      explosion at', bad.x, bad.y, 'step', bad.st, 'bitmap diff at', bad.diff.toString(16), '\n      orig', bad.a, '\n      port', bad.b);
+  check(!bad, `explosion: points and bitmap match the original for ${steps} steps of 3 explosions`);
+}
+
 console.log(failures ? failures + ' check(s) failed' : 'all checks passed');
 process.exit(failures ? 1 : 0);
