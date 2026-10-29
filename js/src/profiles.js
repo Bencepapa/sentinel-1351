@@ -65,6 +65,11 @@ var SentinelProfiles = {
       { name: 'Path points', at: 'NPTS' },
       { name: 'Shots fired', at: 'SHOTS', size: 2 },
       { name: 'Energy', at: 'HUDE', size: 4, fmt: 'digits' },
+      { name: 'Fighter 1 depth', at: 'ENZ', size: 2, fmt: 'hex' },
+      { name: 'Fighter 2 depth', at: 'ENZ+2', size: 2, fmt: 'hex' },
+      { name: 'Fighter 3 depth', at: 'ENZ+4', size: 2, fmt: 'hex' },
+      { name: 'Fighters shown', at: 'EVIS', fmt: 'hex' },
+      { name: 'Fighter shapes', at: 'ESHP', size: 3, fmt: 'bytes' },
       { name: 'Overrun frames', at: 'OVRUN' },
     ],
     cheats: [
@@ -72,6 +77,7 @@ var SentinelProfiles = {
     ],
     events: [
       { name: 'Shot launched', at: 'LAUNCH' },
+      { name: 'New wave', at: 'NEWWAVE' },
     ],
     keys: [
       { label: 'Fire / L', mouse: 'left' },

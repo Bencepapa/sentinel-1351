@@ -58,6 +58,10 @@ def main():
             f.write(blocks[p])
     print('wrote', os.path.join(out, 'sprites-4800.bin'), len(POINTERS) * 64, 'bytes')
 
+    # the type-1 fighters' movement streams (x $E800, y $EA00, depth $EB00; see
+    # PLAN-C128-COCKPIT.md): 1280 bytes from $E800
+    with open(os.path.join(out, 'streams-e800.bin'), 'wb') as f:
+        f.write(bytes(mem[0xE800:0xED00]))
     with open(os.path.join(out, 'charset-4000.bin'), 'wb') as f:
         f.write(bytes(mem[0x4000:0x4400]))
     print('wrote', os.path.join(out, 'charset-4000.bin'), 1024, 'bytes')

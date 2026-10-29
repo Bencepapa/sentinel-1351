@@ -62,6 +62,29 @@ loop cannot); the phasor work runs between lines 78 and 194. The test compares
 five shots frame by frame with the original (path, shape, position, colour,
 position on the path): identical.
 
+### Type-1 fighters, step (a) of the dogfight (this branch)
+
+A type-1 wave starts with the cockpit (`NEWWAVE` / `WAVEINIT`, original
+`$FF1B`): three twin-pod fighters fly their movement streams (`MOVEN`, original
+`$2F6D` / `$2FB9` / `$3005`, one step per frame), drift back toward the middle
+of the view every other frame (`EDRIFT`, `$33B6`) and become sprites 4-6 every
+4th frame (`PLACE`, `$2E36` / `$2E86`), shaped by depth (`$20-$2F`), yellow,
+light green and white. `js/test/run.js` starts the same wave in the original and
+in the port and runs both for 2000 frames: positions, sprites shown, shapes, x
+and y are identical in every frame.
+
+Port notes: the fight code and the streams live at `$8000-$8FFF` (bank 0 RAM
+under the BASIC ROM, visible with MMU `$0E`); the fighter and shot shapes sit in
+bitmap rows 0-2 and 23-24 (`$6000-$63BF`, `$7CC0-$7FFF`), which are behind the
+HUD and bottom text strips and never shown as bitmap, so the VIC can use them as
+26 more sprite slots; the fight runs between the gun split (line 194) and line
+230, because the star field already fills the vertical blank (up to 113 of 126
+lines). In the original the carry going into the drift's comparisons comes from
+unrelated code; the test sets it, so in play a drift step can differ by one unit.
+
+Not yet: steering, hits, enemy fire, the approach and the arrival of the wave,
+more waves.
+
 ## Next, in a suggested order
 
 ### 1. Enemies in the view and the hit test (start of the dogfight)
@@ -217,3 +240,11 @@ player) and repairs the ship. What the code shows so far:
   decided before hyperspace joins the programs.
 - The original runs the shot in its IRQ; the cockpit polls the raster. A raster
   IRQ (noted in `PLAN-C128-MAP-GUI.md`) would make adding the fight easier.
+
+## Enhancement ideas (optional, from the user)
+
+- **Target rectangle during the approach**: while turning toward a fighter group,
+  draw a rectangle on the screen where the selected group is (the port knows its
+  bearing and pitch), instead of only the numbers under the crosshair.
+- **Elite-style 3D radar**: show each contact's height above or below the radar
+  plane with a vertical line from its blip, like Elite's scanner.

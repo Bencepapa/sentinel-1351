@@ -38,6 +38,9 @@ COLORDATA = $3000
 PATHX   = $3400         ; phasor shot path, x / 2 (original $0400)
 PATHY   = $3500         ; and y (original $0500)
 HUDE    = $483E         ; the four energy digits of the HUD (original $543E)
+SHOTPTR = $F3           ; sprite pointers of the shot shapes $67-$70: $F3-$FC (bitmap rows
+                        ; 23-24, never shown as bitmap); the fighters: ENPTR
+STREAMS = $8000         ; type-1 movement streams (original $E800-$ECFF): pages $80-$84
 PTR     = $FB
 NSTARS  = 12
 DDLY    = $40           ; frames of calm before the crosshair glides back
@@ -114,6 +117,7 @@ set2:   DEY
 
         LDA #$0F        ; SID volume for the phasor sound
         STA $D418
+        JSR NEWWAVE     ; a type-1 squadron wave
         LDA #$80        ; the star field
         STA SEED
         LDX #NSTARS-1
@@ -178,6 +182,8 @@ nolaunch:
         JSR WAITLN
         JSR SPRGUNS     ; sprites 0 and 3 become the two guns
         JSR SWEEPSND
+        JSR FIGHT       ; the fighters (the time until line 230 is free; the star
+                        ; field fills the vertical blank)
         LDA #230
         JSR WAITLN
         LDA #0
@@ -291,10 +297,11 @@ sc2:    STA $D010
         STA $D001
         LDA #1
         STA $D027
-        LDA SHOTSHP     ; shapes $67-$70 of the original are $36-$3F here
-        SEC
-        SBC #$31
+        LDA SHOTSHP     ; shapes $67-$70 are pointers $F3-$FC here
+        CLC
+        ADC #$8C        ; SHOTPTR - $67
         STA SPRPTR+1
+        JSR SPRENEMY    ; sprites 4-6: the fighters
         LDA SHOTX
         STA $D002
         LDA SHOTY
@@ -302,6 +309,7 @@ sc2:    STA $D010
         LDA SHOTVIS
         ASL A
         ORA #1
+        ORA EVIS
         STA VICENA
         RTS
 
@@ -345,6 +353,7 @@ sg3:    STA $D027
         LDA SHOTVIS
         ASL A
         ORA #$09
+        ORA EVIS
         STA VICENA
         RTS
 
@@ -1308,3 +1317,470 @@ L52:    .BYTE 0
 L53:    .BYTE 0
 L59:    .BYTE 0
 L5A:    .BYTE 0
+
+
+; =================== the fight, part 2 of the code ===================
+        * = $8C00
+
+; ---------------- the fighters: one type-1 wave ----------------
+; Ported from the original (C64 addresses in brackets); PLAN-C128-COCKPIT.md
+; "How a fight runs". Three fighters, x ENX, y ENY, depth ENZ (16 bit each,
+; indexed 0, 2, 4 like the original's $16 / $1C / $22,X). Each flies its movement
+; stream (one step per frame; the original's main loop runs it every 16 passes,
+; about once a frame), drifts back toward the middle every other frame, and is
+; turned into sprite 4-6 every 4th frame. Not yet: steering, the hit test,
+; enemy fire, the approach phase.
+
+NEWWAVE:LDA #$01        ; type 1
+        STA ETYPE
+        JSR WAVEINIT
+        LDA ETYPE       ; all three alive: the flags get the type ($C7B9), after
+        STA ALIVE       ; WAVEINIT, which clears them
+        STA ALIVE+1
+        STA ALIVE+2
+        LDA #$01        ; a step on the next call
+        STA SCNT
+        STA SCNT+1
+        STA SCNT+2
+        LDA #$07        ; ($FFAF) colours: yellow, light green, white
+        STA $D02B
+        LDA #$0D
+        STA $D02C
+        LDA #$01
+        STA $D02D
+        LDA #$00
+        STA EVIS
+        RTS
+
+WAVEINIT:               ; ($FF1B, the type-1 path)
+        LDA #$00
+        STA ALIVE
+        STA ALIVE+1
+        STA ALIVE+2
+        LDX #$05
+wi1:    STA ENX,X
+        STA ENY,X
+        STA ENZ,X
+        STA SPX,X
+        STA SPY,X
+        STA SPZ,X
+        DEX
+        BPL wi1
+        LDY #$02        ; pages left of each stream
+        STY SPG
+        STY SPG+1
+        DEY
+        STY SPG+2
+        LDY #>STREAMS   ; x stream (original page $E8, table $FF15)
+        STY SBASE
+        STY SPX+1
+        STY SPX+3
+        INY
+        STY SPX+5
+        LDY #$82        ; y stream, STREAMS page + 2 ($EA, table $FF18)
+        STY SBASE+1
+        STY SPY+1
+        STY SPY+3
+        INY
+        STY SPY+5
+        LDY #$83        ; depth stream, STREAMS page + 3 ($EB)
+        STY SBASE+2
+        STY SPZ+1
+        STY SPZ+3
+        INY
+        STY SPZ+5
+        STA SIDX        ; A = 0
+        STA ENZ+4
+        LDA #$AA
+        STA SIDX+1
+        LDA #$54
+        STA SIDX+2
+        LDA #$88
+        STA ENX+1
+        STA ENX+3
+        STA ENX+5
+        STA ENY+1
+        STA ENY+3
+        STA ENY+5
+        LDA #$8B
+        STA ENZ+1
+        STA ENZ+3
+        STA ENZ+5
+        LDA #$8C
+        STA ENX
+        LDA #$50
+        STA ENX+2
+        LDA #$AF
+        STA ENX+4
+        LDA #$80
+        STA ENY
+        LDA #$8C
+        STA ENY+2
+        LDA #$64
+        STA ENY+4
+        LDA #$14
+        STA ENZ
+        LDA #$28
+        STA ENZ+2
+        RTS
+
+; One frame of the fight (vertical blank).
+FIGHT:  INC EFRM
+        LDX #$00
+        JSR MOVEN
+        LDX #$02
+        JSR MOVEN
+        LDX #$04
+        JSR MOVEN
+        LDA EFRM
+        AND #$01
+        BEQ fg1
+        JSR EDRIFT
+fg1:    LDA EFRM
+        AND #$03
+        BNE fg2
+        LDX #$00
+        JSR PLACE
+        LDX #$02
+        JSR PLACE
+        LDX #$04
+        JSR PLACE
+fg2:    RTS
+
+; A fighter takes a step of its stream ($2F6D, $2FB9, $3005: one copy per
+; fighter in the original). X = fighter * 2.
+MOVEN:  STX MX
+        TXA
+        LSR A
+        TAY
+        LDA ALIVE,Y
+        BNE mv1
+        RTS
+mv1:    LDA SIDX,Y
+        STA MIDX
+        LDA SPX,X       ; x step
+        STA PTR
+        LDA SPX+1,X
+        STA PTR+1
+        LDY MIDX
+        LDA (PTR),Y
+        JSR ADDX
+        LDA SPY,X       ; y step
+        STA PTR
+        LDA SPY+1,X
+        STA PTR+1
+        LDA (PTR),Y
+        JSR ADDY
+        LDA SPZ,X       ; depth step
+        STA PTR
+        LDA SPZ+1,X
+        STA PTR+1
+        LDA (PTR),Y
+        JSR ADDZ
+        LDA MX
+        LSR A
+        TAX
+        DEC SCNT,X      ; type 1: a step every call ($2F8B)
+        BEQ mv2
+mvret:  RTS
+mv2:    LDY ETYPE
+        CPY #$01
+        BEQ mv3
+        DEY
+mv3:    TYA
+        STA SCNT,X
+        INC SIDX,X
+        BNE mvret
+        LDX MX          ; the next page of the streams
+        INC SPX+1,X
+        INC SPY+1,X
+        INC SPZ+1,X
+        LDA MX
+        LSR A
+        TAX
+        DEC SPG,X
+        BNE mvret
+        LDX MX          ; the end: back to the start of the streams
+        LDA SBASE
+        STA SPX+1,X
+        LDA SBASE+1
+        STA SPY+1,X
+        LDA SBASE+2
+        STA SPZ+1,X
+        LDA MX
+        LSR A
+        TAX
+        LDA #$02
+        STA SPG,X
+        RTS
+
+; A signed step (bit 7 = minus) added to x, y or depth ($2BEF, $2C0B, $2C27).
+ADDX:   BMI ax1
+        CLC
+        ADC ENX,X
+        STA ENX,X
+        BCC ax0
+        INC ENX+1,X
+ax0:    RTS
+ax1:    AND #$7F
+        STA ATMP
+        SEC
+        LDA ENX,X
+        SBC ATMP
+        STA ENX,X
+        BCS ax0
+        DEC ENX+1,X
+        RTS
+ADDY:   BMI ay1
+        CLC
+        ADC ENY,X
+        STA ENY,X
+        BCC ay0
+        INC ENY+1,X
+ay0:    RTS
+ay1:    AND #$7F
+        STA ATMP
+        SEC
+        LDA ENY,X
+        SBC ATMP
+        STA ENY,X
+        BCS ay0
+        DEC ENY+1,X
+        RTS
+ADDZ:   BMI az1
+        CLC
+        ADC ENZ,X
+        STA ENZ,X
+        BCC az0
+        INC ENZ+1,X
+az0:    RTS
+az1:    AND #$7F
+        STA ATMP
+        SEC
+        LDA ENZ,X
+        SBC ATMP
+        STA ENZ,X
+        BCS az0
+        DEC ENZ+1,X
+        RTS
+
+; The attackers drift back toward the middle of the view, 4 units per call:
+; x $8832-$890E, y $885E-$88AE, depth $8640-$87E0 ($33B6; the original first
+; returns while $BA or $FB is set). The carry going into the comparisons is
+; whatever the previous instruction left, as in the original.
+EDRIFT:  LDX #$04
+        LDA #$40
+        STA DM1
+        LDA #$BF
+        STA DM2
+edr1:    LDA ENX,X
+        SBC #$32
+        LDA ENX+1,X
+        SBC #$88
+        BCS edr2
+        LDA ENX,X
+        ADC #$04
+        STA ENX,X
+        BCC edr1b
+        INC ENX+1,X
+edr1b:   JMP edr3
+edr2:    LDA ENX,X
+        SBC #$0E
+        LDA ENX+1,X
+        SBC #$89
+        BCC edr3
+        LDA ENX,X
+        SBC #$04
+        STA ENX,X
+        BCS edr3
+        DEC ENX+1,X
+edr3:    LDA ENY,X
+        SBC #$5E
+        LDA ENY+1,X
+        SBC #$88
+        BCS edr4
+        LDA ENY,X
+        ADC #$04
+        STA ENY,X
+        BCC edr3b
+        INC ENY+1,X
+edr3b:   JMP edr5
+edr4:    LDA ENY,X
+        SBC #$AE
+        LDA ENY+1,X
+        SBC #$88
+        BCC edr5
+        LDA ENY,X
+        SBC #$04
+        STA ENY,X
+        BCS edr5
+        DEC ENY+1,X
+edr5:    LDA ENZ,X
+        SBC #$40
+        LDA ENZ+1,X
+        SBC #$86
+        BCS edr6
+        LDA ENZ,X
+        ADC #$04
+        STA ENZ,X
+        BCC edr5b
+        INC ENZ+1,X
+edr5b:   JMP edr7
+edr6:    LDA ENZ,X
+        SBC #$E0
+        LDA ENZ+1,X
+        SBC #$87
+        BCC edr7
+        LDA ENZ,X
+        SBC #$04
+        STA ENZ,X
+        BCS edr7
+        DEC ENZ+1,X
+edr7:    SEC
+        ROR DM2
+        CLC
+        ROR DM1
+        DEX
+        DEX
+        BMI edrret
+        JMP edr1
+edrret:  RTS
+
+; A fighter -> its sprite ($2E36): hidden outside x $8751-$894F, y high byte $88
+; and depth $86xx-$87xx; x bit 8 from bit 0 of the high byte; the shape from the
+; depth ($2E86, type 1: $2F - depth/32, $20-$2F). X = fighter * 2.
+PLACE:  TXA
+        LSR A
+        TAY
+        SEC
+        LDA #$50
+        SBC ENX,X
+        LDA #$87
+        SBC ENX+1,X
+        BCS plhide
+        SEC
+        LDA #$4F
+        SBC ENX,X
+        LDA #$89
+        SBC ENX+1,X
+        BCC plhide
+        LDA ENX+1,X
+        LSR A
+        BCS pl1
+        LDA EMSB
+        AND ENMASK,Y
+        JMP pl2
+pl1:    LDA EMSB
+        ORA ENBIT,Y
+pl2:    STA EMSB
+        LDA ENX,X
+        STA ESH,X
+        LDA ENY+1,X
+        CMP #$88
+        BNE plhide
+        LDA ENY,X
+        STA ESH+1,X
+        LDA ENZ+1,X
+        CMP #$86
+        BCC plhide
+        CMP #$88
+        BCS plhide
+        SEC             ; ($2E86) the shape from the depth
+        LDA ENZ,X
+        SBC #$00
+        STA ZT
+        LDA ENZ+1,X
+        SBC #$86
+        STA ZT+1
+        LDA ZT
+        LSR ZT+1
+        ROR A
+        LSR A
+        LSR A
+        LSR A
+        LSR A
+        STA ZT
+        SEC
+        LDA #$2F
+        SBC ZT
+        STA ESHP,Y
+        LDA EVIS
+        ORA ENBIT,Y
+        STA EVIS
+        RTS
+plhide: LDA EVIS
+        AND ENMASK,Y
+        STA EVIS
+        RTS
+
+; Sprites 4-6 from the fighters' shadows (in the view, line 78).
+SPRENEMY:
+        LDA ESH
+        STA $D008
+        LDA ESH+1
+        STA $D009
+        LDA ESH+2
+        STA $D00A
+        LDA ESH+3
+        STA $D00B
+        LDA ESH+4
+        STA $D00C
+        LDA ESH+5
+        STA $D00D
+        LDA $D010
+        AND #$8F
+        ORA EMSB
+        STA $D010
+        LDA $D01C       ; type 1: single colour, not expanded, in front
+        AND #$8F
+        STA $D01C
+        LDA $D01D
+        AND #$8F
+        STA $D01D
+        LDA $D017
+        AND #$8F
+        STA $D017
+        LDA $D01B
+        AND #$8F
+        STA $D01B
+        LDX #$02        ; pointers from the shapes ($20-$2F -> ENPTR)
+spe1:   LDA ESHP,X
+        SEC
+        SBC #$20
+        TAY
+        LDA ENPTR,Y
+        STA SPRPTR+4,X
+        DEX
+        BPL spe1
+        RTS
+
+ENBIT:  .BYTE $10,$20,$40
+ENMASK: .BYTE $EF,$DF,$BF
+; sprite pointers of the fighter shapes $20-$2F: bitmap rows 0-2 ($6000-$63BF,
+; behind the HUD text) hold 15, row 23 the last one (build.py places them)
+ENPTR:  .BYTE $80,$81,$82,$83,$84,$85,$86,$87,$88,$89,$8A,$8B,$8C,$8D,$8E,$FD
+
+; the fighters (original addresses in brackets)
+ETYPE:  .BYTE 1         ; squadron type ($A5)
+ALIVE:  .BYTE 0,0,0     ; ($5F-$61)
+ENX:    .BYTE 0,0,0,0,0,0   ; x lo/hi per fighter ($16-$1B)
+ENY:    .BYTE 0,0,0,0,0,0   ; y ($1C-$21)
+ENZ:    .BYTE 0,0,0,0,0,0   ; depth ($22-$27)
+SPX:    .BYTE 0,0,0,0,0,0   ; stream pointers: x ($04-$09)
+SPY:    .BYTE 0,0,0,0,0,0   ; y ($0A-$0F)
+SPZ:    .BYTE 0,0,0,0,0,0   ; depth ($10-$15)
+SIDX:   .BYTE 0,0,0     ; position in the streams ($A6-$A8)
+SCNT:   .BYTE 1,1,1     ; calls until the next step ($2F6A-$2F6C)
+SPG:    .BYTE 0,0,0     ; stream pages left ($2F62-$2F64)
+SBASE:  .BYTE 0,0,0     ; first page of the x, y, depth streams ($2F65-$2F67)
+ESH:    .BYTE 0,0,0,0,0,0   ; sprite x / y of fighters 1-3 ($EF-$F4)
+EMSB:   .BYTE 0         ; their x bit 8, bits 4-6 ($F7)
+EVIS:   .BYTE 0         ; which are shown, bits 4-6 ($98)
+ESHP:   .BYTE $20,$20,$20   ; their shapes, original numbering ($B4-$B6)
+DM1:    .BYTE 0         ; ($33B3)
+DM2:    .BYTE 0         ; ($33B4)
+EFRM:   .BYTE 0
+MX:     .BYTE 0
+MIDX:   .BYTE 0
+ATMP:   .BYTE 0         ; ($2B)
+ZT:     .BYTE 0,0       ; ($67, $68)

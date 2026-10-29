@@ -16,8 +16,13 @@ Memory (bank 0, VIC bank 1 for the picture):
   $4400  color matrix of the bitmap (ref/cockpit-art.bin)
   $4800  text screen (HUD and bottom strip)
   $3400  phasor shot path (x, then y at $3500)
-  $4C00  sprite shapes: pointers $30-$35 = the crosshair $7D, tracking $49-$4B, guns $7E / $7F,
-         $36-$3F = the phasor shot $67-$70
+  $4C00  sprite shapes: pointers $30-$35 = the crosshair $7D, tracking $49-$4B, guns $7E / $7F
+  $6000  bitmap rows 0-2 ($6000-$63BF) are behind the HUD's text strip and never shown, so
+         they hold sprite shapes: pointers $80-$8E = the fighters $20-$2E
+  $7CC0  bitmap rows 23-24 ($7CC0-$7FFF), behind the bottom text strip: pointers $F3-$FC =
+         the phasor shot $67-$70, $FD = the fighter $2F
+  $8000  the type-1 fighters' movement streams (original $E800-$ECFF, ref/streams-e800.bin)
+  $8C00  more code (the fight); bank 0 RAM up to $BFFF is visible with MMU setting $0E
   (nothing at $5000-$5FFF: the C128's video chip reads the character ROM there)
   $6000  multicolor bitmap; the cockpit art fills cell rows 18-22 ($7680-$7CBF)
 """
@@ -37,6 +42,16 @@ YHI = 0x2E00
 XLO = 0x2F00
 XHI = 0x2F28
 COLORDATA = 0x3000
+STREAMS = 0x8000
+CODE2 = 0x8C00
+
+
+def slot(pointer):
+    return 0x4000 + pointer * 64
+
+
+def fighter_pointer(original):          # $20-$2E -> $80-$8E, $2F -> $FD (also in cockpit.asm)
+    return 0x80 + original - 0x20 if original < 0x2F else 0xFD
 REF = os.path.join(HERE, '..', 'ref')
 OUT = os.path.join(HERE, 'sentinel-c64-cockpit-test.prg' if C64 else 'sentinel-c128-cockpit.prg')
 
@@ -61,11 +76,13 @@ def main():
     if C64:
         source = source.replace('* = $1D00', '* = $%04X' % ENTRY)
     chunks, symbols = asm(source)
-    if set(chunks) != {ENTRY}:
-        raise SystemExit(f'unexpected assembly chunks: {list(chunks)}')
+    if set(chunks) != {ENTRY, CODE2}:
+        raise SystemExit(f'unexpected assembly chunks: {[hex(c) for c in chunks]}')
     code = chunks[ENTRY]
     if ENTRY + len(code) > YLO:
         raise SystemExit(f'code ends at ${ENTRY + len(code):04X}, past the tables at ${YLO:04X}')
+    if CODE2 + len(chunks[CODE2]) > 0xC000:
+        raise SystemExit(f'second code chunk ends at ${CODE2 + len(chunks[CODE2]):04X}, past $BFFF')
 
     art = open(os.path.join(REF, 'cockpit-art.bin'), 'rb').read()
     screen, color, matrix, bitmap_rows = art[:1000], bytearray(art[1000:2000]), art[2000:3000], art[3000:4600]
@@ -93,7 +110,11 @@ def main():
     for new, original in enumerate((0x7D, 0x49, 0x4A, 0x4B, 0x7E, 0x7F)):
         put(body, 0x4C00 + new * 64, shape(original))      # pointers $30-$35
     for original in range(0x67, 0x71):                     # the phasor shot, $67-$70
-        put(body, 0x4C00 + (original - 0x31 - 0x30) * 64, shape(original))   # pointers $36-$3F
+        put(body, slot(0xF3 + original - 0x67), shape(original))
+    for original in range(0x20, 0x30):                     # type-1 fighters, $20-$2F
+        put(body, slot(fighter_pointer(original)), shape(original))
+    put(body, STREAMS, open(os.path.join(REF, 'streams-e800.bin'), 'rb').read())
+    put(body, CODE2, chunks[CODE2])
     put(body, 0x4800, screen)
     put(body, 0x6000 + 18 * 320, bitmap_rows)
 

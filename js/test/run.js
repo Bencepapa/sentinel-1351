@@ -337,5 +337,46 @@ function report(hooks, label) {
   check(worst < (194 - 80) * 63, `phasor: the busiest frame takes ${worst} cycles (${Math.round(worst / 63)} lines, the 3D view gives 114)`);
 }
 
+// ---- type-1 fighters: C128 cockpit port against the original routines ----------
+{
+  function callAt(m, addr, x) {
+    const c = m.cpu, ret = 0xFFF4, p = c.p;
+    if (x !== undefined) c.x = x;
+    c.push(((ret - 1) >> 8) & 255); c.push((ret - 1) & 255); c.pc = addr; c.p |= 4;
+    for (let i = 0; i < 2e6 && c.pc !== ret; i++) { c.step(); if (c.jam) throw new Error(c.jam); }
+    c.p = p;
+  }
+  const o = boot('c64game', 'trace'); run(o.m, o.hooks, 250);
+  const k = boot('cockpit', 'trace'); run(k.m, k.hooks, 5);
+  const R = o.m.ram, K = k.m.ram, ks = k.p.symbols;
+  // the original: a type-1 wave as $C749-$C7C0 starts it (offset 0)
+  R[0xA5] = 1; R[0xBA] = 0; R[0xFB] = 0;
+  callAt(o.m, 0xFF1B);
+  R[0x5F] = R[0x60] = R[0x61] = 1; R[0x2F6A] = R[0x2F6B] = R[0x2F6C] = 1;
+  callAt(k.m, ks.NEWWAVE);
+  const pos = (M, base) => [...M.subarray(base, base + 6)];
+  let first = null, frames = 0, shown = 0, maxVis = 0;
+  for (let n = 1; n <= 2000; n++) {
+    // the same order the cockpit's FIGHT uses: movers, drift on odd frames, sprites every 4th
+    callAt(o.m, 0x2F6D); callAt(o.m, 0x2FB9); callAt(o.m, 0x3005);
+    for (const x of [0, 2, 4]) callAt(k.m, ks.MOVEN, x);
+    if (n & 1) { o.m.cpu.p |= 1; callAt(o.m, 0x33B6); k.m.cpu.p |= 1; callAt(k.m, ks.EDRIFT); }
+    if ((n & 3) === 0) for (const x of [0, 2, 4]) { callAt(o.m, 0x2E36, x); callAt(k.m, ks.PLACE, x); }
+    const a = [pos(R, 0x16), pos(R, 0x1C), pos(R, 0x22)].join('|'), b = [pos(K, ks.ENX), pos(K, ks.ENY), pos(K, ks.ENZ)].join('|');
+    const va = R[0x98] & 0x70, vb = K[ks.EVIS] & 0x70;
+    let sa = '', sb = '';
+    for (let i = 0; i < 3; i++) if (va & (0x10 << i)) {
+      sa += [R[0xB4 + i], R[0xEF + 2 * i], R[0xF0 + 2 * i], (R[0xF7] >> (4 + i)) & 1].join(',') + ' ';
+      sb += [K[ks.ESHP + i], K[ks.ESH + 2 * i], K[ks.ESH + 1 + 2 * i], (K[ks.EMSB] >> (4 + i)) & 1].join(',') + ' ';
+    }
+    if (a !== b || va !== vb || sa !== sb) { if (!first) first = { n, a, b, va, vb, sa, sb }; }
+    else frames++;
+    if (va) shown++;
+  }
+  if (first) console.log('      first difference at frame', first.n, '\n      orig', first.a, first.va, first.sa, '\n      port', first.b, first.vb, first.sb);
+  check(!first, `fighters: the cockpit port matches the original for ${frames} of 2000 frames (positions, sprites shown, shapes, x, y)`);
+  check(shown > 300, `fighters: they come into view (${shown} frames with at least one on screen)`);
+}
+
 console.log(failures ? failures + ' check(s) failed' : 'all checks passed');
 process.exit(failures ? 1 : 0);

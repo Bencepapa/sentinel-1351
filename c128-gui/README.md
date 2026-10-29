@@ -183,7 +183,12 @@ tracking on and off (the crosshair then animates `$49-$4B`).
   crosshair, slowing as it recedes, and holding fire repeats it. A shot costs 10 energy
   on the HUD. Checked
   frame by frame against the original routines in `js/test/run.js`; details in
-  `PLAN-C128-COCKPIT.md`. No enemies yet, so nothing is hit.
+  `PLAN-C128-COCKPIT.md`.
+- **Type-1 fighters** (sprites 4-6, shapes `$20-$2F` by depth; branch `c128-port`): a wave of
+  three twin-pod fighters flies its original movement streams and drifts back toward the
+  middle of the view, as the original's `$FF1B`, `$2F6D`, `$33B6` and `$2E36` do (checked
+  frame by frame for 2000 frames in `js/test/run.js`). They cannot be hit yet and do not react
+  to steering.
 
 Result on a real x128 run (user screenshot, `ref/cockpit-c128-working.png`): HUD, rivets,
 crosshair with its digits, guns behind the bases, radar and star field all correct.
