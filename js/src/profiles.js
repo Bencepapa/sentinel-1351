@@ -58,7 +58,7 @@ var SentinelProfiles = {
       { name: 'Crosshair Y', at: 'CURY' },
       { name: 'Gun 1 X', at: 'G1X' },
       { name: 'Gun 2 X', at: 'G2X' },
-      { name: 'Fire held', at: 'FIREHELD' },
+      { name: 'Fire flag', at: 'FIREFLAG' },
       { name: 'Shot in flight', at: 'SHOTON', fmt: 'hex' },
       { name: 'Shot shape', at: 'SHOTSHP', fmt: 'hex' },
       { name: 'Shot path pos', at: 'SHIDX' },
@@ -78,7 +78,7 @@ var SentinelProfiles = {
       { label: 'T', key: 'KeyT' },
       { label: 'SPACE', key: 'Space' },
     ],
-    help: 'Mouse or arrows: crosshair (the guns follow). Hold the left button / Right Ctrl: phasor shot (it flies while held). T: tracking crosshair. SPACE: exit.',
+    help: 'Mouse or arrows: crosshair (the guns follow). Left button / Right Ctrl: phasor shot (hold to keep firing). T: tracking crosshair. SPACE: exit.',
   },
   map: {
     title: 'C128 sector map',

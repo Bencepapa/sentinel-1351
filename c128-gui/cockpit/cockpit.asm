@@ -588,11 +588,12 @@ ijoy:   LDA JRAW
 icur:   LDA DS          ; the guns lean with the crosshair's offset from the center
         AND DS2
         STA JOYG
-        LDA JOY         ; fire held (original $D0)
-        AND #$10
-        EOR #$10
-        STA FIREHELD
-        JSR CURSOR
+        LDA JOY         ; fire pressed: set the fire flag (original $02CB-$02D6:
+        AND #$10        ; it is only ever set here; releasing fire does not clear it,
+        BNE nofire      ; the end of the shot does)
+        LDA #$01
+        STA FIREFLAG
+nofire: JSR CURSOR
         LDA CURX        ; crosshair sprite position
         CLC
         ADC #$2D
@@ -836,17 +837,18 @@ rsend:  RTS
 
 ; ---------------- the phasor shot ----------------
 ; Ported from the original, routine for routine (C64 addresses in brackets).
-; Holding fire arms a shot (FIREPH); the next pass launches it (LAUNCH): the line
-; routine stores the path from a gun to the crosshair, and while fire is held the
+; Pressing fire sets the fire flag; FIREPH arms a shot, the next pass launches it
+; (LAUNCH): the line routine stores the path from a gun to the crosshair, and the
 ; shot sprite walks along it, a step every few of 48 sub-ticks per frame, with the
 ; steps further apart each time (it slows down as it recedes) and a smaller shape
-; every third step. Releasing fire stops the shot where it is, as in the original.
+; every third step. The flag stays set until the shot reaches the end of its path,
+; so one press fires a whole shot; holding fire fires the next one right after.
 ; js/test/run.js calls these routines and the original ones inside the C64 game
 ; with the same crosshair, guns and fire timing and compares the path and the
 ; shot sprite frame by frame.
 
 FIREPH:                 ; per frame ($1424). The original first stops here when the
-        LDA FIREHELD    ; phasor cannons are destroyed ($39), a torpedo flies, the map
+        LDA FIREFLAG    ; phasor cannons are destroyed ($39), a torpedo flies, the map
         BEQ phret       ; is shown or ($E3); none of those exist in this program yet.
         LDA SHOTON
         BEQ pharm
@@ -989,7 +991,7 @@ ss5:    CPY NPTS
         LDA #$00        ; the end of the path: the shot is gone
         STA SHOTON
         STA HITWIN
-        STA FIREHELD
+        STA FIREFLAG    ; (the next shot needs fire again)
         STA SHOTY
         STA SHOTVIS
         STA $D404
@@ -1264,7 +1266,7 @@ SAVFAST:.BYTE 0
 SAV1B:  .BYTE 0
 SAV1D:  .BYTE 0
 ; the phasor shot (original addresses in brackets)
-FIREHELD:.BYTE 0        ; fire button held ($D0)
+FIREFLAG:.BYTE 0        ; set by pressing fire, cleared at the end of a shot ($D0)
 SHOTARM:.BYTE 0         ; armed, launch on the next pass ($D1)
 SHOTON: .BYTE 0         ; a shot is in flight ($D2)
 SHOTVIS:.BYTE 0         ; sprite 1 on ($98 bit 1)

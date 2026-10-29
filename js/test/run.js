@@ -270,23 +270,24 @@ function report(hooks, label) {
       R[os.CURX] = cx; R[os.CURY] = cy; R[0x1417] = gunsel; R[0x141B] = 0;
       R[0x118F] = 0x20; R[0x1190] = 0x1F; R[0x1191] = 0xCF; R[0x1192] = 0xCF;
     },
-    frame(fire) { R[0xD0] = fire; callAt(o.m, 0x1424); if (R[0xD1]) callAt(o.m, 0x1467); },
+    // the input code sets $D0 when fire is pressed and never clears it ($02CB-$02D6)
+    frame(fire) { if (fire) R[0xD0] = 1; callAt(o.m, 0x1424); if (R[0xD1]) callAt(o.m, 0x1467); },
     state: () => [R[0xD2], R[0xB1], R[0xE9] | ((R[0xF7] & 2) << 7), R[0xEA], o.m.vic[0x28] & 15, R[0x1416]],
     path: () => [...R.subarray(0x400, 0x400 + R[0x1415])].map((x, i) => x + ',' + R[0x500 + i]).join(' '),
   };
   const port = {
     setup(cx, cy, gunsel) {
-      K[ks.SHOTON] = K[ks.SHOTARM] = 0;
+      K[ks.SHOTON] = K[ks.SHOTARM] = K[ks.FIREFLAG] = 0;
       K[ks.CURX] = cx; K[ks.CURY] = cy; K[ks.GUNSEL] = gunsel; K[ks.FRAC] = 0;
       K[ks.G1X] = 0x20; K[ks.G2X] = 0x1F; K[ks.G1Y] = 0xCF; K[ks.G2Y] = 0xCF;
     },
-    frame(fire) { K[ks.FIREHELD] = fire; callAt(k.m, ks.FIREPH); if (K[ks.SHOTARM]) callAt(k.m, ks.LAUNCH); },
+    frame(fire) { if (fire) K[ks.FIREFLAG] = 1; callAt(k.m, ks.FIREPH); if (K[ks.SHOTARM]) callAt(k.m, ks.LAUNCH); },
     state: () => [K[ks.SHOTON], K[ks.SHOTSHP], K[ks.SHOTX] | (K[ks.SHOTXH] << 8), K[ks.SHOTY], k.m.vic[0x28] & 15, K[ks.SHIDX]],
     path: () => [...K.subarray(ks.PATHX, ks.PATHX + K[ks.NGEN])].map((x, i) => x + ',' + K[ks.PATHY + i]).join(' '),
   };
-  // crosshair x, y, gun alternation, frames fire is held (8: released mid-flight, the
-  // shot stops; 60: held on, a second shot follows the first)
-  const cases = [[0x7E, 0x81, 0, 40], [0xF0, 0x58, 2, 40], [0x10, 0xAD, 0, 40], [0x7E, 0x81, 2, 8], [0xAA, 0x60, 0, 60]];
+  // crosshair x, y, gun alternation, frames fire is held (1: a tap, the shot still
+  // flies to the end; 60: held on, a second shot follows the first)
+  const cases = [[0x7E, 0x81, 0, 40], [0xF0, 0x58, 2, 40], [0x10, 0xAD, 0, 40], [0x7E, 0x81, 2, 1], [0xAA, 0x60, 0, 60]];
   let same = 0, shown = 0;
   for (const [cx, cy, gs, hold] of cases) {
     orig.setup(cx, cy, gs); port.setup(cx, cy, gs);
@@ -300,7 +301,8 @@ function report(hooks, label) {
     // the port makes the path in parts: what it has made so far must be the original's
     const op = orig.path().split(' '), pp = port.path().split(' ');
     if (pp.join(' ') !== op.slice(0, pp.length).join(' ') || K[ks.NPTS] !== R[0x1415]) { ok = false; console.log('      path differs', cx, cy); }
-    if (hold >= 40 && !complete) { ok = false; console.log('      the port never had the whole path', cx, cy); }
+    if (!complete) { ok = false; console.log('      the port never had the whole path', cx, cy); }
+    if (hold < 40 && (R[0xD2] || K[ks.SHOTON])) { ok = false; console.log('      a tapped shot did not reach its end', cx, cy); }
     if (ok) same++;
   }
   check(same === cases.length, `phasor: the cockpit port matches the original in ${same} of ${cases.length} shots (path, shape, position, colour, step)`);
@@ -310,7 +312,7 @@ function report(hooks, label) {
   let worst = 0;
   for (const [cx, cy] of [[0, 0x58], [0xFE, 0x58], [0, 0xAD], [0xFE, 0xAD]]) {
     port.setup(cx, cy, 0);
-    K[ks.FIREHELD] = 1; cyc(ks.FIREPH);
+    K[ks.FIREFLAG] = 1; cyc(ks.FIREPH);
     worst = Math.max(worst, cyc(ks.LAUNCH));
     for (let f = 0; f < 40; f++) worst = Math.max(worst, cyc(ks.FIREPH));
   }

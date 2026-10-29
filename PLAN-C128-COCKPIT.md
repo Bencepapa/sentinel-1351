@@ -43,7 +43,11 @@ Original `$1424` (per frame, in the IRQ), `$1467` (launch, from the main loop),
   it: a step every few sub-ticks, the gap growing by one each step (it slows as it
   recedes), a smaller shape every third step, 1 or 3 points per step from a
   fraction scaled by the path length.
-- **It only flies while fire is held**; releasing fire freezes it where it is.
+- Pressing fire sets a flag (`$D0`, written only on a press by the input code
+  `$02CB-$02D6`, cleared at the end of the shot `$158E`), so one press fires a whole
+  shot and holding fire fires the next one as soon as the first is gone. (A first
+  version of the port and its test cleared the flag on release, which froze the
+  shot in mid-air; found by the user.)
 - Yellow at launch, cyan after: the original's colour lookup reads a byte of its
   own code (`LDX $1520` / `LDA $1520,X` = `$1527` = `$13`).
 - The gun that fired is red while the shot flies (`$1241`); a shot costs 10

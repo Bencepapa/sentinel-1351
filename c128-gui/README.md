@@ -178,9 +178,10 @@ tracking on and off (the crosshair then animates `$49-$4B`).
   bring them back to rest; while a phasor shot flies, the gun it came from is red
   (original `$1241`).
 - **Phasor shot** (sprite 1, multicolor shapes `$70` down to `$67`; branch `c128-port`):
-  hold fire to launch and fly it, from the gun on the other side of the crosshair, as the
-  original's `$1424` / `$1467` / `$1526` and its line routine `$3580` do. It slows as it
-  recedes and stops when fire is released; a shot costs 10 energy on the HUD. Checked
+  press fire to launch it from the gun on the other side of the crosshair, as the
+  original's `$1424` / `$1467` / `$1526` and its line routine `$3580` do; it flies to the
+  crosshair, slowing as it recedes, and holding fire repeats it. A shot costs 10 energy
+  on the HUD. Checked
   frame by frame against the original routines in `js/test/run.js`; details in
   `PLAN-C128-COCKPIT.md`. No enemies yet, so nothing is hit.
 
