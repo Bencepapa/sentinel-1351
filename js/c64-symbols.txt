@@ -88,3 +88,16 @@ RECHARGE    $F9D6   ; found: energy +1
 DOCKED      $F86B   ; found: non-zero = energy counts up
 HUD         $5400   ; text screen of the HUD (row 1 at $5428, row 2 at $5450)
 PRINTBIG    $9BE5   ; double-width text into the bitmap
+
+; ---- enemies in a fight (found with the JS debugger and the disassembly) ----
+ENEMYTYPE   $A5     ; found: squadron type of the fight, 1-3 (from STATE): picks the enemy kind
+ENEMYSPR    $2E36   ; found: one enemy -> its sprite (called 3x by the IRQ, $0BCE-$0BD8); jumps via $2E7B
+SHAPE1      $2E86   ; found: type 1, twin-pod fighters: shape $2F - z/32 ($20-$2F)
+SHAPE2      $2EBE   ; found: type 2: shapes $44 down to $3E (table $2EAE), multicolor
+SHAPE3      $2F18   ; found: type 3, lens ships: shapes $38 down to $31 (table $2F08), multicolor
+SHAPESEL    $2E30   ; found: jump targets per type (lo $2E30, hi $2E33), patched into $2E7C at $C80C / $FFAF
+WAVESETUP   $C7A6   ; found: a wave: hit counters = type, alive flags $5F-$61 = type
+ENEMYHITS   $C59A   ; found: hits left per enemy (3 bytes): type 1 one shot, type 2 two, type 3 three
+WAVESIZES   $C593   ; found: enemies per wave (up to 3 at once, sprites 4-6)
+SHOTHIT     $324C   ; found: the shot against sprites 2-6 during the hit window ($1616)
+ENEMYDOWN   $32BE   ; found: an enemy destroyed (explosion setup)

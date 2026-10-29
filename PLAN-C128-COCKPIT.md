@@ -66,6 +66,37 @@ position on the path): identical.
 
 ### 1. Enemies in the view and the hit test (start of the dogfight)
 
+What the code says about the enemies (found with the JS workbench; labels in
+`js/c64-symbols.txt`):
+
+| Squadron type | Map colour | Enemy | Shapes | Shots to destroy |
+|---|---|---|---|---|
+| 1 | light blue (`$1E`) | twin-pod fighter (the small H) | `$20-$2F`, 16 sizes by distance (`$2E86`) | 1 |
+| 2 | light green (`$1D`) | spiky ship, multicolor | `$3E-$44` by distance (`$2EBE`, table `$2EAE`) | 2 |
+| 3 | purple (`$14`) | lens ship / saucer, multicolor | `$31-$38` by distance (`$2F18`, table `$2F08`) | 3 |
+
+- The squadron type of the fight (`$A5`) picks the shape routine by patching a
+  jump (`$2E7B`, targets at `$2E30` / `$2E33`, set at `$C80C` and `$FFAF`).
+- Up to **3 enemies at once**, sprites 4-6; a squadron comes in waves
+  (`$C593`). Each enemy has a position: x `$16/$17`, y `$1C/$1D`, depth z
+  `$22/$23` (16 bit, X = 0, 2, 4); the depth picks the shape size.
+- Each enemy's hit counter (`$C59A-$C59C`) starts at the type number
+  (`$C7A6`); a hit lowers it (`$32A7`); at 0 the enemy is destroyed (`$32BE`),
+  otherwise the shot stops there and the enemy's colour steps (`$2EC4`).
+- Enemy fire is sprite 2, shapes `$66-$70` growing as it comes in; sprite 3 is
+  the right gun; sprite 0 the crosshair, sprite 1 the player's shot.
+- Seen in the start sector: three type-1 fighters at once, shields 40 to 24 in
+  about two minutes.
+- Others: **mines** around the motherships (`$71-$7C`, `$CCDF` / `$CD27`), and a
+  close-approach sequence with two X-expanded sprites whose shapes are built at
+  run time (`$45` / `$46`, `$CF64`) that ends in five hits (`$CF8C`); both belong
+  to the mothership sequences (step 4).
+
+Suggested order inside this step: (a) one wave of type-1 fighters moving in 3D
+and drawn by depth; (b) the hit test and the explosion (`$60-$63`); (c) enemy
+fire and the player being hit (`$84D7`); (d) types 2 and 3 (shapes, hit
+counters, colours); (e) waves and the squadron count.
+
 The squadrons: twin-pod fighters (shapes `$20-$30`, several rotations), lens
 ships (`$31-$38`, multicolor), mines / drones (`$71-$7C`); enemy fire `$66-$70`
 is the same shrinking sequence as the player's shot. Known entry points:
