@@ -49,3 +49,13 @@ exercise the cursor, fast ticks, the planet sprite, the cockpit crosshair and ve
 
 `index.html` needs a local web server (`python -m http.server` in `js/`);
 `dist/sentinel.html` opens directly.
+
+## Keeping it in sync
+
+`.githooks/pre-commit` rebuilds the embedded PRGs (`js/build.py`, `js/bundle.py`) and adds the
+results to the commit whenever C128 sources or the JS build change. Enable it once per clone:
+
+```text
+git config core.hooksPath .githooks
+```
+
