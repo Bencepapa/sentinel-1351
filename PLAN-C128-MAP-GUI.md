@@ -245,6 +245,19 @@ border; the 40-column picture blanks in 2 MHz mode) and the VDC as a second disp
     we draw our own; does the bitmap keep its background transparent for the priority.
   - A raster IRQ instead of the polled waits would make the sprite switches steadier.
 - **2 MHz work in the vertical blank** (mouse, guns, star field) to leave margin for the above.
+- **Enhanced star field** (the C128 mode only; the original look stays the default). Memory is
+  no limit (a star needs about 4 bytes); the cost is processor time (a few hundred cycles per
+  star per frame at 1 MHz), so more stars need the 2 MHz work in the vertical blank
+  (roughly 50-100 stars). From cheapest to biggest:
+  1. **Fading with the darker grays.** A multicolor bitmap cell has three colours besides the
+     background: two from the colour matrix (`$4400`) and one from colour RAM. Dark, mid and
+     light gray in the sky cells give stars three brightness levels at no extra cost per
+     star: a star starts dim and gets brighter as it nears the edge (depth cue).
+  2. **Per-star depth.** Each star gets its own speed, near stars faster than far ones.
+  3. **Perspective zoom.** Speed proportional to the distance from the centre, accelerating
+     like a real 3D star field (the original's speed is nearly constant, about 1.1-1.4
+     pixels per frame, so this is a deliberate departure).
+  4. **More stars** with the 2 MHz time.
 
 ## Open questions
 
