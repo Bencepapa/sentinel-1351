@@ -89,10 +89,7 @@ unrelated code; the test sets it, so in play a drift step can differ by one unit
   The joystick byte (with the mouse patch's mask: the crosshair off centre steers)
   rotates every fighter around the ship. The test runs the original and the port
   with a scripted joystick for 2000 frames: identical. Steering takes up to 18
-  lines a frame, so it runs in the time the phasor leaves in the 3D view (lines
-  78-186), one fighter at a time, and what does not fit runs after the movers
-  (in a frame with a heavy phasor, a fighter can be left to the start of the next
-  frame).
+  lines a frame; it runs in the vertical blank at 2 MHz (see below).
 - **Hit test** (`SHOTHIT` / `HITBOX`, `$3244` / `$324C` / `$3371`), once a frame:
   in the last 10 points of its path the shot hits a fighter shown within 12
   pixels across and 10 down. A fighter takes `ETYPE` shots (`EHITS`, `$C59A`); a
@@ -121,8 +118,42 @@ the byte. The explosion's points can reach bitmap rows 0-2, which in the port
 hold sprite shapes, so the port does not plot there (hidden behind the HUD
 anyway).
 
-Not yet: enemy fire and the player being hit, the approach and the arrival of the
-wave, the tracking computer, types 2 and 3, the squadron count.
+### Enemy fire and the ship being hit, step (d) (this branch)
+
+- **Enemy fire** (`EFRAME` / `EFIRE`, `$C947`): the fighters take turns; when the
+  delay runs out (by difficulty) the one whose turn it is fires if it is shown at
+  x `$44-$FF`, y `$6C-$B3`. The shot is sprite 2, single colour, doubled, its
+  colour cycling, shapes `$67` up to `$70`, moving away from the middle of the
+  view; at `$70` it reaches the ship. The original calls `$C947` once per main
+  loop pass (about 16 a frame); the port calls it 16 times a frame.
+- **The ship hit** (`SHIPHIT`, `$84D7` / `$85D9`, the map program's model): a
+  random working system loses a point, the shields one point (HUD), below 0 the
+  ship is lost (`SHIPLOST`; the game-over sequence is not ported, the cockpit goes
+  on). Difficulty `DIFF` (0-4, default 1) sets systems, shields and the fire rate.
+  The destroyed-system messages are not shown yet (no message line in the
+  cockpit).
+- **Flash** (`$1321` with `$1303`): white, light red, orange, white, red, black.
+- **The second explosion** (`EXPLODE2`, `$9DAA`): 12 points, all two pixels tall,
+  where the shot reached the ship; generated from the first.
+- The test runs enemy fire in the original and the port at difficulties 1 and 3
+  for 3000 frames each (16 calls a frame): shots, positions, shapes, steps, the
+  explosion's start and its points are identical. Quirks kept: the steps worked out
+  from the fighter's stream at launch are dropped (`$CA13`); the step test reads
+  zero page `$04` instead of `#$04` (`$CB6C`); the second explosion never checks
+  its y at the start.
+
+**2 MHz in the border.** The frame was full (star field 113 of 126 vertical blank
+lines, the fight slot 194-230 nearly full). The cockpit now switches to 2 MHz
+(`$D030` bit 0) from line 251 to line 47, where the VIC-IIe fetches nothing
+(sprites off, no bad lines): the star field, steering, enemy fire and explosion
+work run there at twice the speed. The JS machine's raster timing follows `$D030`
+(it used to scale the whole frame). Steering now runs there whole, after the star
+field (one step before the movers instead of after them). In 6000 frames of aimed
+play no slot runs late and no frame overruns.
+
+Not yet: the approach and the arrival of the wave, the tracking computer, types
+2 and 3, the squadron count, the game-over sequence, system messages and what a
+destroyed system disables.
 
 ## Next, in a suggested order
 

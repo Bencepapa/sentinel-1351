@@ -104,6 +104,8 @@ var C128 = (function () {
     this.cpu.cycles = 0;
     this.frame = 0;
     this.frameStart = 0;
+    this.vCycle = 0;
+    this.lastCpu = 0;
     this.frameOpen = false;
     this.lastLine = 0;
   };
@@ -125,6 +127,8 @@ var C128 = (function () {
     c.push(ret >> 8); c.push(ret & 0xFF);
     c.pc = entry;
     this.frameStart = c.cycles;
+    this.vCycle = 0;
+    this.lastCpu = c.cycles;
     this.frame = 0;
     this.frameOpen = false;
     this.stopped = null;
@@ -133,17 +137,26 @@ var C128 = (function () {
   // ---- timing --------------------------------------------------------------
 
   P.clockMHz = function () { return (this.model === 'c128' && (this.vic[0x30] & 1)) ? 2 : 1; };
-  P.cycleInFrame = function () { return this.cpu.cycles - this.frameStart; };
+  // Cycles since the frame started, counted at 1 MHz: in the C128's 2 MHz mode
+  // ($D030 bit 0) the processor runs two cycles per raster cycle. vCycle holds
+  // the raster time up to the last instruction, lastCpu the processor's count then.
+  P.cycleInFrame = function () {
+    return this.vCycle + (this.cpu.cycles - this.lastCpu) / this.clockMHz();
+  };
+  P.syncClock = function () {
+    this.vCycle += (this.cpu.cycles - this.lastCpu) / this.clockMHz();
+    this.lastCpu = this.cpu.cycles;
+  };
   P.rasterLine = function () {
     var c = this.cycleInFrame();
-    return Math.floor(c / (PAL_LINE_CYCLES * this.clockMHz())) % PAL_LINES;
+    return Math.floor(c / PAL_LINE_CYCLES) % PAL_LINES;
   };
   P.rasterCycle = function () {
-    return Math.floor(this.cycleInFrame() / this.clockMHz()) % PAL_LINE_CYCLES;
+    return Math.floor(this.cycleInFrame()) % PAL_LINE_CYCLES;
   };
 
   P.beginFrame = function () {
-    this.frameEnd = this.frameStart + FRAME_CYCLES * this.clockMHz();
+    this.frameEnd = this.frameStart + FRAME_CYCLES;
     this.sidLog.length = 0;
     this.vicLog.length = 0;
     this.ptrLog.length = 0;
@@ -158,6 +171,7 @@ var C128 = (function () {
   P.endFrame = function () {
     this.video.renderTo(PAL_LINES);
     this.frameStart = this.frameEnd;
+    this.vCycle -= FRAME_CYCLES;
     this.frame++;
     this.frameOpen = false;
     if (this.hooks) this.hooks.endFrame();
@@ -173,7 +187,7 @@ var C128 = (function () {
     if (!this.frameOpen) this.beginFrame();
     var c = this.cpu, hooks = this.hooks, bp = this.bpAt;
     this.breakInfo = null;
-    while (c.cycles < this.frameEnd) {
+    while (this.cycleInFrame() < FRAME_CYCLES) {
       var pc = c.pc;
       if (bp[pc] && pc !== this.skipBreakAt) {
         this.breakInfo = { type: 'break', pc: pc };
@@ -195,6 +209,7 @@ var C128 = (function () {
     if (pc === RETURN_TRAP) { this.stopped = 'returned to BASIC'; return true; }
     this.instrPC = pc;
     if (this.hooks && this.hooks.at[pc]) this.hooks.enter(pc); else c.step();
+    this.syncClock();
     if (c.jam) { this.stopped = c.jam; return true; }
     if (this.stopped) return true;
     var line = this.rasterLine();
@@ -227,7 +242,7 @@ var C128 = (function () {
     this.skipBreakAt = -1;
     this.breakInfo = null;
     if (this.exec()) return this.stopped ? 'stopped' : 'break';
-    if (this.cpu.cycles >= this.frameEnd) { this.endFrame(); return 'frame'; }
+    if (this.cycleInFrame() >= FRAME_CYCLES) { this.endFrame(); return 'frame'; }
     return 'step';
   };
 
@@ -243,7 +258,7 @@ var C128 = (function () {
 
   // Raster position of a write, for the line-by-line renderer.
   P.logAt = function (log, what, v) {
-    var c = Math.floor(this.cycleInFrame() / this.clockMHz());
+    var c = Math.floor(this.cycleInFrame());
     log.push(Math.floor(c / PAL_LINE_CYCLES), c % PAL_LINE_CYCLES, what, v);
   };
 
@@ -446,7 +461,7 @@ var C128 = (function () {
 
   P.sidWrite = function (r, v) {
     this.sid[r] = v;
-    if (r < 0x19) this.sidLog.push(this.cycleInFrame(), r, v);
+    if (r < 0x19) this.sidLog.push(Math.floor(this.cycleInFrame()), r, v);
   };
 
   P.sidRead = function (r) {
@@ -553,7 +568,7 @@ var C128 = (function () {
 
   var ARRAYS = ['ram', 'colorRam', 'vic', 'sid', 'vdcRam', 'vdcReg', 'mmu', 'vicStart', 'ptrStart', 'keys'];
   var SCALARS = ['model', 'mmuCR', 'port0', 'port1', 'vicIrq', 'collSS', 'collSB', 'vdcIndex', 'joy2',
-                 'noise', 'noisePhase', 'osc3Time', 'stopped', 'frame', 'frameStart', 'frameEnd',
+                 'noise', 'noisePhase', 'osc3Time', 'stopped', 'frame', 'frameStart', 'frameEnd', 'vCycle', 'lastCpu',
                  'frameOpen', 'lastLine'];
 
   P.saveState = function () {
@@ -574,6 +589,7 @@ var C128 = (function () {
     this.cpu.jam = null;
     ARRAYS.forEach(function (k) { if (s.arrays[k]) self[k].set(s.arrays[k]); });
     SCALARS.forEach(function (k) { self[k] = s[k]; });
+    if (s.vCycle === undefined) { this.vCycle = s.cpu.cycles - s.frameStart; this.lastCpu = s.cpu.cycles; }
     this.cia1 = Object.assign({}, s.cia1); this.cia2 = Object.assign({}, s.cia2);
     Object.assign(this.mouse, s.mouse);
     this.vicLog = s.vicLog.slice(); this.ptrLog = s.ptrLog.slice(); this.sidLog = s.sidLog.slice();

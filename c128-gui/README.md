@@ -149,8 +149,11 @@ The white lines at 57 and 74 in the raster schedule above are the table colour `
 showing for a moment; the screenshot taken during a hit (the first cockpit
 capture) is the flash effect with its colour at white.
 
-Not traced yet: which game events start the flash (warp, hit, ship destroyed) and
-what the status colours stand for exactly.
+Traced since (cockpit port): a hit flash comes from `$1321`, every other frame,
+6 colours of 6 frames each written to `$0A4D`, `$0A4E` and `$0B26` (the 3D view's
+border and background): after our shot destroys or hits a fighter light blue,
+blue, light blue, white, blue, black (`$130A`); when an enemy shot reaches the ship
+white, light red, orange, white, red, black (`$1303`).
 
 ## `cockpit/`: the cockpit on the native C128
 

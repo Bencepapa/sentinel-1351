@@ -499,5 +499,85 @@ function report(hooks, label) {
   check(!bad, `explosion: points and bitmap match the original for ${steps} steps of 3 explosions`);
 }
 
+// ---- enemy fire: the cockpit's EFIRE / EXPLODE2 against $C947 / $9DAA -------------
+{
+  function callAt(m, addr, x) {
+    const c = m.cpu, ret = 0xFFF4, p = c.p;
+    if (x !== undefined) c.x = x;
+    c.push(((ret - 1) >> 8) & 255); c.push((ret - 1) & 255); c.pc = addr; c.p |= 4;
+    for (let i = 0; i < 2e6 && c.pc !== ret; i++) { c.step(); if (c.jam) throw new Error(c.jam); }
+    c.p = p;
+  }
+  const o = boot('c64game', 'trace'); run(o.m, o.hooks, 250);
+  const k = boot('cockpit', 'trace'); run(k.m, k.hooks, 5);
+  const R = o.m.ram, K = k.m.ram, ks = k.p.symbols;
+  for (const diff of [1, 3]) {
+    R[0xA5] = 1; R[0xBA] = 0; R[0xFB] = 0;
+    callAt(o.m, 0xFF1B);
+    R[0x5F] = R[0x60] = R[0x61] = 1; R[0x2F6A] = R[0x2F6B] = R[0x2F6C] = 1;
+    callAt(k.m, ks.NEWWAVE);
+    // the original: no damage ($FD), no other blocker ($BACE), sprite 2 off
+    R[0xFD] = 1; R[0xBACE] = 0; R[0xE0] = diff; K[ks.DIFF] = diff; R[0x98] &= 0x03; R[0x9D6D] = 0; K[ks.EXPL2] = 0;
+    callAt(o.m, 0xC92F); callAt(k.m, ks.EFRESET);
+    R[0xC90A] = 1; K[ks.EFDLY] = 1; R[0xC90C] = 0; K[ks.EFON] = 0; K[ks.EFVIS] = 0;
+    const st = (M, orig) => orig
+      ? [M[0xC90A], M[0xC90C], M[0xC90D], M[0xC90E], M[0xC90F], M[0xC910], M[0xC911], M[0xC912], M[0xC92E], M[0xC92B],
+         M[0xEB], M[0xEC], M[0xF7] & 4, M[0xC90C] ? M[0xB2] : 0, M[0x98] & 4, M[0x9D6D] ? 1 : 0, M[0x9D6F], M[0x9D70], M[0x9D77], M[0x9D78]].join()
+      : [M[ks.EFDLY], M[ks.EFON], M[ks.EFD], M[ks.EFE], M[ks.EFVX], M[ks.EFVY], M[ks.EFI], M[ks.EFY2], M[ks.EFTHR], M[ks.EFBIT],
+         M[ks.EFX], M[ks.EFY], M[ks.EFMSB], M[ks.EFON] ? M[ks.EFSHP] : 0, M[ks.EFVIS], M[ks.EXPL2] ? 1 : 0, M[ks.EXPX2], M[ks.EXPY2], M[ks.EVX02], M[ks.EVY02]].join();
+    let first = null, fired = 0, arrived = 0, steps = 0;
+    for (let n = 1; n <= 3000 && !first; n++) {
+      callAt(o.m, 0x2F6D); callAt(o.m, 0x2FB9); callAt(o.m, 0x3005);
+      for (const x of [0, 2, 4]) callAt(k.m, ks.MOVEN, x);
+      if (n & 1) { o.m.cpu.p |= 1; callAt(o.m, 0x33B6); k.m.cpu.p |= 1; callAt(k.m, ks.EDRIFT); }
+      if ((n & 3) === 0) for (const x of [0, 2, 4]) { callAt(o.m, 0x2E36, x); callAt(k.m, ks.PLACE, x); }
+      for (let q = 0; q < 16 && !first; q++) {
+        const on = R[0xC90C], ex = R[0x9D6D];
+        callAt(o.m, 0xC947); callAt(k.m, ks.EFIRE);
+        if (!on && R[0xC90C]) fired++;
+        if (!ex && R[0x9D6D]) arrived++;
+        const a = st(R, true), b = st(K, false);
+        if (a !== b) first = { n, q, a, b };
+        // the 12-point explosion, step by step (the original every other call)
+        if (R[0x9D6D] && !(q & 1)) {
+          const n0 = R[0x9D71];
+          callAt(o.m, 0x9DAA);
+          if (R[0x9D71] !== n0 || !R[0x9D6D]) {
+            for (let g = 0; g < 100 && K[ks.EXPL2] && (K[ks.EXPN2] !== R[0x9D71] || K[ks.EXPB2] === 0); g++) {
+              K[ks.EXLIM] = 255; callAt(k.m, ks.EXPTICK2); callAt(k.m, ks.EXPLODE2);
+            }
+            while (K[ks.EXPL2] && (K[ks.EXPEND2] || K[ks.EXPRUN2])) callAt(k.m, ks.EXPLODE2);
+            if (!R[0x9D6D]) K[ks.EXPL2] = 0;
+            steps++;
+            const pa = [...R.subarray(0x9D92, 0x9D9E), ...R.subarray(0x9D9E, 0x9DAA)].join(), pb = [...K.subarray(ks.PNX2, ks.PNX2 + 12), ...K.subarray(ks.PNY2, ks.PNY2 + 12)].join();
+            if (R[0x9D6D] && pa !== pb) first = { n, q, a: 'points ' + pa, b: 'points ' + pb };
+          }
+        } else if (!R[0x9D6D]) { K[ks.EXPL2] = 0; }
+        // a fighter shot down now and then, so that others get their turn
+      }
+    }
+    if (first) console.log('      first difference at frame', first.n, 'call', first.q, '\n      orig', first.a, '\n      port', first.b);
+    check(!first && fired > 3, `enemy fire, difficulty ${diff}: the port matches the original (${fired} shots, ${arrived} reached the ship, ${steps} explosion steps)`);
+  }
+  // the ship: every hit costs a shield point and a system point
+  K[ks.DIFF] = 2; callAt(k.m, ks.SHIPINIT);
+  const hp = () => [...K.subarray(ks.SYSHP, ks.SYSHP + 8)].reduce((a, b) => a + b, 0);
+  const hp0 = hp(), sh0 = K[ks.SHLD];
+  for (let i = 0; i < 26; i++) callAt(k.m, ks.SHIPHIT);
+  check(sh0 === 25 && K[ks.SHLD] === 0 && K[ks.SHIPLOST] && hp0 - hp() === 26 && K[ks.HITS] === 26,
+    `ship: 25 shields, 26 hits take 26 system points and lose the ship (HUD shows ${String.fromCharCode(K[ks.HUDS] - 0x40, K[ks.HUDS + 1] - 0x40)})`);
+}
+
+// ---- 2 MHz mode: the raster runs at half the processor's cycles ----
+{
+  const m = new C128('c128');
+  m.ram.set([0xEA, 0x4C, 0x00, 0x30], 0x3000);     // NOP / JMP $3000
+  m.start(0x3000); m.vic[0x30] = 1;
+  m.beginFrame();
+  for (let i = 0; i < 4000; i++) m.exec();
+  const fast = m.cycleInFrame(), cpuC = 4000 / 2 * 5;
+  check(Math.abs(fast - cpuC / 2) < 3, `2 MHz: ${cpuC} processor cycles advance the raster by ${fast.toFixed(0)} cycles`);
+}
+
 console.log(failures ? failures + ' check(s) failed' : 'all checks passed');
 process.exit(failures ? 1 : 0);

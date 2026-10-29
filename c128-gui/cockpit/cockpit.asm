@@ -38,8 +38,9 @@ COLORDATA = $3000
 PATHX   = $3400         ; phasor shot path, x / 2 (original $0400)
 PATHY   = $3500         ; and y (original $0500)
 HUDE    = $483E         ; the four energy digits of the HUD (original $543E)
+HUDS    = $4832         ; the two shield digits of the HUD (original $5432)
+EFPASS  = 16            ; the original's main loop passes per frame in a fight (enemy fire)
 TARGETS = $4876         ; the last digit of TARGETS on the HUD (original $5476)
-STEERL2 = 214           ; raster limit for steering in the fight slot
 PASSES  = 8             ; main loop passes of the original per frame in a fight
 SHOTPTR = $F3           ; sprite pointers of the shot shapes $67-$70: $F3-$FC (bitmap rows
                         ; 23-24, never shown as bitmap); the fighters: ENPTR
@@ -120,6 +121,8 @@ set2:   DEY
 
         LDA #$0F        ; SID volume for the phasor sound
         STA $D418
+        JSR SHIPINIT    ; systems and shields by difficulty
+        JSR EFRESET
         JSR NEWWAVE     ; a type-1 squadron wave
         LDA #$80        ; the star field
         STA SEED
@@ -181,35 +184,21 @@ nolaunch:
         JSR SWEEPSND    ; the phasor sound is swept 6 times a frame while a shot
         JSR SWEEPSND    ; flies: once in $1424, 3 times after it ($0C3B-$0C41),
         JSR SWEEPSND    ; at line 194 ($0C60) and at line 233 ($0CBA)
-        LDA #182        ; steering takes up to 18 lines (6 a fighter): here as
-        STA STLIM       ; far as the phasor leaves time, the rest after the movers
-        LDA STPEND
-        BEQ st0
-        LDA $D012
-        CMP #182
-        BCS st1
-        JSR STEERGO     ; (a fighter left over from the last frame)
-st0:    LDA STPEND
-        BNE st1
-        LDA $D012
-        CMP #182
-        BCS st1
-        JSR STEER
-        INC STEERED
-st1:    LDA #$00
-        STA STLIM
-        LDA #186        ; an explosion uses what is left of the 3D view's time
+        LDA #182        ; the explosions use what is left of the 3D view's time
+                        ; (a point takes up to 11 lines)
         STA EXLIM
         JSR EXPLODE
+        JSR EXPLODE2
         LDA #194
         JSR WAITLN
         JSR SPRGUNS     ; sprites 0 and 3 become the two guns
         JSR SWEEPSND
         JSR FIGHT       ; the fighters (the time until line 230 is free; the star
                         ; field fills the vertical blank)
-        LDA #222
+        LDA #218
         STA EXLIM
         JSR EXPLODE
+        JSR EXPLODE2
         LDA #230
         JSR WAITLN
         LDA #0
@@ -235,15 +224,33 @@ w242:   LDA $D012
         STX BG
         STY $D016
 
-        JSR INPUT       ; vertical blank: mouse, cursor, guns, then the star field
-        JSR STARS       ; (the processor has all its time here, no tearing)
-        LDA $D012       ; count frames whose work ran past line 56 (should stay 0)
-        CMP #56
+        JSR INPUT       ; vertical blank: mouse, cursor, guns (at 1 MHz: lines
+        LDA #251        ; 242-250 are still in the display window)
+        JSR WAITLN
+        LDA FAST        ; 2 MHz in the border, lines 251-47: the VIC-IIe fetches
+        ORA #$01        ; nothing there (sprites are off, no bad lines), so the
+        STA FAST        ; processor gets twice the time (I/O accesses stay 1 MHz)
+        JSR STARS       ; the star field
+        JSR STEER       ; steering ($39C1; the original's comes after the movers)
+        JSR EFRAME      ; enemy fire ($C947)
+vbw:    BIT $D011       ; after the wrap (line 256-311 read as 0-55 with bit 7
+        BMI vbw         ; of $D011 set), the rest of the border: the explosions
+        LDA $D012
+        CMP #251
+        BCS vbw
+        LDA #40         ; (a point takes up to 4 lines at 2 MHz)
+        STA EXLIM
+        JSR EXPLODE
+        JSR EXPLODE2
+        LDA $D012       ; count frames whose work ran past line 47 (should stay 0)
+        CMP #48
         BCC vbok
         CMP #251
         BCS vbok
         INC OVRUN
-vbok:
+vbok:   LDA FAST        ; 1 MHz again before the display window
+        AND #$FE
+        STA FAST
         LDA #$7F        ; SPACE leaves
         STA CIA1PA
         LDA CIA1PB
@@ -332,10 +339,23 @@ sc2:    STA $D010
         STA $D002
         LDA SHOTY
         STA $D003
+        LDA EFX         ; sprite 2: the enemy shot
+        STA $D004
+        LDA EFY
+        STA $D005
+        LDA $D010
+        AND #$FB
+        ORA EFMSB
+        STA $D010
+        LDA EFSHP       ; shapes $67-$70 -> pointers $F3-$FC
+        CLC
+        ADC #$8C
+        STA SPRPTR+2
         LDA SHOTVIS
         ASL A
         ORA #1
         ORA EVIS
+        ORA EFVIS
         STA VICENA
         RTS
 
@@ -380,6 +400,7 @@ sg3:    STA $D027
         ASL A
         ORA #$09
         ORA EVIS
+        ORA EFVIS
         STA VICENA
         RTS
 
@@ -1466,18 +1487,6 @@ FIGHT:  INC EFRM
         JSR MOVEN
         LDX #$04
         JSR MOVEN
-        LDA #STEERL2    ; steering (the original's comes right after the movers,
-        STA STLIM       ; $2D34) mostly runs in the 3D view's time; what is left
-        LDA STPEND      ; of it runs here, and in a frame where the phasor left
-        BEQ fgs0        ; no time there, here as far as time allows (a fighter
-        JSR STEERGO     ; left over is steered at the start of the next frame)
-        JMP fgst
-fgs0:   LDA STEERED
-        BNE fgst
-        JSR STEER
-fgst:   LDA #$00
-        STA STEERED
-        STA STLIM
         LDA EFRM
         AND #$01
         BEQ fg1
@@ -1493,6 +1502,7 @@ fg1:    LDA EFRM
         JSR PLACE
 fg2:    JSR SHOTHIT     ; the original tests the shot once a frame ($3244)
         JSR EXPTICK
+        JSR EXPTICK2
         LDA EFRM        ; the hit flash, every other frame ($0C90)
         AND #$01
         BNE fg3
@@ -1945,25 +1955,335 @@ st3C75:  LDA SJ2    ; $3C75
          INX    ; $3C7C
          DEY    ; $3C7D
          BMI st3C83    ; $3C7E
-         LDA STLIM      ; (port: out of the slot's time, the next fighter is
-         BEQ stgo       ; steered in the next slot, STEERGO)
-         LDA $D012
-         CMP STLIM
-         BCC stgo
-         STX STSX
-         STY STSY
-         LDA #$01
-         STA STPEND
-         RTS
-stgo:    JMP st39DA    ; $3C80
-st3C83:  LDA #$00
-         STA STPEND
-         RTS    ; $3C83
+         JMP st39DA    ; $3C80
+st3C83:  RTS    ; $3C83
 
-STEERGO:LDX STSX        ; the rest of a STEER that ran out of time
-        LDY STSY
-        JMP st39DA
 
+; ---------------- enemy fire and the ship being hit ----------------
+; Enemy fire ($C947). The original calls it once per main loop pass (about 16 a
+; frame in a fight); every 3rd call (2nd from difficulty 3) it does something.
+; The fighters take turns: when the delay runs out (by difficulty: 255, 176, 112,
+; 64, 16 of those calls) the fighter whose turn it is fires if it is shown at
+; x $44-$FF, y $6C-$B3; else the next one tries at once. The shot is sprite 2
+; (single colour, doubled, its colour cycling), shapes $67 up to $70 (the phasor's
+; shapes backwards), a new shape every 12, 11, ... 1 calls, moving away from the
+; middle of the view. At $70 it has reached the ship: if it is still shown the
+; ship is hit ($84D7), the view flashes and 12 points burst where it was.
+EFRAME: LDA #EFPASS
+        STA EFCNT
+efr1:   JSR EFIRE
+        DEC EFCNT
+        BNE efr1
+        RTS
+
+EFIRE:  DEC EFTHR       ; ($C94D)
+        BEQ ef0
+        RTS
+ef0:    LDX DIFF
+        LDA EFTHRT,X    ; ($C918)
+        STA EFTHR
+        LDX EFI
+        LDY EFY2
+        LDA EFON
+        BEQ ef2
+        JMP efm
+ef2:    DEC EFDLY       ; ($C973)
+        BEQ ef3
+        RTS
+ef3:    LDX DIFF
+        LDA EFDLYT,X    ; ($C913)
+        STA EFDLY
+        LDA EVIS        ; ($C981)
+        AND EFBIT
+        BEQ ef4
+        LDA EMSB
+        AND EFBIT
+        BNE ef4
+        LDA ESH,Y
+        CMP #$44
+        BCC ef4
+        LDA ESH+1,Y
+        CMP #$6C
+        BCC ef4
+        CMP #$B4
+        BCC ef5
+ef4:    LDA #$01        ; not now: the next fighter tries at the next call
+        STA EFDLY
+        JMP EFEND
+ef5:    LDA #$01        ; ($C9A9) fire
+        STA EFON
+        LDA $D01C       ; sprite 2: single colour, doubled both ways
+        AND #$FB
+        STA $D01C
+        LDA $D01D
+        ORA #$04
+        STA $D01D
+        LDA $D017
+        ORA #$04
+        STA $D017
+        LDA ESH,Y       ; at the fighter (type 1: 12 pixels left of it)
+        LDX ETYPE
+        CPX #$01
+        BNE ef6
+        SEC
+        SBC #$0C
+ef6:    STA EFX
+        LDA ESH+1,Y
+        STA EFY
+        LDA #$00
+        STA EFMSB
+        STA EFVX        ; ($CA13, $CA35: steps are worked out from the fighter's
+        STA EFVY        ; streams, then dropped: both start at 0)
+        LDA #$04
+        STA EFVIS
+        LDA #$67
+        STA EFSHP
+        LDA #$0D
+        STA EFE
+        STA EFD
+        JSR EFSND       ; ($C413)
+efm:    DEC EFE         ; ($CA56)
+        BNE efm3
+        DEC EFD
+        BNE efm1
+        INC EFD
+efm1:   LDA EFD
+        STA EFE
+        TAY
+        LDA EFTAB,Y     ; ($C91D)
+        CMP #$70
+        BNE efm2
+        LDA EFVIS       ; ($CA71) full size: it reaches the ship
+        BEQ efm9
+        STA HITFL       ; ($DD) the flash
+        JSR SHIPHIT     ; ($84D7)
+        LDA EXPL2       ; ($CA80) 12 points burst where it was
+        BNE efm9
+        LDA EFVX
+        ASL A
+        STA EVX02
+        LDA EFVY
+        ASL A
+        STA EVY02
+        LDA #$01
+        STA EXPL2
+        LDA #$00
+        STA EXPB2
+        CLC
+        LDA EFMSB
+        BEQ efm4
+        SEC
+efm4:   LDA EFX
+        ROR A
+        SEC
+        SBC #$06
+        STA EXPX2
+        CMP #$0A
+        BCC efm5
+        CMP #$91
+        BCC efm6
+efm5:   LDA #$00
+        STA EXPL2
+efm6:   LDA EFY
+        SEC
+        SBC #$32
+        STA EXPY2
+        CMP #$0A
+        BCC efm7
+        CMP #$B4
+        BCC efm9
+efm7:   LDA #$00
+        STA EXPL2
+efm9:   JMP EFEND
+efm2:   STA EFSHP       ; ($CAD6)
+efm3:   INC $D029       ; ($CAD8) the colour cycles
+        JSR EFSTEPX
+        JSR EFSTEPY
+        LDA EFVX        ; ($CAE1)
+        BMI efx2
+        CLC
+        ADC EFX
+        STA EFX
+        BCS efx1
+        LDA EFMSB
+        BEQ efy
+        LDA EFX
+        CMP #$2F
+        BCC efy
+        JMP EFEND       ; off the right edge
+efx1:   LDA #$04
+        STA EFMSB
+        JMP efy
+efx2:   AND #$7F
+        SEC
+        STA ATMP2
+        LDA EFX
+        SBC ATMP2
+        STA EFX
+        BCS efy
+        LDA EFMSB
+        BNE efx3
+        JMP EFEND       ; off the left edge
+efx3:   LDA #$00
+        STA EFMSB
+efy:    LDA EFVY        ; ($CB21)
+        BMI efy2
+        CLC
+        ADC EFY
+        STA EFY
+        CMP #$F0
+        BCS efy3
+        RTS
+efy2:   AND #$7F
+        STA ATMP2
+        LDA EFY
+        SEC
+        SBC ATMP2
+        STA EFY
+        CMP #$59
+        BCC efy3
+        RTS
+efy3:   JMP EFEND       ; off the top or the bottom
+
+EFEND:  LDA #$00        ; ($CB45) the shot is gone, the next fighter's turn
+        STA EFVIS
+        STA EFON
+        CLC
+        ROL EFBIT
+        INC EFY2
+        INC EFY2
+        INC EFI
+        LDX EFI
+        CPX #$03
+        BNE efe1
+        JSR EFRESET
+efe1:   RTS
+
+EFRESET:LDA #$10        ; ($C92F)
+        STA EFBIT
+        LDX #$00
+        STX EFI
+        STX EFY2
+        LDA #$01
+        STA EFTHR
+        RTS
+
+; A step of 1 away from the middle ($CB6C, $CBAA; bit 7 = minus, $80 = none).
+; (The original first tests its MSB shadow against zero page $04 instead of #$04,
+; a stream pointer's low byte, always 0: so the step is always worked out.)
+EFSTEPX:LDA EFX
+        CMP #$7C
+        BCS esx1
+        LDA #$81
+        BNE esx9
+esx1:   CMP #$98
+        BCS esx2
+        LDA #$80
+        BNE esx9
+esx2:   CMP #$D0
+        BCS esx3
+        LDA #$00
+        BEQ esx9
+esx3:   LDA #$01
+esx9:   STA EFVX
+        RTS
+EFSTEPY:LDA EFY
+        CMP #$61
+        BCS esy1
+        LDA #$81
+        BNE esy9
+esy1:   CMP #$71
+        BCS esy2
+        LDA #$80
+        BNE esy9
+esy2:   CMP #$A1
+        BCS esy3
+        LDA #$00
+        BEQ esy9
+esy3:   LDA #$01
+esy9:   STA EFVY
+        RTS
+
+EFSND:  LDA #$00        ; ($C413) voice 2: the enemy shot
+        STA $D40B
+        STA $D40D
+        LDA #$39
+        STA $D40C
+        LDA #$03
+        STA $D408
+        LDA #$81
+        STA $D40B
+        RTS
+
+; The ship (SHIP-STATUS.md; the same model as the map program's SHIPINIT /
+; SHIPHIT). A hit ($84D7, $85D9): a random working system loses a point, then
+; one shield point; below 0 the ship is lost.
+SHIPINIT:
+        LDY DIFF
+        LDX #$00
+si1:    LDA HPTAB,Y
+        STA SYSHP,X
+        TYA
+        CLC
+        ADC #$05
+        TAY
+        INX
+        CPX #$07
+        BNE si1
+        LDA #$FF        ; the communications module
+        STA SYSHP+7
+        LDX DIFF
+        LDA SHTAB,X
+        STA SHLD
+        LDA #$00
+        STA SHIPLOST
+        STA HITS
+        STA HITS+1
+        JMP SHOWSH
+
+SHIPHIT:LDY #$00        ; up to 256 tries, then no system is damaged
+shp1:   JSR RANDOM
+        AND #$07
+        TAX
+        DEY
+        BEQ shp3
+        LDA SYSHP,X
+        BEQ shp1
+        DEC SYSHP,X
+        BNE shp3
+        STX SYSLAST     ; destroyed (the original prints its message here, $84F2)
+shp3:   INC HITS        ; ($85D9)
+        BNE shp4
+        INC HITS+1
+shp4:   DEC SHLD
+        LDA SHLD
+        CMP #$FF
+        BNE SHOWSH
+        STA SHIPLOST    ; ($8300) the ship is lost
+        INC SHLD
+SHOWSH: LDA SHLD        ; ($8487) two digits on the HUD
+        LDX #$70
+ssh1:   CMP #10
+        BCC ssh2
+        SBC #10
+        INX
+        BNE ssh1
+ssh2:   STX HUDS
+        ORA #$70
+        STA HUDS+1
+        RTS
+
+HPTAB:  .BYTE 255,10,5,5,5      ; ($8427-$8445) hit points by difficulty
+        .BYTE 255,10,6,4,4
+        .BYTE 4,3,2,2,2
+        .BYTE 6,4,4,4,4
+        .BYTE 3,3,3,3,3
+        .BYTE 4,4,4,4,4
+        .BYTE 2,2,2,2,2
+SHTAB:  .BYTE 40,30,25,25,25    ; ($844A) shields
+EFDLYT: .BYTE $FF,$B0,$70,$40,$10       ; ($C913) calls between shots
+EFTHRT: .BYTE $03,$03,$03,$02,$02       ; ($C918) passes per call
+EFTAB:  .BYTE $70,$70,$6F,$6F,$6E,$6D,$6D,$6C,$6B,$6B,$6A,$69,$68,$68 ; ($C91D)
 
 ; ---------------- hits and explosions ----------------
 ; The shot against the fighters ($3244 / $324C), once a frame. During the last 10
@@ -2094,6 +2414,7 @@ kl1:    RTS
 
 HITSND: LDA #$01        ; ($3349) voice 2 noise, and the flash starts
         STA HITFL
+        STA OWNHIT
         LDA #$0F
         STA $D418
         LDA #$00
@@ -2132,8 +2453,14 @@ fl2:    LDA #$03
         LDA #$00
         STA HITFL
         STA FLC0
+        STA OWNHIT
         RTS
-fl3:    LDA FLTAB,X     ; ($130A)
+fl3:    LDA OWNHIT      ; ($137D) our shot hit: $130A, the ship was hit: $1303
+        BEQ fl4
+        LDA FLTAB,X
+        STA FLASHC
+        RTS
+fl4:    LDA FLTAB2,X
         STA FLASHC
         RTS
 
@@ -2371,8 +2698,177 @@ EERASE: LDA POSY        ; ($EF1B) clears a pixel only if it has colour 01
 ee8:    LDX EXSAV
 ee9:    RTS
 
+; The second explosion ($9DAA): the same, with 12 points, all two pixels tall:
+; where an enemy shot reaches the ship. Generated from the first (labels and
+; variables with a 2 / q).
+EXPTICK2:LDA EXPL2
+        BEQ qet9
+        LDA EXPB2
+        BEQ qet9
+        LDA EXPEND2
+        ORA EXPRUN2
+        BNE qet9
+        SEC             ; ($9E2A)
+        LDA EXPC2
+        SBC #PASSES
+        BEQ qet1
+        BCC qet1
+        STA EXPC2
+qet9:    RTS
+qet1:    SEC             ; ($1739)
+        LDA EXPD2
+        SBC #$01
+        CMP #$03
+        BCS qet2
+        LDA #$02
+qet2:    STA EXPD2
+        STA EXPC2
+        LDA #$01
+        STA EXPRUN2
+        LDA #$00
+        STA EXPI2
+        RTS
+
+EXPLODE2:LDA EXPL2
+        BNE qex0
+        RTS
+qex0:    LDA EXPB2
+        BNE qex5
+        LDA EXLIM       ; the start takes about 12 lines: only with time left
+        SEC
+        SBC #14
+        CMP $D012
+        BCS qex1
+        RTS
+qex1:    LDA #$14        ; ($9DB8) 20 steps
+        STA EXPN2
+        LDA EVX02        ; the drift: half the step, sign and size
+        JSR HALFSTEP
+        STA EDX2
+        LDA EVY02
+        JSR HALFSTEP
+        STA EDY2
+        LDA EXPX2        ; (the original checks the same centre for each point)
+        CMP #$91
+        BCS qex2
+        CMP #$05
+        BCC qex2
+        JMP qex3        ; (the original checks x twice here, never y)
+qex2:    LDA #$00
+        STA EXPL2
+        STA EXPB2
+        RTS
+qex3:    LDX #11
+        LDY EXPX2
+qex4:    TYA
+        STA PNX2,X
+        STA POX2,X
+        LDA EXPY2
+        STA PNY2,X
+        STA POY2,X
+        DEX
+        BPL qex4
+        LDA #$0F
+        STA EXPC2
+        STA EXPD2
+        STA EXPL2
+        STA EXPB2
+        LDA #$00
+        STA EXPI2
+        STA EXPRUN2
+        STA EXPEND2
+        RTS
+qex5:    LDA EXPEND2
+        BNE qexclr
+        LDA EXPRUN2
+        BNE qexs0
+        RTS
+qexs0:   LDX EXPI2
+qexs1:   LDA $D012
+        CMP EXLIM
+        BCC qexs2
+        STX EXPI2        ; out of time: on in the next slot
+        RTS
+qexs2:   JSR PSTEP2
+        INX
+        CPX #12
+        BNE qexs1
+        LDA #$00
+        STA EXPI2
+        STA EXPRUN2
+        DEC EXPN2        ; ($9EA2)
+        BEQ qexs3
+        RTS
+qexs3:   LDA #$01        ; ($9EA8) the end
+        STA EXPEND2
+qexclr:  LDX EXPI2
+qexc1:   LDA $D012
+        CMP EXLIM
+        BCC qexc2
+        STX EXPI2
+        RTS
+qexc2:   LDA PNX2,X
+        STA POSX
+        LDA PNY2,X
+        STA POSY
+        JSR EERASE
+        CPX #12
+        BCS qexc3
+        INC POSY
+        JSR EERASE
+qexc3:   INX
+        CPX #12
+        BNE qexc1
+        LDA #$00
+        STA EXPL2
+        STA EXPB2
+        STA EXPEND2
+        STA EXPI2
+        RTS
+
+
+PSTEP2:  CLC             ; ($9E44) point X
+        LDA PNX2,X
+        STA POX2,X
+        ADC PVX,X
+        CLC
+        ADC EDX2
+        CMP #$9E
+        BCC qps1
+        LDA PNY2,X       ; off the side: it stays where it was, erased
+        STA POY2,X
+        JMP qps3
+qps1:    STA POSX
+        STA PNX2,X
+        CLC
+        LDA PNY2,X
+        STA POY2,X
+        ADC PVY,X
+        CLC
+        ADC EDY2
+        CMP #$B5
+        BCS qps3
+        STA PNY2,X
+        STA POSY
+        JSR EPLOT
+        CPX #12
+        BCS qps3
+        INC POSY
+        JSR EPLOT
+qps3:    LDA POX2,X
+        STA POSX
+        LDA POY2,X
+        STA POSY
+        JSR EERASE
+        CPX #12
+        BCS qps4
+        INC POSY
+        JSR EERASE
+qps4:    RTS
+
 MASK1:  .BYTE $40,$10,$04,$01
 FLTAB:  .BYTE $00,$06,$01,$0E,$06,$0E
+FLTAB2: .BYTE $00,$02,$01,$08,$0A,$01  ; ($1303) the ship hit: white, light red, orange, white, red
 PVX:    .BYTE $FE,$FC,$FE,$03,$02,$04,$FC,$FD,$FE,$03,$02,$04,$FC,$FC,$FD,$FC,$00,$03,$04,$04,$FC,$FD,$00,$03,$04,$05
 PVY:    .BYTE $FC,$FE,$FD,$FC,$FD,$FE,$03,$02,$04,$03,$03,$02,$FD,$FD,$FB,$00,$FC,$FC,$FD,$00,$03,$04,$04,$04,$03,$03
 
@@ -2683,8 +3179,45 @@ POX:    .BYTE 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0         ; old 
 POY:    .BYTE 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
 PNX:    .BYTE 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0         ; new points ($167F, $1699)
 PNY:    .BYTE 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-STEERED:.BYTE 0         ; STEER already ran this frame
-STLIM:  .BYTE 0         ; raster limit for STEER (0: none)
-STPEND: .BYTE 0         ; fighters left to steer this frame
-STSX:   .BYTE 0
-STSY:   .BYTE 0
+EXPL2:  .BYTE 0
+EXPB2:  .BYTE 0
+EXPX2:  .BYTE 0
+EXPY2:  .BYTE 0
+EXPN2:  .BYTE 0
+EXPD2:  .BYTE 0
+EXPC2:  .BYTE 0
+EDX2:   .BYTE 0
+EDY2:   .BYTE 0
+EVX02:  .BYTE 0
+EVY02:  .BYTE 0
+EXPRUN2:.BYTE 0
+EXPEND2:.BYTE 0
+EXPI2:  .BYTE 0
+POX2:   .BYTE 0,0,0,0,0,0,0,0,0,0,0,0
+POY2:   .BYTE 0,0,0,0,0,0,0,0,0,0,0,0
+PNX2:   .BYTE 0,0,0,0,0,0,0,0,0,0,0,0
+PNY2:   .BYTE 0,0,0,0,0,0,0,0,0,0,0,0
+OWNHIT: .BYTE 0         ; the flash is for our hit on a fighter ($1320)
+DIFF:   .BYTE 1         ; difficulty 0-4 ($E0): 1 = assault
+SYSHP:  .BYTE 0,0,0,0,0,0,0,0   ; the systems' hit points ($39-$40)
+SHLD:   .BYTE 0         ; shields ($844F)
+HITS:   .BYTE 0,0       ; hits taken ($F432)
+SHIPLOST:.BYTE 0        ; the ship is lost ($8300)
+SYSLAST:.BYTE $FF       ; the last system destroyed
+EFCNT:  .BYTE 0
+EFTHR:  .BYTE 1         ; ($C92E)
+EFDLY:  .BYTE 1         ; ($C90A)
+EFON:   .BYTE 0         ; ($C90C) an enemy shot is under way
+EFD:    .BYTE 0         ; ($C90D)
+EFE:    .BYTE 0         ; ($C90E)
+EFVX:   .BYTE 0         ; ($C90F, $C910)
+EFVY:   .BYTE 0
+EFI:    .BYTE 0         ; ($C911) whose turn
+EFY2:   .BYTE 0         ; ($C912)
+EFBIT:  .BYTE $10       ; ($C92B)
+EFX:    .BYTE 0         ; sprite 2 ($EB, $EC, $F7 bit 2, $B2, $98 bit 2)
+EFY:    .BYTE 0
+EFMSB:  .BYTE 0
+EFSHP:  .BYTE $67
+EFVIS:  .BYTE 0
+ATMP2:  .BYTE 0
