@@ -87,10 +87,9 @@ What the code says about the enemies (found with the JS workbench; labels in
   the right gun; sprite 0 the crosshair, sprite 1 the player's shot.
 - Seen in the start sector: three type-1 fighters at once, shields 40 to 24 in
   about two minutes.
-- Others: **mines** around the motherships (`$71-$7C`, `$CCDF` / `$CD27`), and a
-  close-approach sequence with two X-expanded sprites whose shapes are built at
-  run time (`$45` / `$46`, `$CF64`) that ends in five hits (`$CF8C`); both belong
-  to the mothership sequences (step 4).
+- Others: **mines** around the motherships (`$71-$7C`, `$CCDF` / `$CD27`), and the
+  enemy mothership's proton torpedo (see step 4); both belong to the mothership
+  sequences.
 
 Suggested order inside this step: (a) one wave of type-1 fighters moving in 3D
 and drawn by depth; (b) the hit test and the explosion (`$60-$63`); (c) enemy
@@ -141,9 +140,28 @@ decided.
 
 ### 4. Mothership sequences
 
-Entering a mothership sector (`$FC77`), the blue motherships as bases (repair,
-"ENTERING BASE SECTOR" `$3FB9`, the status list `$932D`), the orange ones as
-targets; the attack rings and the planet are already in the map program.
+How the user remembers them: the motherships are drawn as concentric strange
+circles that grow as the ship closes in; the enemy (orange) mothership fires a
+proton torpedo, a rotating triangular 3D object; the friendly (blue) mothership
+reaches out with a tractor beam (two rays of light from the mothership to the
+player) and repairs the ship. What the code shows so far:
+
+- **The approach** is the loop at `$90F3`: every 128 frames the radius `$43`
+  grows and the mothership is drawn by `$3635` / `$364C` (a routine that takes a
+  radius: the concentric circles). It ends when the radius reaches `$22`.
+- **The enemy torpedo**: on an enemy mothership (`$E2` set) at radius `$19`,
+  `$916C` starts it (`$CF01`). `$CF04`, called every 16 frames, plays a
+  pre-rendered animation: 31 frames of 128 bytes from a table at
+  `$A000-$AF80`, copied into the shapes `$45` / `$46` (`$5140`) and shown as two
+  X-expanded white sprites side by side (sprites 5 and 6, x `$8C` / `$A1`). So the
+  rotating triangle is drawn in advance, not computed. After the 31st frame
+  (about 10 seconds) it hits: five hits at once (`$CF8C`). To find: whether it can
+  be shot down (the hit test's sprite slots) or dodged.
+- **The friendly mothership**: tractor beam and repair, not traced yet; the
+  repair list is at `$932D` ("ENTERING BASE SECTOR" `$3FB9`, see
+  `SHIP-STATUS.md`).
+- Entering a mothership sector: `$FBFB` / `$FC77`; mines `$71-$7C` (`$CCDF`,
+  `$CD27`).
 
 ## Open questions
 

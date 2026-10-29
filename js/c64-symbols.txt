@@ -101,3 +101,13 @@ ENEMYHITS   $C59A   ; found: hits left per enemy (3 bytes): type 1 one shot, typ
 WAVESIZES   $C593   ; found: enemies per wave (up to 3 at once, sprites 4-6)
 SHOTHIT     $324C   ; found: the shot against sprites 2-6 during the hit window ($1616)
 ENEMYDOWN   $32BE   ; found: an enemy destroyed (explosion setup)
+
+; ---- motherships (from the user's description, found in the code) ----
+MSAPPROACH  $90F3   ; found: approach loop: radius $43 grows every 128 frames, circles drawn
+MSRADIUS    $43     ; found: approach radius (torpedo at $19, end at $22)
+MSCIRCLE    $3635   ; found: draws the mothership's circles for a radius (also $364C)
+MSENEMY     $E2     ; found: non-zero on an enemy mothership (torpedo, faster approach)
+TORPLAUNCH  $916C   ; found: the enemy torpedo starts at radius $19 ($CF01)
+TORPSTEP    $CF04   ; found: torpedo animation step (every 16 frames): 31 frames from $AF80 down
+TORPANIM    $A000   ; found: pre-rendered torpedo frames, 128 bytes each (shapes $45/$46 at $5140)
+TORPIMPACT  $CF85   ; found: the torpedo hits: five hits on the ship ($84D7 x5)
