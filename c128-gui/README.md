@@ -196,3 +196,19 @@ mouse path, and the sprites' on-screen position.
   user) and what they show; `$47` / `$48`; the player's shot (`$3E-$44`) in the code.
 - The data behind the run-time sprites `$45` / `$46` (table at `($5D)`, `$CF64`).
 - The rest of the lower GUI: the radar contents, the emplacements as bitmap data.
+
+## The original star field (traced in VICE, snapshot in flight)
+
+- `$F0B4` updates **10 stars** per call; the flight loop at `$864A` calls it once per
+  pass (no frame sync), arrays `$EFD9` (x), `$EFE3` (y), signs `$F029` / `$F033`.
+- Fixed vanishing point **(79, 99)** in bitmap pixels (`$4F` / `$63`); it does *not* follow
+  the crosshair. Steering only shifts all stars by `$D5` / `$D6` (+-2) for one update.
+- New stars start anywhere in a 128 x 128 square around it: x = random & $7F + 16,
+  y = random & $7F + 36. A star that leaves x 3-155, y 17-180 is replaced.
+- Plotting only touches empty bitmap pixels (`$EF30`), erasing only a star's own pixel.
+- Measured speed away from the centre: about **1.1-1.4 pixels per frame**, nearly the same at
+  every distance (the first C128 version used 1 + distance/16, 2-5 pixels per frame).
+- The C128 cockpit now does this: 10 stars, fixed centre, a step along the longer axis
+  every frame (two every fourth frame) and the other axis by slope. Not ported yet: the
+  steering shift, and stars over the cockpit art.
+

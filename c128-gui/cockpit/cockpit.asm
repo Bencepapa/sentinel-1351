@@ -314,17 +314,10 @@ sg3:    STA $D027
         RTS
 
 ; ---------------- the star field ----------------
-; The stars drift away from the vanishing point, which follows the crosshair
-; (the point the ship is heading for), faster the farther out they are.
-STARS:  LDA CURX        ; vanishing point in bitmap pixels
-        CLC
-        ADC #33
-        ROR A
-        STA VPX
-        LDA CURY
-        SEC
-        SBC #43
-        STA VPY
+; Like the original: NSTARS stars start anywhere in a 128 x 128 square around the
+; fixed vanishing point (79,99) and drift straight away from it at about 1.25
+; pixels per frame (the original's speed), then start again somewhere else.
+STARS:  INC FRMC
         LDX #NSTARS-1
 stl:    JSR ERASESTAR
         JSR MOVESTAR
@@ -333,95 +326,100 @@ stl:    JSR ERASESTAR
         BPL stl
         RTS
 
-NEWSTAR:JSR RANDOM      ; X = star: anywhere in the 3D view (x 2-157, y 26-141)
-        AND #$7F
-        STA TMPS
-        JSR RANDOM
-        AND #$1F
-        CLC
-        ADC TMPS
-        ADC #2
-        CMP #158
-        BCC nsx
-        SBC #40
-nsx:    STA STARX,X
-        JSR RANDOM
+NEWSTAR:JSR RANDOM      ; X = star: x 16-143, y 36-141 (the 3D view)
         AND #$7F
         CLC
-        ADC #26
+        ADC #16
+        STA STARX,X
+nsy:    JSR RANDOM
+        AND #$7F
+        CLC
+        ADC #36
         CMP #142
-        BCC nsy
-        SBC #64
-nsy:    STA STARY,X
+        BCS nsy
+        STA STARY,X
+        LDA #0
+        STA STARV,X
         RTS
 
 MOVESTAR:
-        LDA STARX,X     ; x: step away from VPX, 1 + distance/16 pixels
-        SEC
-        SBC VPX
-        BCS mxp
-        EOR #$FF
-        CLC
-        ADC #1
-        LSR A
-        LSR A
-        LSR A
-        LSR A
-        CLC
-        ADC #1
-        STA TMPS
+        LDA #0
+        STA DIRX
+        STA DIRY
         LDA STARX,X
         SEC
-        SBC TMPS
-        BCC msnew
-        CMP #2
-        BCC msnew
-        JMP mxs
-mxp:    LSR A
-        LSR A
-        LSR A
-        LSR A
-        CLC
-        ADC #1
-        CLC
-        ADC STARX,X
-        CMP #158
-        BCS msnew
-mxs:    STA STARX,X
-        LDA STARY,X     ; y: the same, away from VPY
-        SEC
-        SBC VPY
-        BCS myp
+        SBC #79
+        BCS mx1
         EOR #$FF
-        CLC
         ADC #1
-        LSR A
-        LSR A
-        LSR A
-        LSR A
-        CLC
-        ADC #1
-        STA TMPS
+        DEC DIRX
+mx1:    STA ADX
         LDA STARY,X
         SEC
-        SBC TMPS
+        SBC #99
+        BCS my1
+        EOR #$FF
+        ADC #1
+        DEC DIRY
+my1:    STA ADY
+        LDY #1          ; one step per frame, two every fourth frame
+        LDA FRMC
+        AND #3
+        BNE mtk
+        INY
+mtk:    STY NTICK
+mloop:  LDA ADX         ; the longer axis steps every time, the other one by slope
+        CMP ADY
+        BCC majy
+        JSR STEPX
+        LDA STARV,X
+        CLC
+        ADC ADY
+        CMP ADX
+        BCC mst
+        SBC ADX
+        STA STARV,X
+        JSR STEPY
+        JMP mnext
+majy:   JSR STEPY
+        LDA STARV,X
+        CLC
+        ADC ADX
+        CMP ADY
+        BCC mst
+        SBC ADY
+        STA STARV,X
+        JSR STEPX
+        JMP mnext
+mst:    STA STARV,X
+mnext:  DEC NTICK
+        BNE mloop
+        LDA STARX,X     ; out of the 3D view: a new star
+        CMP #2
         BCC msnew
+        CMP #158
+        BCS msnew
+        LDA STARY,X
         CMP #26
         BCC msnew
-        JMP mys
-myp:    LSR A
-        LSR A
-        LSR A
-        LSR A
-        CLC
-        ADC #1
-        CLC
-        ADC STARY,X
         CMP #142
         BCS msnew
-mys:    STA STARY,X
         RTS
 msnew:  JMP NEWSTAR
+
+STEPX:  LDA DIRX
+        BNE sxm
+        INC STARX,X
+        RTS
+sxm:    DEC STARX,X
+        RTS
+
+STEPY:  LDA DIRY
+        BNE sym
+        INC STARY,X
+        RTS
+sym:    DEC STARY,X
+        RTS
 
 PLOTSTAR:
         STX SAVEX
@@ -832,8 +830,12 @@ SAVEX:  .BYTE 0
 WLN:    .BYTE 0
 OVRUN:  .BYTE 0
 JOYG:   .BYTE $FF
-VPX:    .BYTE 80
-VPY:    .BYTE 84
+FRMC:   .BYTE 0
+ADX:    .BYTE 0
+ADY:    .BYTE 0
+DIRX:   .BYTE 0
+DIRY:   .BYTE 0
+NTICK:  .BYTE 0
 TMPS:   .BYTE 0
 STARX:  .BYTE 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
 STARY:  .BYTE 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
