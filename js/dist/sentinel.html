@@ -172,6 +172,9 @@ td canvas { display: block; width: 120px; height: 22px; }
         <div id="overlay" style="display:none"></div>
       </div>
 
+      <div class="keys" id="keys"></div>
+      <p id="help"></p>
+
       <div class="transport">
         <button id="run" type="button" class="primary">Pause</button>
         <button id="step" type="button" title="One instruction">Step</button>
@@ -187,9 +190,6 @@ td canvas { display: block; width: 120px; height: 22px; }
         <input id="importfile" type="file" accept=".json,.state,application/json" hidden>
       </div>
       <div id="status"></div>
-
-      <div class="keys" id="keys"></div>
-      <p id="help"></p>
 
       <div class="monitor" id="vdcwrap">
         <canvas id="vdc" width="640" height="200"></canvas>
