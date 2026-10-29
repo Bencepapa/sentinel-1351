@@ -318,7 +318,30 @@ sg3:    STA $D027
 ; fixed vanishing point (79,99) and drift straight away from it at about 1.25
 ; pixels per frame (the original's speed), then start again somewhere else.
 STARS:  INC FRMC
-        LDX #NSTARS-1
+        LDA #0          ; steering shifts every star (the original: +-2 pixels, here every 2nd frame):
+        STA SHX         ; stick left -> stars right, up -> stars up, as in the original
+        STA SHY
+        LDA FRMC
+        LSR A
+        BCS nosh
+        LDA JOYG
+        LSR A
+        BCS sh1
+        DEC SHY
+        DEC SHY
+sh1:    LSR A
+        BCS sh2
+        INC SHY
+        INC SHY
+sh2:    LSR A
+        BCS sh3
+        INC SHX
+        INC SHX
+sh3:    LSR A
+        BCS nosh
+        DEC SHX
+        DEC SHX
+nosh:   LDX #NSTARS-1
 stl:    JSR ERASESTAR
         JSR MOVESTAR
         JSR PLOTSTAR
@@ -394,6 +417,14 @@ majy:   JSR STEPY
 mst:    STA STARV,X
 mnext:  DEC NTICK
         BNE mloop
+        LDA STARX,X
+        CLC
+        ADC SHX
+        STA STARX,X
+        LDA STARY,X
+        CLC
+        ADC SHY
+        STA STARY,X
         LDA STARX,X     ; out of the 3D view: a new star
         CMP #2
         BCC msnew
@@ -836,6 +867,8 @@ ADY:    .BYTE 0
 DIRX:   .BYTE 0
 DIRY:   .BYTE 0
 NTICK:  .BYTE 0
+SHX:    .BYTE 0
+SHY:    .BYTE 0
 TMPS:   .BYTE 0
 STARX:  .BYTE 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
 STARY:  .BYTE 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0

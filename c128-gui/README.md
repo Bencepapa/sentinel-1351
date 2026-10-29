@@ -209,6 +209,7 @@ mouse path, and the sprites' on-screen position.
 - Measured speed away from the centre: about **1.1-1.4 pixels per frame**, nearly the same at
   every distance (the first C128 version used 1 + distance/16, 2-5 pixels per frame).
 - The C128 cockpit now does this: 10 stars, fixed centre, a step along the longer axis
-  every frame (two every fourth frame) and the other axis by slope. Not ported yet: the
-  steering shift, and stars over the cockpit art.
+  every frame (two every fourth frame) and the other axis by slope. Steering shifts all
+  stars by 2 pixels every second frame (stick left, stars right; up, stars up; as the original).
+  Not ported: stars over the cockpit art.
 
