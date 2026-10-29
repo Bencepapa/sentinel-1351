@@ -4,3 +4,4 @@
 *.d64 binary
 *.prg binary
 *.png binary
+.githooks/* text eol=lf
