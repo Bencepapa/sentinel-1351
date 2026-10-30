@@ -335,11 +335,17 @@ SPRCROSS:
 sc1:    STA SPRPTR
         LDA XPOS
         STA $D000
-        LDA MAPSHOWN    ; (the map open: sprite 1 is its planet, set by the map)
-        BEQ scs
+        LDA MAPSHOWN    ; (the map open: sprite 1 is its planet, set by the map;
+        BEQ scs         ; sprite 0 the map's mouse pointer, a black +)
+        LDA #$3F
+        STA SPRPTR
+        LDA PTSX
+        STA $D000
+        LDA PTSY
+        STA CURYS
         LDA $D010
         AND #$FE
-        ORA XMSB
+        ORA PTSXH
         JMP sc2
 scs:    LDA $D010
         AND #$FC
@@ -349,9 +355,15 @@ scs:    LDA $D010
         ORA #$02
 sc2:    STA $D010
         LDA CURY
-        STA $D001
+        LDX MAPSHOWN
+        BEQ sc3
+        LDA CURYS
+sc3:    STA $D001
         LDA NUMCOL      ; white, light green while the target is behind ($3934)
-        STA $D027
+        LDX MAPSHOWN
+        BEQ sc4
+        LDA #$00
+sc4:    STA $D027
         JSR SPRENEMY    ; sprites 4-6: the fighters
         LDA MAPSHOWN
         BNE scm
@@ -375,9 +387,10 @@ scm:    LDA EFX         ; sprite 2: the enemy shot
         CLC
         ADC #$8C
         STA SPRPTR+2
-        LDA MAPSHOWN    ; the map open: no crosshair, sprite 1 is the planet
+        LDA MAPSHOWN    ; the map open: the pointer (if a mouse), the planet
         BEQ scv
-        LDA #$02
+        LDA PTON
+        ORA #$02
         BNE scv2
 scv:    LDA SHOTVIS
         ASL A
@@ -4256,3 +4269,8 @@ MAPSHOWN:.BYTE 0        ; the map is open over the 3D view (c128-game)
 MAPPRIO:.BYTE 0         ; $70 while it is: the fighters behind it
 VIEWBG: .BYTE 0         ; the 3D view's background: black, white with the map
 WIPE:   .BYTE 0         ; rows of the 3D view still to wipe (c128-game: map open / close)
+PTSX:   .BYTE 0         ; the map's mouse pointer, sprite 0 (c128-game: set by the map)
+PTSXH:  .BYTE 0
+PTSY:   .BYTE 0
+PTON:   .BYTE 0
+CURYS:  .BYTE 0

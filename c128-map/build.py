@@ -48,6 +48,10 @@ def place_assets(put, VDC=0x4000):
     put(VDC + 0x310, lo)
     put(VDC + 0x330, hi)
     put(VDC + 0x350, VCOL)
+    plus = bytearray(64)                    # the mouse pointer: a 7x7 +, pointer $3F
+    for r in range(7):
+        plus[r * 3] = 0xFE if r == 3 else 0x10
+    put(0x4FC0, bytes(plus))
     with open(os.path.join(HERE, 'ref', 'planet-sprites.bin'), 'rb') as f:
         sprites = f.read()
     put(0x4E40, sprites)          # planet sprite frames, pointers $39-$3C

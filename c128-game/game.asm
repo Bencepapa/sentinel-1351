@@ -57,6 +57,7 @@ MAPOPEN:LDA #$01
         STA MJUMPF
         STA SHOTVIS
         STA M_ICONDONE  ; (nothing of the map before its set-up)
+        STA PTON        ; (the pointer once the map's cursor is there)
         LDA POTX        ; the map's mouse starts from here
         STA M_OLDX
         LDA POTY

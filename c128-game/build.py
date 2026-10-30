@@ -45,7 +45,7 @@ MAPCODE = 0xA500         # provisional: assemble() puts the map right after the 
 VDCDATA = 0x2900
 OUT = os.path.join(HERE, 'sentinel-c128-game.prg')
 
-SHARED = {'SHLD', 'HITS', 'SHIPLOST', 'DIFF', 'SYSHP'}    # the cockpit's, used by the map
+SHARED = {'SHLD', 'HITS', 'SHIPLOST', 'DIFF', 'SYSHP', 'PTSX', 'PTSXH', 'PTSY', 'PTON'}    # the cockpit's, used by the map
 
 PATCHES_MAP = [
     # the ship's variables are the cockpit's
@@ -80,6 +80,9 @@ PATCHES_MAP = [
     # the second display (VDC) is off: its updates take more than a frame's
     # spare time while the cockpit runs (to be spread over frames later)
     ('VDCON:  .BYTE 1', 'VDCON:  .BYTE 0'),
+    # the mouse pointer: the cockpit shows it (sprite 0 while the map is open)
+    ('PTSX:   .BYTE 0         ; its sprite position (shared with c128-game\'s cockpit)\nPTSXH:  .BYTE 0\nPTSY:   .BYTE 0\nPTON:   .BYTE 0\n', ''),
+    ('PTRVIC: LDA PTSX ', 'PTRVIC: RTS\n        LDA PTSX '),
 ]
 MAP_EXTRA = """
 GENONCE:LDA GENDONE     ; (game) the start layout only once

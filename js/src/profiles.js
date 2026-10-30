@@ -152,8 +152,8 @@ SentinelProfiles.game = (function (c) {
     ].concat(c.watches),
     cheats: c.cheats,
     events: c.events.concat([
-      { name: 'Map opened', at: 'TOMAP' },
-      { name: 'Back in the cockpit', at: 'TOCOCK' },
+      { name: 'Map opened', at: 'MAPOPEN' },
+      { name: 'Map closed', at: 'MAPCLOSE' },
       { name: 'Into a sector', at: 'SECTORIN' },
     ]),
     keys: [

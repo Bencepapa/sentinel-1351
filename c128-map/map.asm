@@ -1257,11 +1257,23 @@ cur1:   LDA CURINIT
         LDA #1
         STA BV
         JSR BOX
+        LDX SELX        ; the mouse pointer starts in the middle of the sector
+        LDA VX,X
+        CLC
+        ADC #6
+        STA MPX
+        LDX SELY
+        LDA YS,X
+        CLC
+        ADC #8
+        STA MPY
 cur2:   LDA DELAY
         BEQ cur3
         DEC DELAY
-cur3:   LDA MPRES       ; with a mouse, its motion becomes directions (original MSYN)
-        BEQ curjoy
+cur3:   LDA MPRES       ; with a mouse: a pointer, the box follows the sector under it
+        BEQ curjoy      ; (enhancement; the original turns the motion into
+        JSR CURPTR      ; directions, MSYN, see the code below, unused now)
+        JMP curfire
         LDA #$1F
         LDY MDY
         BEQ cmy0
@@ -1396,6 +1408,129 @@ selgo:  LDA SELX
         STA BV
         JSR BOX
         JMP BLIP
+
+; The mouse pointer (enhancement, not in the original): a small + (sprite 0,
+; shape at $4FC0, pointer $3F) moved by the mouse over the grid; the cursor box
+; jumps to the sector under it, fire selects that sector. MPX / MPY are in
+; multicolour pixels of the bitmap (the grid spans x 17-136, y 35-130).
+CURPTR: CLC
+        LDA MPX
+        ADC MDX
+        LDY MDX
+        BMI cp1
+        BCS cp2         ; (past 255)
+        CMP #137
+        BCC cp3
+cp2:    LDA #136
+        BNE cp3
+cp1:    BCC cp4         ; (below 0)
+        CMP #17
+        BCS cp3
+cp4:    LDA #17
+cp3:    STA MPX
+        CLC
+        LDA MPY
+        ADC MDY
+        LDY MDY
+        BMI cp5
+        BCS cp6
+        CMP #131
+        BCC cp7
+cp6:    LDA #130
+        BNE cp7
+cp5:    BCC cp8
+        CMP #35
+        BCS cp7
+cp8:    LDA #35
+cp7:    STA MPY
+        SEC             ; the sector under it: column (x - 17) / 12, row (y - 35) / 16
+        LDA MPX
+        SBC #17
+        LDX #0
+cp9:    CMP #12
+        BCC cp10
+        SBC #12
+        INX
+        BNE cp9
+cp10:   CPX #10
+        BCC cp11
+        LDX #9
+cp11:   STX PTCX
+        SEC
+        LDA MPY
+        SBC #35
+        LSR A
+        LSR A
+        LSR A
+        LSR A
+        CMP #6
+        BCC cp12
+        LDA #5
+cp12:   STA PTCY
+        JSR PTRSPR
+        LDA PTCX
+        CMP CURX
+        BNE cp13
+        LDA PTCY
+        CMP CURY
+        BNE cp13
+        RTS
+cp13:   LDA CURX        ; the box moves (CURMOVE's drawing part)
+        STA OLDCX
+        LDA CURY
+        STA OLDCY
+        LDA PTCX
+        STA CURX
+        LDA PTCY
+        STA CURY
+        JMP nr
+
+PTRSPR: LDA MPX         ; sprite position: x = 24 + 2 * MPX - 3, y = 50 + MPY - 3
+        ASL A
+        STA PTSX
+        LDA #0
+        ROL A
+        STA PTSXH
+        CLC
+        LDA PTSX
+        ADC #21
+        STA PTSX
+        BCC ps1
+        INC PTSXH
+ps1:    CLC
+        LDA MPY
+        ADC #47
+        STA PTSY
+        LDA #1
+        STA PTON
+PTRVIC: LDA PTSX        ; (the map program shows it itself; c128-game's cockpit
+        STA $D000       ; shows it from PTSX / PTSXH / PTSY / PTON)
+        LDA PTSY
+        STA $D001
+        LDA $D010
+        AND #$FE
+        ORA PTSXH
+        STA $D010
+        LDA #$3F
+        STA $47F8
+        LDA #1          ; white
+        STA $D027
+        LDA $D01C
+        AND #$FE
+        STA $D01C
+        LDA $D01D
+        AND #$FE
+        STA $D01D
+        LDA $D017
+        AND #$FE
+        STA $D017
+        LDA $D01B
+        AND #$FE
+        STA $D01B
+        LDA $D015
+        ORA #$01
+        STA $D015
+        RTS
 
 ; Box around sector BC/BR, value 2 (BV=1) or value 3 (BV=0).
 BOX:    JSR VDCBOX      ; mirror the box on the second display
@@ -2503,3 +2638,11 @@ VBX:    .BYTE 0
 VBY:    .BYTE 0
 SAVMPL: .BYTE 0
 SAVMPH: .BYTE 0
+MPX:    .BYTE 77        ; the mouse pointer (multicolour pixels)
+MPY:    .BYTE 75
+PTCX:   .BYTE 0         ; the sector under it
+PTCY:   .BYTE 0
+PTSX:   .BYTE 0         ; its sprite position (shared with c128-game's cockpit)
+PTSXH:  .BYTE 0
+PTSY:   .BYTE 0
+PTON:   .BYTE 0

@@ -664,6 +664,15 @@ function report(hooks, label) {
   check(K[s.OVRUN] === 0, 'approach: no frame overran');
 }
 
+// ---- every debugger profile: its labels exist in its program, the page can open it ----
+for (const name of Object.keys(Profiles)) {
+  const prof = Profiles[name], { m, hooks } = boot(name, 'verify');
+  let err = null;
+  try { const dbg = new Debugger(m, hooks, name, prof); for (const e of prof.events) dbg.setEvent(e, true, false); run(m, hooks, 30); }
+  catch (e) { err = e.message; }
+  check(!err && !m.stopped, `profile ${name}: debugger set up, events hooked, 30 frames run` + (err ? ' (' + err + ')' : m.stopped ? ' (' + m.stopped + ')' : ''));
+}
+
 // ---- 2 MHz mode: the raster runs at half the processor's cycles ----
 {
   const m = new C128('c128');
@@ -697,7 +706,16 @@ function report(hooks, label) {
   check([...K.subarray(0x6000, 0x63C0)].every((v, i) => true) && K[s.OVRUN] === 0, 'game: no frame overran while the map drew in');
   const st = [...K.subarray(s.M_STATE, s.M_STATE + 60)];
   const idx = st.findIndex(v => v >= 1 && v <= 3), n0 = K[s.M_COUNT + idx];
-  K[s.M_CURX] = idx % 10; K[s.M_CURY] = Math.floor(idx / 10);
+  // the mouse pointer: steer it onto that sector, the box follows, fire selects it
+  for (let i = 0; i < 400; i++) {
+    const tx = 17 + 12 * (idx % 10) + 6, ty = 35 + 16 * Math.floor(idx / 10) + 8;
+    const dx = Math.max(-3, Math.min(3, tx - K[s.M_MPX])), dy = Math.max(-3, Math.min(3, ty - K[s.M_MPY]));
+    if (!dx && !dy) break;
+    m.moveMouse(dx, -dy); run(m, hooks, 1);
+  }
+  run(m, hooks, 2);
+  check(K[s.PTON] === 1 && K[s.M_CURX] === idx % 10 && K[s.M_CURY] === Math.floor(idx / 10) && (K[0xD015 - 0xD000 + 0] !== undefined),
+    `game: the map's mouse pointer (a +) moves over the grid, the box follows it to sector ${idx % 10},${Math.floor(idx / 10)}`);
   run(m, hooks, 4, i => { m.mouse.left = i < 2; }); run(m, hooks, 20);
   check(!m.stopped && K[s.MAPSHOWN] === 0 && K[s.M_SELY] * 10 + K[s.M_SELX] === idx && K[s.APPR] === 1 && K[s.SQCOUNT] === n0 && +tg() === n0,
     `game: fire on a squadron's sector closes the map and jumps there: the approach of ${n0} ships begins, TARGETS ${tg()}`);

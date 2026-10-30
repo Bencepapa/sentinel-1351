@@ -14,3 +14,6 @@ Sentinel-1351*.prg
 !Sentinel-1351_v8.d64
 !Sentinel-1351_v8.prg
 js/test/out/
+
+# debug screenshots
+/*.png
