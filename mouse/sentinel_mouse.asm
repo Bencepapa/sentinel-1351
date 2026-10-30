@@ -26,8 +26,9 @@
 ;   $FBCE  JSR MSEL           (map loop: mouse pointer, replaces JSR $21C8)
 ;   $129B  JSR MPY            (crosshair routine: its Y on the map screen)
 ;   $0D12  JSR MPY0 / JMP $0D1C  (the line-59 split's sprite 0 Y off the cockpit)
-;   $0100-$01CF  extra code (dead loader leftovers in the stack page; the game's
+;   $0100-$01D7  extra code (dead loader leftovers in the stack page; the game's
 ;                stack stays above $01E6, measured over title, menus and play)
+;   $53C0  the map pointer's shape (+), sprite shape $4F, unused by the game
 ;   old routine area $B2D8-$B399 is reused for the new code; its
 ;   self-modified operands live in YMAX/YMIN/YCEN/DDLY now
 
@@ -373,6 +374,9 @@ msr:    RTS
 MHI:    .BYTE 119,95
 ; crosshair routine: A = its Y; on another screen the pointer's Y while the map
 ; loop has moved it in the last 32 frames (it does not run every frame), else 0
+; While shown, the pointer's shape is a + (sprite shape $4F at $53C0, unused by
+; the game): the line-59 call (MPY0) sets the pointer shadow $B0 just before the
+; interrupt copies it to the sprite pointers (line 76).
 MPY:    LDY VIEW
         BEQ mpr
         LDA $A0
@@ -380,10 +384,13 @@ MPY:    LDY VIEW
         SBC MFRM
         CMP #32
         LDA PSY
-        BCC mpr
+        BCC mpp
         LDA $A0         ; hidden: keep MFRM 64 frames ahead, so the 8-bit frame
         ADC #63         ; difference never comes back under 32 (C set)
         STA MFRM
         LDA #0
+        RTS
+mpp:    LDY #$4F
+        STY $B0
 mpr:    RTS
 END01:

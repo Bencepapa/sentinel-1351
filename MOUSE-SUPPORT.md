@@ -18,7 +18,8 @@ joystick moves a crosshair, and the ship turns toward it.
 | Right button | Opens the map: acts as the C= key once it has been held alone for 5 frames |
 | Both buttons | Launches a proton torpedo (acts as SPACE). The laser is held back meanwhile, and the map doesn't open until the right button is released. |
 | Mouse left alone | After the game's own idle delay (64 frames, no motion, no fire), the crosshair glides back to center, as with the joystick |
-| Mouse motion on other screens (map etc.) | Turned into joystick directions |
+| Mouse motion on the sector map | Moves a + pointer over the grid; the cursor box jumps to the sector under it, the left button selects it (enhancement, not in the original) |
+| Mouse motion on other screens | Turned into joystick directions |
 | Forward / back | Crosshair up / down (the joystick is inverted, like a flight stick) |
 
 When no mouse is plugged in, the game behaves exactly as it did before, joystick included.

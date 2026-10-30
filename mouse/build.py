@@ -12,7 +12,7 @@ IN_D64 = sys.argv[1] if len(sys.argv) > 1 else os.path.join(HERE, '..', 'Sentine
 OUT_D64 = sys.argv[2] if len(sys.argv) > 2 else os.path.join(HERE, '..', 'Sentinel-1351.d64')
 
 # free/rewritten regions the code may occupy (inclusive end)
-REGIONS = [(0x02A2, 0x02FF), (0xB2D8, 0xB399), (0x03B4, 0x03F5), (0x0100, 0x01CF)]
+REGIONS = [(0x02A2, 0x02FF), (0xB2D8, 0xB399), (0x03B4, 0x03F5), (0x0100, 0x01D7)]
 
 # ---------------- D64 helpers ----------------
 SPT = [0] + [21] * 17 + [19] * 7 + [18] * 6 + [17] * 10
@@ -108,6 +108,13 @@ def main():
     # difficulty menu keeps the crosshair pinned until it sees a direction on $DC00;
     # let it see the mouse-synthesized directions in $96 instead
     poke(0x864A, bytes([0xA5, 0x96, 0xEA]), expect=bytes.fromhex('ad00dc'))
+    # map pointer (enhancement): its shape, a + centred where the crosshair's
+    # centre is (x 12, y 7), in sprite shape $4F ($53C0, unused, all zero)
+    plus = bytearray(64)
+    for r in range(4, 11):
+        plus[r * 3 + 1] = 0x08
+    plus[7 * 3 + 1] = 0x7F                 # x 9-15
+    poke(0x53C0, bytes(plus), expect=bytes(64))
     # map pointer (enhancement): the map loop and the crosshair routine's Y
     poke(0xFBCE, bytes([0x20, lo(sym['MSEL']), hi(sym['MSEL'])]), expect=bytes.fromhex('20c821'))
     poke(0x129B, bytes([0x20, lo(sym['MPY']), hi(sym['MPY']), 0xEA, 0xEA, 0xEA]), expect=bytes.fromhex('a4b8f002a900'))
