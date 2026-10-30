@@ -194,6 +194,7 @@
   // ---- panels -----------------------------------------------------------------
 
   function refresh(full) {
+    if (!debugOn) return;                 // the panels are hidden
     // status line
     var st = $('status');
     var where = 'frame <b>' + m.frame + '</b> · line <b>' + m.rasterLine() + '</b> · PC <b>$' + h4(m.cpu.pc) + '</b>';
@@ -451,6 +452,60 @@
       box.appendChild(b);
     });
   }
+
+  // fire button (touch devices, and in full screen): the left mouse button
+  var fireEl = $('firebtn');
+  var fireDown = function (e) { audio.start(); e.preventDefault(); e.stopPropagation(); if (m) m.mouse.left = true; fireEl.classList.add('down'); };
+  var fireUp = function (e) { e.preventDefault(); e.stopPropagation(); if (m) m.mouse.left = false; fireEl.classList.remove('down'); };
+  fireEl.addEventListener('touchstart', fireDown, { passive: false });
+  fireEl.addEventListener('touchend', fireUp, { passive: false });
+  fireEl.addEventListener('touchcancel', fireUp, { passive: false });
+  fireEl.addEventListener('mousedown', fireDown);
+  fireEl.addEventListener('mouseup', fireUp);
+  fireEl.addEventListener('mouseleave', function (e) { if (fireEl.classList.contains('down')) fireUp(e); });
+
+  // full screen: the screen alone, landscape where the device allows it; where
+  // the Fullscreen API is missing (iPhone), the screen fills the window instead
+  var fsBtn = $('fsbtn');
+  function isFs() { return document.fullscreenElement === screenEl || document.webkitFullscreenElement === screenEl || screenEl.classList.contains('fs'); }
+  function fsLabel() { fsBtn.textContent = isFs() ? '✕ Exit' : '⛶ Full screen'; }
+  function lockLandscape() {
+    try { var o = screen.orientation; if (o && o.lock) { var p = o.lock('landscape'); if (p && p.catch) p.catch(function () {}); } } catch (err) { /* not allowed */ }
+  }
+  fsBtn.addEventListener('mousedown', function (e) { e.stopPropagation(); });
+  fsBtn.addEventListener('touchstart', function (e) { e.stopPropagation(); }, { passive: true });
+  fsBtn.addEventListener('click', function (e) {
+    e.stopPropagation();
+    if (isFs()) {
+      if (screenEl.classList.contains('fs')) screenEl.classList.remove('fs');
+      else if (document.exitFullscreen) document.exitFullscreen().catch(function () {});
+      else if (document.webkitExitFullscreen) document.webkitExitFullscreen();
+      try { if (screen.orientation && screen.orientation.unlock) screen.orientation.unlock(); } catch (err) { /* ignore */ }
+      fsLabel(); return;
+    }
+    var req = screenEl.requestFullscreen || screenEl.webkitRequestFullscreen;
+    if (req) {
+      var p = req.call(screenEl);
+      if (p && p.then) p.then(lockLandscape, function () { screenEl.classList.add('fs'); fsLabel(); });
+      else lockLandscape();
+    } else screenEl.classList.add('fs');
+    fsLabel();
+  });
+  document.addEventListener('fullscreenchange', fsLabel);
+  document.addEventListener('webkitfullscreenchange', fsLabel);
+  window.addEventListener('keydown', function (e) { if (e.key === 'Escape' && screenEl.classList.contains('fs')) { screenEl.classList.remove('fs'); fsLabel(); } });
+
+  // debugger panels: hidden unless asked for (remembered in this browser)
+  var debugOn = false;
+  try { debugOn = localStorage.getItem('sentinel-debug') === '1'; } catch (err) { /* no storage */ }
+  function setDebug(on) {
+    debugOn = on; $('debug').checked = on;
+    document.body.classList.toggle('nodebug', !on);
+    try { localStorage.setItem('sentinel-debug', on ? '1' : '0'); } catch (err) { /* no storage */ }
+    if (on && m) refresh(true);
+  }
+  $('debug').addEventListener('change', function () { setDebug(this.checked); });
+  setDebug(debugOn);
 
   function typing(e) { var t = e.target.tagName; return t === 'INPUT' || t === 'SELECT' || t === 'TEXTAREA'; }
   window.addEventListener('keydown', function (e) {

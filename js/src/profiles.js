@@ -44,6 +44,7 @@ var SentinelProfiles = {
       { label: 'Fire / L', mouse: 'left' },
       { label: 'Map / R', mouse: 'right' },
       { label: 'Torpedo L+R', mouse: 'both' },
+      { label: 'Track (A)', key: 'KeyA' },
       { label: 'SPACE', key: 'Space' },
       { label: 'C=', key: 'AltLeft' },
       { label: 'RUN/STOP', key: 'Escape' },
@@ -101,10 +102,10 @@ var SentinelProfiles = {
     ],
     keys: [
       { label: 'Fire / L', mouse: 'left' },
-      { label: 'T', key: 'KeyT' },
+      { label: 'Track (A)', key: 'KeyA' },
       { label: 'SPACE', key: 'Space' },
     ],
-    help: 'Mouse or arrows: crosshair (the guns follow; off centre it steers the ship). Left button / Right Ctrl: phasor shot. T: tracking crosshair. SPACE: exit.',
+    help: 'Mouse or arrows: crosshair (the guns follow; off centre it steers the ship). Left button / Right Ctrl: phasor shot. A (or T): the automatic tracking computer on / off. SPACE: exit.',
   },
   map: {
     title: 'C128 sector map',
@@ -159,10 +160,10 @@ SentinelProfiles.game = (function (c) {
     keys: [
       { label: 'Fire / L', mouse: 'left' },
       { label: 'C= (map)', key: 'AltLeft' },
+      { label: 'Track (A)', key: 'KeyA' },
       { label: 'SPACE', key: 'Space' },
-      { label: 'T', key: 'KeyT' },
     ],
-    help: 'Cockpit: mouse or arrows aim (off centre steers), left button / Right Ctrl fires, C= (Alt) opens the map, SPACE exits. ' +
+    help: 'Cockpit: mouse or arrows aim (off centre steers), left button / Right Ctrl fires, A tracking on / off, C= (Alt) opens the map, SPACE exits. ' +
           'Map: move the cursor, fire on another sector jumps there, SPACE goes back.',
   };
 })(SentinelProfiles.cockpit);

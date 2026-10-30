@@ -74,6 +74,21 @@ select:focus-visible, button:focus-visible, input:focus-visible, #screen:focus-v
 .tag { position: absolute; top: 14px; right: 16px; font: 500 0.65rem var(--mono); letter-spacing: 0.1em; color: #8d877b; text-transform: uppercase; pointer-events: none; }
 #screen { cursor: crosshair; touch-action: none; }
 #lockhint { position: absolute; left: 50%; bottom: 18px; transform: translateX(-50%); font: 500 0.75rem var(--mono); color: #d8d2c4; background: rgba(0,0,0,0.55); padding: 4px 10px; border-radius: 4px; pointer-events: none; white-space: nowrap; }
+#screenbox { position: relative; }
+.fsbtn { position: absolute; top: 16px; left: 16px; z-index: 3; min-height: 30px; padding: 3px 9px; font: 500 0.7rem var(--mono); letter-spacing: 0.06em; text-transform: uppercase;
+  background: rgba(20,19,17,0.72); color: #e7e2d6; border: 1px solid rgba(255,255,255,0.18); border-radius: 5px; }
+#firebtn { display: none; position: absolute; z-index: 3; left: max(18px, env(safe-area-inset-left, 0px)); bottom: max(18px, env(safe-area-inset-bottom, 0px));
+  width: 92px; height: 92px; border-radius: 50%; border: 2px solid rgba(255,255,255,0.35); background: rgba(181,38,30,0.55); color: #fff;
+  font: 600 0.95rem var(--display); letter-spacing: 0.08em; touch-action: none; user-select: none; -webkit-user-select: none; -webkit-tap-highlight-color: transparent; }
+#firebtn.down { background: rgba(225,60,40,0.85); transform: scale(0.95); }
+#screen:fullscreen, #screen.fs { position: fixed; inset: 0; z-index: 50; border-radius: 0; padding: 0; background: #000;
+  display: flex; align-items: center; justify-content: center; }
+#screen:fullscreen canvas, #screen.fs canvas { width: min(100vw, calc(100vh * 384 / 272)); height: auto; }
+#screen:fullscreen #firebtn, #screen.fs #firebtn { display: block; width: 104px; height: 104px; }
+#screen:fullscreen .tag, #screen.fs .tag, #screen:fullscreen #lockhint, #screen.fs #lockhint { display: none; }
+body.nodebug .bench { grid-template-columns: minmax(0, 1fr); max-width: 980px; width: 100%; margin: 0 auto; }
+body.nodebug .bench > .col:first-child { position: static; }
+body.nodebug .dbg { display: none !important; }
 #overlay { position: absolute; inset: 10px; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,0.6); color: #f1eee6; font: 600 1rem var(--display); letter-spacing: 0.04em; cursor: pointer; text-align: center; padding: 16px; }
 
 .transport { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
@@ -149,11 +164,12 @@ td canvas { display: block; width: 120px; height: 22px; }
           <option value="flight">C128 flight kernel</option>
         </select>
       </label>
-      <label class="field" for="mode">JS ports
+      <label class="field dbg" for="mode">JS ports
         <select id="mode"><option value="verify" selected>Verify vs 6502</option><option value="replace">Replace 6502</option><option value="trace">Off (trace only)</option></select>
       </label>
       <button id="restart" type="button">Restart</button>
       <label class="check" for="mute"><input id="mute" type="checkbox"> Mute</label>
+      <label class="check" for="debug"><input id="debug" type="checkbox"> Debugger</label>
     </div>
   </header>
 
@@ -164,6 +180,8 @@ td canvas { display: block; width: 120px; height: 22px; }
         <span class="tag" id="victag">VIC-II</span>
         <span id="lockhint">Click to capture the mouse · drag on touch</span>
         <div id="overlay" style="display:none"></div>
+        <button class="fsbtn" id="fsbtn" type="button" aria-label="Full screen">⛶ Full screen</button>
+        <button id="firebtn" type="button" aria-label="Fire">FIRE</button>
       </div>
 
       <div class="keys" id="keys"></div>
@@ -171,10 +189,10 @@ td canvas { display: block; width: 120px; height: 22px; }
 
       <div class="transport">
         <button id="run" type="button" class="primary">Pause</button>
-        <button id="step" type="button" title="One instruction">Step</button>
-        <button id="frame" type="button" title="Run to the end of this frame">Frame</button>
-        <button id="frames50" type="button" title="Run 50 frames, then pause">+50</button>
-        <select id="speed" aria-label="Speed"><option value="1" selected>1x</option><option value="2">2x</option><option value="4">4x</option><option value="max">Max</option></select>
+        <button id="step" class="dbg" type="button" title="One instruction">Step</button>
+        <button id="frame" class="dbg" type="button" title="Run to the end of this frame">Frame</button>
+        <button id="frames50" class="dbg" type="button" title="Run 50 frames, then pause">+50</button>
+        <select id="speed" class="dbg" aria-label="Speed"><option value="1" selected>1x</option><option value="2">2x</option><option value="4">4x</option><option value="max">Max</option></select>
         <span class="sep"></span>
         <select id="slot" aria-label="State slot"><option>1</option><option>2</option><option>3</option><option>4</option></select>
         <button id="save" type="button">Save state</button>
@@ -183,7 +201,7 @@ td canvas { display: block; width: 120px; height: 22px; }
         <button id="import" type="button">Import</button>
         <input id="importfile" type="file" accept=".json,.state,application/json" hidden>
       </div>
-      <div id="status"></div>
+      <div id="status" class="dbg"></div>
 
       <div class="monitor" id="vdcwrap">
         <canvas id="vdc" width="640" height="200"></canvas>
@@ -191,7 +209,7 @@ td canvas { display: block; width: 120px; height: 22px; }
       </div>
     </div>
 
-    <div class="col">
+    <div class="col dbg">
       <section class="card">
         <h2>CPU <small id="breakwhy"></small></h2>
         <div id="regs" class="mono"></div>
