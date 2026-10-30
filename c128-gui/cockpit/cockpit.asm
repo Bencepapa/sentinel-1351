@@ -247,13 +247,13 @@ w242:   LDA #$00
         STA BG
         LDA #$08
         STA $D016
-        LDA #$18        ; no more bad lines (YSCROLL 0: 243-247 do not match; DEN off
-        STA $D011       ; would not stop them, and past line 48 it blanks a frame), so
-        LDA FAST        ; 2 MHz can start here, not at line 251
-        ORA #$01
-        STA FAST
 
-        JSR INPUTV      ; vertical blank: mouse, cursor, guns
+        JSR INPUTV      ; vertical blank: mouse, cursor, guns (at 1 MHz: lines 243-250
+        LDA #251        ; show the row with the lower screws)
+        JSR WAITLN
+        LDA FAST        ; 2 MHz in the border, lines 251-47: the VIC-IIe fetches nothing
+        ORA #$01        ; there (sprites off, no bad lines): twice the time (I/O
+        STA FAST        ; accesses stay 1 MHz)
         LDA APPR        ; (no shots while approaching: fire chooses a group)
         BEQ vbf
         LDA #$00
@@ -261,8 +261,7 @@ w242:   LDA #$00
         JMP vbg
 vbf:    JSR FGVB        ; the fighters, or the stars
         JMP vbh
-vbg:                    ; 2 MHz, lines 243-47: the VIC-IIe fetches nothing there (sprites
-                        ; off, no bad lines): twice the time (I/O accesses stay 1 MHz)
+vbg:
         JSR VIEWVB      ; the star field (or the map's frame, c128-game)
 vbh:
         JSR VBWORK      ; steering, drift, enemy fire, the radar
@@ -2586,9 +2585,7 @@ zs1:    SEC
         RTS
 
 ; The vertical blank's share (2 MHz, after the star field).
-VBWORK: LDA #$1B        ; YSCROLL back (past line 247: no bad lines until line 48)
-        STA $D011
-        JSR RADSTEP     ; ($9F1C, twice a frame) the scan line and the colour band
+VBWORK: JSR RADSTEP     ; ($9F1C, twice a frame) the scan line and the colour band
         JSR RADSTEP
         JSR CIRCLES
         LDA EFRM        ; the radar: every other frame ($0C8A in the interrupt);

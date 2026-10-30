@@ -318,9 +318,8 @@ x / y tables (`$FF15`, `$FF18`).
 **Frame budget** (measured with `m.dma`, the VIC's stolen cycles): colours change in
 the horizontal blank (`WAITHB`). In a fight the fighters and the tracking passes run
 in the 3D view's free time, or at 2 MHz when a shot's launch used it up (the stars
-then wait a frame). 2 MHz runs from line 243 to 47: below the gray strip YSCROLL is
-changed so line 243 is no bad line (DEN off would not stop it, and past line 48 it
-blanks the whole frame). The squadrons' move and a squadron's
+then wait a frame). 2 MHz runs from line 251 to 47: lines 243-250 show the text row with the lower screws,
+so the VIC-IIe needs its accesses there. The squadrons' move and a squadron's
 arrival run in the 3D view's time too (`VIEWWORK`).
 
 **Speeds** (the original measured with `m.dma`, which matched what the user saw in
