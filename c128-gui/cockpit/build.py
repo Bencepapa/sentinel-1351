@@ -131,6 +131,9 @@ def place_assets(put):
         put(slot(fighter_pointer(original)), shape(original))
     for new, original in enumerate((0x4C, 0x4D, 0x4E)):    # the approach's blip: pointers $36-$38
         put(0x4D80 + new * 64, shape(original))
+    put(0x4F40, shape(0x47))                                # sprite 7: the barrels, pointers $3D / $3E
+    put(0x4F80, shape(0x48))
+    put(slot(0xFE), bytes([0x00, 0x08, 0x00] * 18 + [0] * 10))   # and the radar's scan line ($05), $FE
     put(0x3690, shape(0x64))                                # the crosshair's digits (DIGF)
     put(0x3600, open(os.path.join(REF, 'lrscale-ed00.bin'), 'rb').read())   # LRTAB
     put(STREAMS, open(os.path.join(REF, 'streams-e800.bin'), 'rb').read())

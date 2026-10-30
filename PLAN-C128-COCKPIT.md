@@ -407,6 +407,9 @@ player) and repairs the ship. What the code shows so far:
 
 ## Enhancement ideas (optional, from the user)
 
+- Done: a mouse pointer on the sector map (C128 map, c128-game, and the C64
+  1351 patch: the crosshair is the pointer there).
+
 - **Target rectangle during the approach**: while turning toward a fighter group,
   draw a rectangle on the screen where the selected group is (the port knows its
   bearing and pitch), instead of only the numbers under the crosshair.

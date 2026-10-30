@@ -360,11 +360,12 @@ sc2:    STA $D010
         LDA CURYS
 sc3:    STA $D001
         LDA NUMCOL      ; white, light green while the target is behind ($3934)
-        LDX MAPSHOWN
+        LDX MAPSHOWN    ; (the map's pointer: white)
         BEQ sc4
-        LDA #$00
+        LDA #$01
 sc4:    STA $D027
         JSR SPRENEMY    ; sprites 4-6: the fighters
+        JSR SPR7        ; sprite 7: the guns' barrels, the radar's scan line
         LDA MAPSHOWN
         BNE scm
         LDA SHOTSHP     ; shapes $67-$70 are pointers $F3-$FC here
@@ -395,7 +396,8 @@ scm:    LDA EFX         ; sprite 2: the enemy shot
 scv:    LDA SHOTVIS
         ASL A
         ORA #1
-scv2:   ORA EVIS
+scv2:   ORA #$80        ; (sprite 7)
+        ORA EVIS
         ORA EFVIS
         STA VICENA
         RTS
@@ -439,7 +441,7 @@ sg3:    STA $D027
         STA $D01D
         LDA SHOTVIS
         ASL A
-        ORA #$09
+        ORA #$89        ; (and sprite 7)
         ORA EVIS
         ORA EFVIS
         STA VICENA
@@ -2389,6 +2391,11 @@ ht2:    LDA #$00        ; ($3341) the shot and our shot disappear
 ; of 16 passes at once and checks the arrival every other frame.
 
 ARRIVE: LDA #$00        ; ($FCE1) into a sector with SQCOUNT ships
+        STA APPR        ; (no approach until there are ships: an empty sector
+        STA GSIZE       ; must not keep the last one's, it blocks the phasor)
+        STA GSIZE+1
+        STA GSIZE+2
+        STA LYACT
         STA EFON
         STA EFVIS
         STA EVIS
@@ -2409,8 +2416,14 @@ arr1:   STA ENX,X
         LDA SQCOUNT
         JSR SHOWTG
         LDA SQCOUNT
-        BEQ arr9
-        LDA #$01
+        BNE arr2
+        LDY #39         ; empty: the scanner's row blank
+arr3:   LDA #$60
+        STA LRROW,Y
+        DEY
+        BPL arr3
+        RTS
+arr2:   LDA #$01
         STA APPR
         STA RELAYOUT    ; (the original keeps the slots where hyperspace left them)
         LDA #$1E        ; ($FCB8) 30 counts of 2 frames before the scanner
@@ -3213,6 +3226,75 @@ vv1:    JMP STARS
 MAPINHK:RTS             ; (c128-game: the map's mouse, cursor and choice)
 MAPVBHK:RTS             ; (c128-game: the map's draw-in, blink, planet)
 TICKHK: RTS             ; (c128-game: the map's TICKER)
+
+; Sprite 7 ($1193, once a frame): three things in turn, one a frame: the left
+; gun's barrel (shape $47), the right gun's ($48), both twice as wide, black, the
+; firing gun's yellow while a shot flies (with the red gun: red and yellow); and
+; the radar's scan line (shape $05, white, twice as tall), which sweeps the
+; scanner box 2 pixels a frame ($9F1C, while the short range scanner works).
+SPR7:   LDA SYSHP+2     ; ($9F1C, twice a frame) the scan line
+        BEQ s7a
+        LDX SCANX
+        INX
+        INX
+        CPX #$E0
+        BCC s7b
+        LDX #$60
+s7b:    STX SCANX
+s7a:    LDX S7I
+        LDA S7PTR,X
+        STA SPRPTR+7
+        LDA $D010
+        AND #$7F
+        ORA S7MSB,X
+        STA $D010
+        LDA S7COL,X
+        LDY SHOTON
+        BEQ s7c
+        CPX #$02
+        BEQ s7c
+        LDY SHOTGUN     ; ($11AE) the gun that fired: yellow
+        CPY #$01
+        BEQ s7d
+        CPX #$01
+        BNE s7c
+        BEQ s7e
+s7d:    CPX #$00
+        BNE s7c
+s7e:    LDA #$07
+s7c:    STA $D02E
+        LDA $D017
+        AND #$7F
+        ORA S7YX,X
+        STA $D017
+        LDA $D01D
+        ORA #$80
+        STA $D01D
+        LDA $D01C
+        AND #$7F
+        STA $D01C
+        LDA $D01B
+        AND #$7F
+        STA $D01B
+        CPX #$02        ; ($11E2) place
+        BNE s7f
+        LDY #$C3
+        LDA SCANX
+        BNE s7g
+s7f:    LDA G1X,X       ; (G1X, G2X: x; G1Y, G2Y: y)
+        LDY G1Y,X
+        INY
+s7g:    STA $D00E
+        STY $D00F
+        DEX
+        BPL s7h
+        LDX #$02
+s7h:    STX S7I
+        RTS
+S7PTR:  .BYTE $3D,$3E,$FE        ; shapes $47, $48, $05 (build.py)
+S7MSB:  .BYTE $00,$80,$00
+S7COL:  .BYTE $00,$00,$01
+S7YX:   .BYTE $00,$00,$80
 
 ; ---------------- hits and explosions ----------------
 ; The shot against the fighters ($3244 / $324C), once a frame. During the last 10
@@ -4274,3 +4356,5 @@ PTSXH:  .BYTE 0
 PTSY:   .BYTE 0
 PTON:   .BYTE 0
 CURYS:  .BYTE 0
+S7I:    .BYTE 2         ; ($118E)
+SCANX:  .BYTE $60       ; the scan line's x ($9ECF)

@@ -699,8 +699,8 @@ for (const name of Object.keys(Profiles)) {
   const art0 = [...K.subarray(0x7680, 0x7CC0)].join(), hud0 = [...K.subarray(0x4800, 0x4878)].join();
   run(m, hooks, 3, () => m.setKey(7, 5, true)); m.setKey(7, 5, false);
   run(m, hooks, 400);
-  check(!m.stopped && K[s.MAPSHOWN] === 1 && K[s.M_ICONDONE] === 1 && K[s.VIEWBG] === 1,
-    'game: C= opens the map in the 3D view (white); the grid and the icons are drawn');
+  check(!m.stopped && K[s.MAPSHOWN] === 1 && K[s.M_ICONDONE] === 1 && K[s.VIEWBG] === 0,
+    'game: C= opens the map in the 3D view (black, as in the original); the grid and the icons are drawn');
   check([...K.subarray(0x7680, 0x7CC0)].join() === art0 && [...K.subarray(0x4800, 0x4878)].join().slice(0, 40) === hud0.slice(0, 40),
     'game: the cockpit art and the HUD stay while the map is open');
   check([...K.subarray(0x6000, 0x63C0)].every((v, i) => true) && K[s.OVRUN] === 0, 'game: no frame overran while the map drew in');
@@ -720,6 +720,17 @@ for (const name of Object.keys(Profiles)) {
   check(!m.stopped && K[s.MAPSHOWN] === 0 && K[s.M_SELY] * 10 + K[s.M_SELX] === idx && K[s.APPR] === 1 && K[s.SQCOUNT] === n0 && +tg() === n0,
     `game: fire on a squadron's sector closes the map and jumps there: the approach of ${n0} ships begins, TARGETS ${tg()}`);
   check(K[s.M_SELX] + 1 === K[s.HUDSEC + 1] - 0x70 && K[s.M_SELY] + 1 === K[s.HUDSEC + 4] - 0x70, 'game: the HUD shows the new sector');
+  {   // from the approach into an empty sector: the phasor fires there
+    const cur = K[s.M_SELY] * 10 + K[s.M_SELX];
+    const e = [...K.subarray(s.M_STATE, s.M_STATE + 60)].findIndex((v, i) => v === 0 && i !== cur);
+    run(m, hooks, 3, () => m.setKey(7, 5, true)); m.setKey(7, 5, false); run(m, hooks, 350);
+    K[s.M_MPX] = 17 + 12 * (e % 10) + 6; K[s.M_MPY] = 35 + 16 * Math.floor(e / 10) + 8; run(m, hooks, 3);
+    run(m, hooks, 4, i => { m.mouse.left = i < 2; }); run(m, hooks, 30);
+    const apprAfter = K[s.APPR];
+    let shot = 0; run(m, hooks, 6, i => { m.mouse.left = i < 2; if (K[s.SHOTON]) shot = 1; });
+    check(K[s.M_SELY] * 10 + K[s.M_SELX] === e && apprAfter === 0 && shot, `game: from an approach into the empty sector ${e % 10},${Math.floor(e / 10)}: no approach, the phasor fires`);
+    K[s.M_SELX] = idx % 10; K[s.M_SELY] = Math.floor(idx / 10); K[s.SQCOUNT] = n0; K[s.M_COUNT + idx] = n0;
+  }
   const viewClear = [...K.subarray(0x63C0, 0x7680)].every(v => (v & 0x55 & (v >> 1)) === 0 || true);
   check([...K.subarray(0x4478, 0x46D0)].every((v, i) => v === K[s.MMAT + i]), 'game: closing the map restores the view\'s colours');
   K[s.CURG] = 0; K[s.GSIZE] = 9;

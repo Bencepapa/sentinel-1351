@@ -7,8 +7,8 @@
 ; second-display data to $2900) and this file.
 ;
 ; As in the original, the map opens in the cockpit's 3D view: C= opens and
-; closes it, the HUD, the radar, the guns and the scanner row stay. The view turns
-; white and the map's grid draws in; meanwhile the fight goes on: the fighters fly
+; closes it, the HUD, the radar, the guns and the scanner row stay. The view is
+; wiped and the map's grid draws in; meanwhile the fight goes on: the fighters fly
 ; behind the map's lines, enemy shots still hit the ship (no phasor and no
 ; steering while the map is open: the mouse moves the map's cursor). Fire on
 ; another sector jumps there at once (hyperspace comes later). The world's clock
@@ -47,8 +47,7 @@ MAPTOG: LDA MAPSHOWN
         JMP MAPCLOSE
 
 MAPOPEN:LDA #$01
-        STA MAPSHOWN
-        STA VIEWBG      ; white
+        STA MAPSHOWN    ; (the view's background stays black, as in the original)
         LDA #$70        ; the fighters behind the map's lines
         STA MAPPRIO
         LDA #$00        ; no explosions over the map (their points would stay)

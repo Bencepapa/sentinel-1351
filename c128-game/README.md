@@ -15,12 +15,14 @@ In the browser page: **Program → C128 game (cockpit + map)**.
 
 - The ship starts in sector 05.03 (map cell 4,2), empty as in the original.
 - **C=** (Alt in the page) opens the map **in the cockpit's 3D view**, as in the
-  original in flight: the view turns white, wipes a row a frame, and the grid
+  original in flight: the view wipes a row a frame, and the grid
   draws in with its beeps; the HUD, the radar, the guns and the scanner row stay.
   C= again closes it (the view wipes back, the stars return).
 - **The fight goes on behind the map**: the fighters fly behind its lines and
   icons, enemy shots still hit the ship. While the map is open the mouse moves
   its cursor (no phasor, no steering).
+- **The mouse moves a + pointer** over the grid (enhancement); the cursor box
+  follows the sector under it. Without a mouse the joystick steps the box.
 - **Fire on another sector** closes the map and jumps there at once (hyperspace
   replaces this later).
 - **The world runs all the time**: the map's clock (squadrons move every 16th
