@@ -11,8 +11,8 @@ mouse/versions/
 # Keep only the latest distributable mouse-patch build.
 Sentinel-1351*.d64
 Sentinel-1351*.prg
-!Sentinel-1351_v8.d64
-!Sentinel-1351_v8.prg
+!Sentinel-1351_v9.d64
+!Sentinel-1351_v9.prg
 js/test/out/
 
 # debug screenshots

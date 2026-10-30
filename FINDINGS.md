@@ -81,6 +81,18 @@ x bit 8 shadow, the others hold whatever they hold).
   (mostly `$89CA` = `$00`: all four directions at once, which cancel out).
 - Port: no planet in the cockpit yet; not ported.
 
+### 7. A jump from the map leaves the cursor boxes in the bitmap (`$FC96`)
+
+The boxes are pixel value 2. In flight that value is black (`$FC13`: matrix `$10`),
+and the stars and the hyperspace's erase (`$EEE6`) keep it. Only the map's other exit
+clears the bitmap (`$FC4E JSR $BAB0`), so after a jump the boxes stay: unseen on the
+black sky, but a white flash shows them, and stars vanish while crossing them.
+
+- In play: black squares on the screen during hit flashes, until the map is next
+  closed without a jump.
+- C64 1351 patch: **fixed** (`$FC9D JSR JUMPCLR`, the same clear). Port: **not
+  affected** (closing wipes the view).
+
 ## Quirks (behaviour that looks accidental but is part of the game)
 
 | Where | What | Port |
@@ -95,6 +107,7 @@ x bit 8 shadow, the others hold whatever they hold).
 | `$9F51` | The radar's marks have no colour of their own: the band of colour RAM under the radar shifts one cell every 8 calls through black, greys and white, so a mark changes colour as the band passes over it. | ported |
 | `$8A34` | The tracking computer runs its own main loop instead of the fight loop: no steering at all, about 6.2 passes a frame; enemy fire every pass, the streams every 6-8 passes and the drift every 4 (+2 per difficulty level), a shot launches only every 64th pass (up to ~10 frames late). It pulls only the first live fighter into a box around the view, 1-3 units every 3rd pass; the others stay in view by themselves. | the port runs the same schedule at 6.2 passes a frame |
 | `$8C07` | The tracking key (A) is forgotten when released; the tracking loop looks at it only every 32 passes (~5 frames), so a very short tap may not stop tracking. | kept (A or T in the port) |
+| `$FB95` | The planet's three cells on the map (row 10, columns 18-20) are all black, so the grid's lines under it are drawn but unseen; a white flash shows them. | the cells are black too, and kept free of lines |
 | `$C947` | Enemy fire and the guns (`$9568`, every 16th frame) run at the speed of the main loop or the frame counter, so they are slower than they look: the guns follow the crosshair one step per 16 frames. | the port calls them at the same rates |
 
 ## How the enemy shot and our hits work (for players)
@@ -174,6 +187,25 @@ x bit 8 shadow, the others hold whatever they hold).
   twice (`$BAD3`).
 - **For a port:** the torpedo depends on far more than the shot: the animation
   data, the bitmap ring, the points and the three systems it holds back.
+
+## From the manual (`manual.TXT`), not ported yet
+
+- **Crsr aborts a hyperspace jump.** Hyperspace is not ported yet.
+- **W holds the booster for warping**, and the fire button works the deflector in
+  hyperspace: a hit with it on turns the view blue and costs energy, without it red
+  and a shield.
+- **A toggles Short and Long Range Scan** after a manual warp. In a fight the port
+  uses A for tracking only.
+- **Lingering in an empty sector:** Gamma Fighters warp in. The port brings in a
+  squadron that moves into the sector; check `$F96B` (it starts the same arrival).
+- **After a squadron is gone**, tracking ends, the scan returns to long range, and
+  with no enemies left the Stellar Grid opens by itself.
+- **Docking at a Base Station:** a status report, then repairs, fuel and one proton.
+- **A proton destroys every ship on the screen** and is the only way to destroy a
+  Base Star, through its entrance portal.
+- **Mines** surround Base Stars and Base Stations; phasors can destroy them.
+- **Cruisers** turn into Saucers 2:1 when a Base Station is destroyed.
+- **Ratings** at the end: eight classes from Space Droid to Star Sentinel.
 
 ## Misnamed in earlier notes
 

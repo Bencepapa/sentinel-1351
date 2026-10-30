@@ -119,6 +119,8 @@ def main():
     poke(0xFBCE, bytes([0x20, lo(sym['MSEL']), hi(sym['MSEL'])]), expect=bytes.fromhex('20c821'))
     poke(0x129B, bytes([0x20, lo(sym['MPY']), hi(sym['MPY']), 0xEA, 0xEA, 0xEA]), expect=bytes.fromhex('a4b8f002a900'))
     poke(0x0D12, bytes([0x20, lo(sym['MPY0']), hi(sym['MPY0']), 0x4C, 0x1C, 0x0D, 0xEA]), expect=bytes.fromhex('a9008d01d0f003'))
+    # a jump from the map also clears the map's boxes (the original leaves them)
+    poke(0xFC9D, bytes([0x20, lo(sym['JUMPCLR']), hi(sym['JUMPCLR'])]), expect=bytes.fromhex('20810d'))
     for a in (0xFE30, 0xFE68, 0xFEA0):  # keyboard scans end with LDA #$7F / STA $DC00
         poke(a, bytes([0xA9, 0xBF]), expect=bytes.fromhex('a97f'))
     # relocate the self-modified operands of the old routine

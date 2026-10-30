@@ -90,18 +90,19 @@ PATCHES_MAP = [
      'nr:     LDA #$18        ; (game) CFOL draws the boxes\n        STA DELAY\n        RTS\n        LDA OLDCX\n'),
     ('BOX:    JSR VDCBOX      ; mirror the box on the second display\n',
      'BOX:    JMP QBOX        ; (game) queued, drawn by FBOX\n        JSR VDCBOX\n'),
+    # fire on the ship's own sector closes the map (the original's $FBFB)
+    ('        BNE selgo\n        RTS\nselgo:  LDA SELX\n',
+     '        BNE selgo\n        LDA #2          ; (game) no jump\n        STA MJUMPF\n        RTS\nselgo:  LDA SELX\n'),
+    # the squadrons' move in steps (MVSTEP): all 60 sectors at once took 100 lines
+    ('mprow:  LDA #9\n        STA PCOL\nmpcol:  JSR MOVECELL\n        DEC PCOL\n        BPL mpcol\n        DEC PROW\n        BPL mprow\n        LDX #59\n',
+     '        LDA #9\n        STA PCOL\n        LDA #1\n        STA MVON\n        RTS\nMVCOMMIT:LDX #59\n'),
+    ('        LDA NEWCT,X\n        STA COUNT,X\n        DEX\n        BPL mpcb\n        RTS\n',
+     '        LDA NEWCT,X\n        STA COUNT,X\n        DEX\n        BPL mpcb\n        JMP SQINCHK     ; (game) into the ship\'s sector? ($BEDF)\n'),
     # the mouse pointer: the cockpit shows it (sprite 0 while the map is open)
     ('PTSX:   .BYTE 0         ; its sprite position (shared with c128-game\'s cockpit)\nPTSXH:  .BYTE 0\nPTSY:   .BYTE 0\nPTON:   .BYTE 0\n', ''),
     ('PTRVIC: LDA PTSX ', 'PTRVIC: RTS\n        LDA PTSX '),
 ]
-MAP_EXTRA = """
-GENONCE:LDA GENDONE     ; (game) the start layout only once
-        BNE gon1
-        INC GENDONE
-        JMP GENERATE
-gon1:   RTS
-GENDONE:.BYTE 0
-"""
+MAP_EXTRA = ""
 
 PATCHES_COCKPIT = [
     ('        JSR SECSTART    ; a squadron in the sector (c128-game: the map\'s start sector)\n',
@@ -119,6 +120,16 @@ PATCHES_COCKPIT = [
     ('TICKHK: RTS ', 'TICKHK: JMP WORLD '),
     ('KILLHK: RTS             ; (c128-game: the map\'s COUNT follows)\n', 'KILLHK: JMP SECKILL     ; (game)\n'),
     ('EMPTYHK:JMP SECSTART    ; standalone: the next squadron arrives (c128-game: none)\n', 'EMPTYHK:RTS             ; (game) the sector is empty now\n'),
+    ('nov3:   LDA #168        ; the explosions', 'nov3:   JSR VIEWWORK    ; (game)\n        LDA #168        ; the explosions'),
+    # a squadron coming into the ship's sector starts the dogfight (ARREND in game.asm)
+    ('        LDA #$00        ; ($C7DC) the dogfight\n', 'DOGSTART:LDA #$00       ; ($C7DC) the dogfight\n'),
+    # the stars keep the map's pixels while it is open (GPLOT, GERASE in game.asm)
+    ('PLOTSTAR:\n        STX SAVEX\n        LDA STARX,X\n        STA POSX\n        LDA STARY,X\n        STA POSY\n        JSR PIXADDR\n'
+     '        LDA (PTR),Y\n        ORA MASK3,X\n        STA (PTR),Y\n        LDX SAVEX\n        RTS\n',
+     'PLOTSTAR:JMP GPLOT      ; (game)\n'),
+    ('ERASESTAR:\n        STX SAVEX\n        LDA STARX,X\n        STA POSX\n        LDA STARY,X\n        STA POSY\n        JSR PIXADDR\n'
+     '        LDA (PTR),Y\n        AND CLEARM,X\n        STA (PTR),Y\n        LDX SAVEX\n        RTS\n',
+     'ERASESTAR:JMP GERASE    ; (game)\n'),
 ]
 
 
@@ -164,6 +175,10 @@ def assemble():
     read = lambda *p: open(os.path.join(ROOT, *p), encoding='ascii').read()
     cockpit = patch(read('c128-gui', 'cockpit', 'cockpit.asm'), PATCHES_COCKPIT, 'cockpit')
     mapsrc = patch(read('c128-map', 'map.asm'), PATCHES_MAP, 'map').replace('SHIPDEAD', 'SHIPLOST') + MAP_EXTRA
+    icon = '        LDA COLC\n        STA (MP),Y\n'        # both icon cells: value 1 (the stars) white
+    if mapsrc.count(icon) != 2:
+        raise SystemExit('map: the icon cells\' colour writes not found')
+    mapsrc = mapsrc.replace(icon, '        LDA COLC\n        ORA #$10        ; (game) the stars\n        STA (MP),Y\n')
     for name, value in (('VPLN', 0x4000), ('VCHARS', 0x4240), ('VROWLO', 0x4310), ('VROWHI', 0x4330),
                         ('VCOLTAB', 0x4350), ('VMSGS', 0x4360)):
         old = re.search(r'^%s\s*=\s*\$%04X' % (name, value), mapsrc, re.M)
@@ -177,7 +192,7 @@ def assemble():
         source = cockpit + '\n' + mapsrc.replace('        * = $1D00\n', '        * = $%04X\n' % MAPCODE) + '\n' + glue
         chunks, symbols = asm(source)
         end = CODE2 + len(chunks[CODE2])
-        want = (end + 0xFF) & 0xFF00
+        want = (end + 0x0F) & 0xFFF0    # (a page boundary here would waste what the map needs)
         if want == MAPCODE:
             return chunks, symbols
         MAPCODE = want

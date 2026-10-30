@@ -2,7 +2,7 @@
 
 The browser version follows the C128 port instead of being a second codebase.
 The unchanged binaries run on a JS 6502 core: the native C128 programs
-(cockpit, map, flight) and the full patched C64 game (`Sentinel-1351_v8.prg`).
+(cockpit, map, flight) and the full patched C64 game (`Sentinel-1351_v9.prg`).
 The chips around them are replaced by JS:
 
 | Part | How it is handled |

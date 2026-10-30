@@ -28,6 +28,7 @@
 ;   $0D12  JSR MPY0 / JMP $0D1C  (the line-59 split's sprite 0 Y off the cockpit)
 ;   $0100-$01D7  extra code (dead loader leftovers in the stack page; the game's
 ;                stack stays above $01E6, measured over title, menus and play)
+;   $FC9D  JSR JUMPCLR        (after a jump: the map's boxes off the bitmap)
 ;   $53C0  the map pointer's shape (+), sprite shape $4F, unused by the game
 ;   old routine area $B2D8-$B399 is reused for the new code; its
 ;   self-modified operands live in YMAX/YMIN/YCEN/DDLY now
@@ -268,6 +269,8 @@ sneg:   CMP #NDZ
 sst:    STA DS,X
         PLA
         RTS
+MHI:    .BYTE 119,95    ; (here: JUMPCLR needs the room at the end of $0100)
+RCNT:   .BYTE $00
 
 ENDC3:
 
@@ -317,7 +320,6 @@ mrel:   LDA #0
 mdone:  TXA
         ORA #$01        ; right mouse button is wired to UP
         RTS
-RCNT:   .BYTE $00
 
 ; ---- map pointer (enhancement) ----
 ; map loop, every pass (replaces JSR $21C8): with a mouse the pointer moves once a
@@ -371,7 +373,6 @@ msc:    INX
 msm:    JMP $2213
 msj:    JMP $21C8
 msr:    RTS
-MHI:    .BYTE 119,95
 ; crosshair routine: A = its Y; on another screen the pointer's Y while the map
 ; loop has moved it in the last 32 frames (it does not run every frame), else 0
 ; While shown, the pointer's shape is a + (sprite shape $4F at $53C0, unused by
@@ -393,4 +394,10 @@ MPY:    LDY VIEW
 mpp:    LDY #$4F
         STY $B0
 mpr:    RTS
+; a jump from the map (fix of a bug in the original): the hyperspace erases the grid
+; with $EEE6, which keeps pixel value 2, and only the map's other exit clears the
+; bitmap ($FC4E). The cursor boxes stayed: black, unseen until a white flash, and
+; stars cannot cross them. Clear the same area here.
+JUMPCLR:JSR $BAB0
+        JMP $0D81
 END01:

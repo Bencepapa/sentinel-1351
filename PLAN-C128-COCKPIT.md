@@ -315,6 +315,19 @@ A fighter takes one step per call for type 1; types 2 and 3 step every 1 and 2
 calls (`$2F8B`), so the bigger ships move more slowly. Types 2 and 3 use other
 x / y tables (`$FF15`, `$FF18`).
 
+**Frame budget** (measured with `m.dma`, the VIC's stolen cycles): colours change in
+the horizontal blank (`WAITHB`). In a fight the fighters and the tracking passes run
+in the 3D view's free time, or at 2 MHz when a shot's launch used it up (the stars
+then wait a frame). 2 MHz runs from line 243 to 47: below the gray strip YSCROLL is
+changed so line 243 is no bad line (DEN off would not stop it, and past line 48 it
+blanks the whole frame). The squadrons' move and a squadron's
+arrival run in the 3D view's time too (`VIEWWORK`).
+
+**Speeds** (the original measured with `m.dma`, which matched what the user saw in
+VICE; rates measured without it are too fast): stars 0.44 pixels a frame (0.48 in an
+empty sector, 0.38 in a fight), fighters 0.79 stream steps a frame, enemy fire 13 calls a
+frame, tracking 5.85 passes a frame, a shot about 25 frames (it charges 7 first).
+
 **Port notes.** The cockpit is frame-locked, the original is not: one stream
 step per frame matches the original's rate in the JS machine (0.99 per frame).
 VIC bank 1 has exactly 16 sprite slots free (`$4C00-$4FFF`; `$5000-$5FFF` shows

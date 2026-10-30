@@ -146,6 +146,26 @@ var C128 = (function () {
   P.syncClock = function () {
     this.vCycle += (this.cpu.cycles - this.lastCpu) / this.clockMHz();
     this.lastCpu = this.cpu.cycles;
+    if (this.dma) this.stealCycles();
+  };
+  // Optional (m.dma = true, the timing tests): the cycles the VIC takes from the
+  // processor, as on a real machine: 43 on a bad line, 3 + 2 per sprite on a line
+  // with sprite data. Off by default: the page and the rates measured against the
+  // original run without them.
+  P.stealCycles = function () {
+    var line = Math.floor((this.vCycle - 12) / PAL_LINE_CYCLES);        // (from cycle 12)
+    if (this.dmaFrame !== this.frame) { this.dmaFrame = this.frame; this.dmaLine = -1; }
+    while (this.dmaLine < line) {
+      var l = ++this.dmaLine, v = this.vic, steal = 0, n = 0;
+      if ((v[0x11] & 0x10) && l >= 48 && l <= 247 && (l & 7) === (v[0x11] & 7)) steal += 43;
+      for (var i = 0; i < 8; i++) {
+        if (!(v[0x15] & (1 << i))) continue;
+        var d = (l - v[1 + 2 * i]) & 0x1FF;
+        if (d < ((v[0x17] & (1 << i)) ? 42 : 21)) n++;
+      }
+      if (n) steal += 3 + 2 * n;
+      this.vCycle += steal;
+    }
   };
   P.rasterLine = function () {
     var c = this.cycleInFrame();

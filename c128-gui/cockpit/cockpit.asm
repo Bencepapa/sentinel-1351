@@ -39,7 +39,8 @@ PATHX   = $3400         ; phasor shot path, x / 2 (original $0400)
 PATHY   = $3500         ; and y (original $0500)
 HUDE    = $483E         ; the four energy digits of the HUD (original $543E)
 HUDS    = $4832         ; the two shield digits of the HUD (original $5432)
-EFPASS  = 16            ; the original's main loop passes per frame in a fight (enemy fire)
+EFPASS  = 13            ; the original's main loop passes per frame in a fight (enemy fire;
+                        ; 12.6 on a real machine, 15 without the VIC's stolen cycles)
 TARGETS = $4876         ; the last digit of TARGETS on the HUD (original $5476)
 LRTAB   = $3600         ; the long range scanner's scale 0-128 -> 0-99 (original $ED00, build.py)
 DIGF    = $3690         ; the digits drawn under the crosshair (original sprite $64, build.py)
@@ -52,6 +53,7 @@ SHOTPTR = $F3           ; sprite pointers of the shot shapes $67-$70: $F3-$FC (b
 STREAMS = $8000         ; type-1 movement streams (original $E800-$ECFF): pages $80-$84
 PTR     = $FB
 NSTARS  = 12
+SHOTWAIT = 7
 DDLY    = $40           ; frames of calm before the crosshair glides back
 DZ      = 12            ; steering dead zone around the center
 NDZ     = 244           ; -DZ
@@ -138,11 +140,11 @@ stinit: JSR NEWSTAR
         BPL stinit
 
 ; ================= the frame, driven by the raster =================
-frame:  LDA $D012       ; still in the border of the old frame (lines 251-255)? wait for the wrap
-        CMP #251
+frame:  LDA $D012       ; still in the border of the old frame (lines 243-255)? wait for the wrap
+        CMP #243
         BCS frame
         LDA #56
-        JSR WAITLN
+        JSR WAITST
         LDA #1          ; the one line of white at the top of the HUD
         STA BG
         STA BORDER
@@ -152,36 +154,32 @@ frame:  LDA $D012       ; still in the border of the old frame (lines 251-255)? 
         STA $D016
         LDA #$20        ; text: screen $4800, character set $4000
         STA $D018
-        LDA #58
-        JSR WAITLN
+        LDY #20         ; (timed from line 56: to the end of line 57)
+wb58:   DEY
+        BNE wb58
         LDA HUDBRD      ; upper HUD: the border ($0CCC: light blue, the sound's pulse,
         STA BORDER      ; the approach's green / red / yellow), dark gray background
         LDA #$0B
         STA BG
         LDA #74
-        JSR WAITLN
+        JSR WAITST
         LDA #1          ; two white lines
         STA BG
         STA BORDER
-        LDA #75
-        JSR WAITLN
+        LDY #10         ; (timed from line 74: to its end)
+wb75:   DEY
+        BNE wb75
         LDA #$3B        ; multicolor bitmap: the 3D view and the cockpit art
         STA $D011
         LDA #$18
         STA $D016
         STA $D018
-        LDA #76
-        JSR WAITLN
-        LDA FLASHC      ; black (white with the map open: VIEWBG), or the colour
+        LDA FLASHC      ; line 76: the bad line 75 holds the processor until its end,
+                        ; which also removes the jitter      ; black (white with the map open: VIEWBG), or the colour
         BNE vbg1        ; of a hit flash ($0B26, $0A4D)
         LDA VIEWBG
 vbg1:   STA BG
-        LDA #77
-        JSR WAITLN
-        LDA FLASHC
-        BNE vbg2
-        LDA VIEWBG
-vbg2:   STA BORDER
+        STA BORDER      ; (both together: the white lines end alike)
         LDA #78
         JSR WAITLN
         JSR SPRCROSS    ; the crosshair
@@ -195,7 +193,7 @@ vbg2:   STA BORDER
         LDA #$00
         STA TLOK
 dolaunch:
-        JSR LAUNCH
+        JSR LAUNCHD
 nolaunch:
         JSR SWEEPSND    ; the phasor sound is swept 6 times a frame while a shot
         JSR SWEEPSND    ; flies: once in $1424, 3 times after it ($0C3B-$0C41),
@@ -207,7 +205,8 @@ nov:    LDA TRUN        ; tracking: its passes too
         BEQ nov2
         LDA #112
         JSR TRKSL2
-nov2:    LDA #182        ; the explosions use what is left of the 3D view's time
+nov2:   JSR FGVIEW
+nov3:   LDA #168        ; the explosions use what is left of the 3D view's time
                         ; (a point takes up to 11 lines)
         STA EXLIM
         JSR EXPLODE
@@ -216,9 +215,12 @@ nov2:    LDA #182        ; the explosions use what is left of the 3D view's time
         JSR WAITLN
         JSR SPRGUNS     ; sprites 0 and 3 become the two guns
         JSR SWEEPSND
-        JSR FIGHT       ; the fighters (the time until line 230 is free; the star
-                        ; field fills the vertical blank)
-        LDA #218
+        LDA FGDONE      ; (a fight here, with the bad lines and sprites, made the gray
+        CMP #$02        ; strip below late)
+        BNE nofgt
+        JSR FIGHT
+nofgt:
+        LDA #204
         STA EXLIM
         JSR EXPLODE
         JSR EXPLODE2
@@ -227,7 +229,7 @@ nov2:    LDA #182        ; the explosions use what is left of the 3D view's time
         LDA #0
         STA VICENA
         LDA #233
-        JSR WAITLN
+        JSR WAITST
         LDA #$0B        ; text strip: the one character tall gray line
         STA BORDER
         STA BG
@@ -238,42 +240,46 @@ nov2:    LDA #182        ; the explosions use what is left of the 3D view's time
         LDA #$20
         STA $D018
         JSR SWEEPSND
-        LDX #0          ; black below it: written as early as possible in line 242
-        LDY #$08
-w242:   LDA $D012
-        CMP #242
-        BCC w242
-        STX BORDER
-        STX BG
-        STY $D016
+        LDA #242        ; black below it
+        JSR WAITST
+w242:   LDA #$00
+        STA BORDER
+        STA BG
+        LDA #$08
+        STA $D016
+        LDA #$18        ; no more bad lines (YSCROLL 0: 243-247 do not match; DEN off
+        STA $D011       ; would not stop them, and past line 48 it blanks a frame), so
+        LDA FAST        ; 2 MHz can start here, not at line 251
+        ORA #$01
+        STA FAST
 
-        JSR INPUTV      ; vertical blank: mouse, cursor, guns (at 1 MHz: lines
+        JSR INPUTV      ; vertical blank: mouse, cursor, guns
         LDA APPR        ; (no shots while approaching: fire chooses a group)
         BEQ vbf
         LDA #$00
         STA FIREFLAG
-vbf:
-        LDA #251        ; 242-250 are still in the display window)
-        JSR WAITLN
-        LDA FAST        ; 2 MHz in the border, lines 251-47: the VIC-IIe fetches
-        ORA #$01        ; nothing there (sprites are off, no bad lines), so the
-        STA FAST        ; processor gets twice the time (I/O accesses stay 1 MHz)
+        JMP vbg
+vbf:    JSR FGVB        ; the fighters, or the stars
+        JMP vbh
+vbg:                    ; 2 MHz, lines 243-47: the VIC-IIe fetches nothing there (sprites
+                        ; off, no bad lines): twice the time (I/O accesses stay 1 MHz)
         JSR VIEWVB      ; the star field (or the map's frame, c128-game)
+vbh:
         JSR VBWORK      ; steering, drift, enemy fire, the radar
         JSR TICKHK      ; (c128-game: the world's clock, $BE29)
-vbw:    BIT $D011       ; after the wrap (line 256-311 read as 0-55 with bit 7
-        BMI vbw         ; of $D011 set), the rest of the border: the explosions
-        LDA $D012
-        CMP #251
-        BCS vbw
-        LDA #40         ; (a point takes up to 4 lines at 2 MHz)
+vbw:    LDA $D012       ; after the wrap (line 256-311 read as 0-55 with bit 7 of
+        CMP #243        ; $D011 set), the rest of the border: the explosions. (In this
+        BCS vbw         ; order: bit 8 first, and line 255-256 between them starts the
+        BIT $D011       ; frame early, the border keeps its colour to line 56)
+        BMI vbw
+        LDA #34         ; (a point takes up to 4 lines at 2 MHz)
         STA EXLIM
         JSR EXPLODE
         JSR EXPLODE2
         LDA $D012       ; count frames whose work ran past line 47 (should stay 0)
         CMP #48
         BCC vbok
-        CMP #251
+        CMP #243
         BCS vbok
         INC OVRUN
 vbok:   LDA FAST        ; 1 MHz again before the display window
@@ -535,6 +541,7 @@ mx1:    STA ADX
         DEC DIRY
 my1:    STA ADY
         LDY NT0         ; steps this frame (STARTK: faster while rushing)
+        BEQ mnext2
         STY NTICK
 mloop:  LDA ADX         ; the longer axis steps every time, the other one by slope
         CMP ADY
@@ -562,7 +569,7 @@ majy:   JSR STEPY
 mst:    STA STARV,X
 mnext:  DEC NTICK
         BNE mloop
-        LDA STARX,X
+mnext2: LDA STARX,X
         CLC
         ADC SHX
         STA STARX,X
@@ -956,7 +963,7 @@ pharm:  LDA SHOTARM
         BNE phret
         LDA #$01
         STA SHOTARM
-        JSR CHARGESND
+        JSR CHARGE2
 phret:  RTS
 phfly:  JSR SWEEPSND
         JSR LINEGEN     ; the next part of the path (port only, see LINE)
@@ -1386,6 +1393,8 @@ POSY:   .BYTE 0
 SAVEX:  .BYTE 0
 WLN:    .BYTE 0
 OVRUN:  .BYTE 0
+SNDGATE:.BYTE 0
+FGDONE: .BYTE 0
 JOYG:   .BYTE $FF
 FRMC:   .BYTE 0
 ADX:    .BYTE 0
@@ -1574,17 +1583,7 @@ fgdog:  LDA TRUN        ; (tracking: streams and drift run in its passes)
         BEQ fgd1
         JSR TRKSLOT
         JMP fg1
-fgd1:
-        LDX #$00
-        JSR MOVEN
-        LDX #$02
-        JSR MOVEN
-        LDX #$04
-        JSR MOVEN
-        LDA EFRM
-        AND #$01
-        BEQ fg1
-        JSR EDRIFT
+fgd1:   JSR FGSTEP
 fg1:    LDA EFRM
         AND #$03
         BNE fg2
@@ -2587,7 +2586,9 @@ zs1:    SEC
         RTS
 
 ; The vertical blank's share (2 MHz, after the star field).
-VBWORK: JSR RADSTEP     ; ($9F1C, twice a frame) the scan line and the colour band
+VBWORK: LDA #$1B        ; YSCROLL back (past line 247: no bad lines until line 48)
+        STA $D011
+        JSR RADSTEP     ; ($9F1C, twice a frame) the scan line and the colour band
         JSR RADSTEP
         JSR CIRCLES
         LDA EFRM        ; the radar: every other frame ($0C8A in the interrupt);
@@ -2599,7 +2600,7 @@ vbr0:   LDA RADPEND
         BIT $D011       ; lines 256-311 (bit 8): in time
         BMI vbr1
         LDA $D012
-        CMP #251
+        CMP #243
         BCS vbr1
         CMP #20         ; (it takes up to ~26 lines)
         BCS vbr
@@ -3632,6 +3633,58 @@ MAPINHK:RTS             ; (c128-game: the map's mouse, cursor and choice)
 MAPVBHK:RTS             ; (c128-game: the map's draw-in, blink, planet)
 TICKHK: RTS             ; (c128-game: the map's TICKER)
 
+; A = raster line, with the two lines before it free: return so that the colours
+; written next change at the end of the line before it, off the screen. Polling alone
+; leaves 7 cycles of jitter and the edge shakes; a second look at the raster, one line
+; later, at about the moment it changes, takes half of them away. (Late: no wait.)
+WAITST: STA WLN
+        DEC WLN         ; the line before it
+        SEC
+        SBC #3
+wst1:   CMP $D012
+        BCS wst1
+        LDY #10
+wst2:   DEY
+        BNE wst2
+        NOP
+        LDA $D012
+        CMP WLN
+        BCS wst3        ; (changed already: 3 cycles)
+        NOP             ; (not yet: 2 + 4 + the 3 below are 3 more)
+        NOP
+wst3:   LDY #8
+wst4:   DEY
+        BNE wst4
+        NOP
+        NOP
+        RTS
+
+; The fighters' time: in a fight the 3D view's; if that is used up (a shot's launch),
+; the 2 MHz time; approaching between lines 194 and 230, which its limits expect. (A
+; fight there, with the bad lines and sprites, made the gray strip late.)
+FGVIEW: LDA APPR
+        BEQ fgv1
+        LDA #$02
+        BNE fgv2
+fgv1:   LDA $D012       ; (a flying shot takes the view until about line 130)
+        CMP #145
+        LDA #$00
+        BCS fgv2
+        JSR FIGHT
+        LDA #$01
+fgv2:   STA FGDONE
+        RTS
+FGVB:   LDA FGDONE      ; the 3D view had no time for them: here; the stars only wait
+        BNE fgvb1       ; a frame if the fighters took long
+        JSR FIGHT
+        BIT $D011
+        BMI fgvb2
+fgvb1:  JMP VIEWVB
+fgvb2:  LDA $D012       ; (bit 8 set: 256 + this)
+        CMP #16
+        BCC fgvb1
+        RTS
+
 ; Sprite 7 ($1193, once a frame): three things in turn, one a frame: the left
 ; gun's barrel (shape $47), the right gun's ($48), both twice as wide, black, the
 ; firing gun's yellow while a shot flies (with the red gun: red and yellow); and
@@ -4430,19 +4483,22 @@ TRKEND: LDA #$00        ; ($8A4E)
         RTS
 
 TRKFRAME:               ; a frame of the tracking loop: owed in the vertical blank
-        CLC             ; (2 MHz), run until line 30; the rest in the fight's slot
-        LDA TACC        ; (TRKSLOT, lines 194-222)
-        ADC #$2C        ; + 6.17 passes ($062C / 256)
+        CLC             ; (2 MHz), run until line 26; the rest in the fight's slot
+        LDA TACC        ; (TRKSLOT, until line 176)
+        ADC #$D9        ; + 5.85 passes ($05D9 / 256), the original on a real machine
         STA TACC
         LDA TACC+1
-        ADC #$06
-        STA TACC+1
+        ADC #$05
+        CMP #24         ; (no catching up after a busy stretch: 4 frames' worth at most)
+        BCC tf0
+        LDA #24
+tf0:    STA TACC+1
 tf1:    LDA TACC+1
         BEQ tf9
         LDA $D012
-        CMP #30
+        CMP #26
         BCC tf2
-        CMP #251
+        CMP #243
         BCC tf9
 tf2:    DEC TACC+1
         JSR TPASS
@@ -4451,7 +4507,32 @@ tf2:    DEC TACC+1
         STA TACC+1
 tf9:    RTS
 
-TRKSLOT:LDA #222        ; the fight's slot: until line 222
+; The fighters' streams and drift in a fight: 0.79 steps a frame (the original on a real
+; machine; it is not tied to the frame).
+FGSTEP: CLC
+        LDA FGACC
+        ADC #$CA
+        STA FGACC
+        BCC fgs9
+        LDX #$00
+        JSR MOVEN
+        LDX #$02
+        JSR MOVEN
+        LDX #$04
+        JSR MOVEN
+        INC FGDR
+        LDA FGDR
+        AND #$01
+        BEQ fgs9
+        JMP EDRIFT
+fgs9:   RTS
+FGACC:  .BYTE 0
+FGDR:   .BYTE 0
+
+TRKSLOT:LDA FAST        ; (the fighters moved to the 2 MHz time: TRKFRAME runs the passes
+        LSR A           ; there, this limit means nothing after the wrap)
+        BCS ts9
+        LDA #176        ; the fight's slot: until line 176
 TRKSL2: STA TSLIM       ; (the 3D view's: until line 112)
 ts1:    LDA TACC+1
         BEQ ts9
@@ -4901,7 +4982,24 @@ SNDGO:  STA SNDSTP      ; ($0969)
         STA $D404
         RTS
 
-SNDTICK:LDA SNDON       ; ($09AC) once a frame
+CHARGE2:LDA #$5A        ; a shot charging ($144D): the sweeps wait 90 frames ($08ED), voice 1
+        STA SNDGATE     ; is the shot's (the siren after an arrival would write into it)
+        LDA #SHOTWAIT
+        STA SHOTDLY
+        JMP CHARGESND
+LAUNCHD:LDA TRUN        ; (tracking: its 64 passes, TLOK, are the wait)
+        BNE lchd8
+        DEC SHOTDLY     ; the original launches from its main loop ($2DFC), some frames
+        BNE lchd9       ; later: 6.7 charging + the rest of its 27 frames a shot on a real machine
+lchd8:  JMP LAUNCH
+lchd9:  RTS
+SHOTDLY:.BYTE 1
+
+SNDTICK:LDA SNDGATE
+        BEQ sdg2
+        DEC SNDGATE
+        RTS
+sdg2:   LDA SNDON       ; ($09AC) once a frame
         BNE sd1
         LDA APPR
         BNE sd0
@@ -4986,10 +5084,12 @@ en9:    RTS
 
 ; Star steps this frame: one, two every fourth frame; while rushing the original
 ; lowers every star's delay to RSPD / 4 ($C8C1): here up to 7 more steps.
-STARTK: LDY #1
-        LDA FRMC
-        AND #3
-        BNE stk1
+STARTK: LDY #0          ; 0.44 pixels a frame (the original on a real machine: 0.48
+        CLC             ; in an empty sector, 0.38 in a fight)
+        LDA STKACC
+        ADC #$70
+        STA STKACC
+        BCC stk1
         INY
 stk1:   LDA APPR
         BEQ stk2
@@ -5007,7 +5107,14 @@ stk1:   LDA APPR
         ADC STKX
         TAY
 stk2:   STY NT0
-        RTS
+        TYA
+        ORA SHX
+        ORA SHY
+        BNE stk3
+        PLA             ; nothing moves this frame: out of STARS, the time is free
+        PLA
+stk3:   RTS
+STKACC: .BYTE 0
 
 ; The arrival ($C832): "WARNING  THE GORGANITOR APPROACH" in yellow / orange,
 ; flashing every 15th frame, 30 times (as it stands, not scrolled), and the siren.
@@ -5145,7 +5252,10 @@ edrret:  RTS
 PLACE:  TXA
         LSR A
         TAY
-        SEC
+        LDA ALIVE,Y     ; (a dead fighter's slot still drifts and turns with the view:
+        BNE pl0         ; without this it shows up as a stray sprite after a fight)
+        JMP plhide
+pl0:    SEC
         LDA #$50
         SBC ENX,X
         LDA #$87

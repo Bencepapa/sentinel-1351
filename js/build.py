@@ -66,7 +66,7 @@ def c64_symbols():
 
 def export_c64_game():
     """The full patched C64 game: the one-file PRG starts with RUN (SYS in its stub)."""
-    with open(os.path.join(ROOT, 'Sentinel-1351_v8.prg'), 'rb') as f:
+    with open(os.path.join(ROOT, 'Sentinel-1351_v9.prg'), 'rb') as f:
         data = f.read()
     load = data[0] | data[1] << 8
     sys_at = data.index(0x9E, 2)                       # BASIC token SYS

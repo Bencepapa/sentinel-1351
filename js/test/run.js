@@ -197,6 +197,7 @@ function report(hooks, label) {
   check(dbg.value(dbg.watches[0]) === m.ram[s.SHIELDS] && m.ram[s.SHIELDS] > 0, `c64: shields = ${m.ram[s.SHIELDS]}`);
   snap(m, 'c64-flight');
 
+
   // breakpoint on the raster IRQ, then single steps
   m.setBreak(s.IRQ, true);
   let r = m.run();
@@ -262,6 +263,124 @@ function report(hooks, label) {
   check(/^PC=/.test(dbg.exec('r')[0]) && dbg.exec('m SHIELDS 1')[0].startsWith('$844F'), 'c64: monitor r / m');
   run(m, hooks, 100);
   snap(m, 'c64-gameover');
+}
+
+// ---- C64 game: a jump from the map ------------------------------------------------
+// It leaves no cursor boxes in the bitmap (pixel value 2: black, the original keeps
+// them through the hyperspace; only a white flash shows them).
+{
+  const { m, hooks } = boot('c64game', 'trace');
+  const R = m.ram;
+  const boxes = () => { let n = 0; for (let i = 0x63C0; i < 0x7680; i++) for (let b = 0; b < 8; b += 2) if (((R[i] >> b) & 3) === 2) n++; return n; };
+  run(m, hooks, 300);
+  run(m, hooks, 300, i => { m.mouse.left = (i >= 0 && i < 10) || (i >= 150 && i < 160); });
+  run(m, hooks, 200);
+  run(m, hooks, 20, () => m.setKey(7, 5, true)); m.setKey(7, 5, false);
+  run(m, hooks, 300);
+  const open = R[0xB8], b0 = boxes(), s0 = R[0x93] * 10 + R[0x92];
+  let e = 0; while (R[0x033C + e] || e === s0) e++;           // an empty sector, not this one
+  run(m, hooks, 3, () => m.moveMouse(1, 0));
+  R[0x8A] = 12 * (e % 10) + 6; R[0x8B] = 16 * Math.floor(e / 10) + 8;
+  run(m, hooks, 40, () => m.moveMouse(1, 0));
+  R[0x8A] = 12 * (e % 10) + 6; R[0x8B] = 16 * Math.floor(e / 10) + 8;
+  run(m, hooks, 40);
+  run(m, hooks, 8, i => { m.mouse.left = i < 4; });
+  for (let i = 0; i < 1500 && R[0xB8]; i++) m.runFrame();
+  run(m, hooks, 10);                                          // (the clear takes a few frames)
+  check(open && b0 > 0 && !R[0xB8] && R[0x93] * 10 + R[0x92] === e && boxes() === 0,
+    `c64: a jump from the map to sector ${e} leaves no cursor boxes (${b0} pixels before, ${boxes()} after)`);
+}
+
+// ---- c128-game: the ship's own sector, a squadron coming in, the raster splits -----
+{
+  const { m, hooks, p } = boot('game', 'trace');
+  const s = p.symbols, K = m.ram;
+  m.dma = true;                                               // as on a real machine: bad lines, sprites
+  const tg = () => String.fromCharCode(K[s.TARGETS - 1] - 0x40, K[s.TARGETS] - 0x40);
+  run(m, hooks, 60);
+  const idx = K[s.M_SELY] * 10 + K[s.M_SELX];
+  {   // fire on the ship's own sector: the map closes, no jump
+    run(m, hooks, 3, () => m.setKey(7, 5, true)); m.setKey(7, 5, false); run(m, hooks, 350);
+    const open = K[s.MAPSHOWN], appr = K[s.APPR];
+    K[s.M_CURX] = K[s.M_SELX]; K[s.M_CURY] = K[s.M_SELY];
+    K[s.M_MPX] = 17 + 12 * K[s.M_SELX] + 6; K[s.M_MPY] = 35 + 16 * K[s.M_SELY] + 8; run(m, hooks, 3);
+    run(m, hooks, 4, i => { m.mouse.left = i < 2; }); run(m, hooks, 30);
+    check(open === 1 && K[s.MAPSHOWN] === 0 && K[s.APPR] === appr && K[s.M_SELY] * 10 + K[s.M_SELX] === idx, `game: fire on the ship's own sector closes the map, no jump (open ${open}, now ${K[s.MAPSHOWN]}, approach ${appr} -> ${K[s.APPR]}, sector ${K[s.M_SELY] * 10 + K[s.M_SELX]}, was ${idx})`);
+  }
+  {   // a squadron moves into the ship's sector: the squadrons' move stays on time, the
+      // points rush in, three fighters appear, the dogfight and the warning start
+    const sel = K[s.M_SELY] * 10 + K[s.M_SELX];
+    K[s.M_STATE + sel] = 0; K[s.M_COUNT + sel] = 0; K[s.SQCOUNT] = 0; K[s.APPR] = 0; K[s.APRUN] = 0; K[s.LRMODE] = 0;
+    K[s.ALIVE] = K[s.ALIVE + 1] = K[s.ALIVE + 2] = 0; K[s.GSIZE] = K[s.GSIZE + 1] = K[s.GSIZE + 2] = 0;
+    const nb = sel + (K[s.M_SELX] < 9 ? 1 : -1);
+    K[s.M_STATE + nb] = 1; K[s.M_COUNT + nb] = 2;
+    const o0 = K[s.OVRUN];
+    K[s.M_TICKC] = 1 + 0x10; K[s.M_TICKFR] = 255;             // the next tick is a move
+    let pts = 0, moved = -1, fx = -1, on = -1;
+    for (let f = 0; f < 200 && on < 0; f++) {
+      m.runFrame();
+      if (moved < 0 && K[s.M_STATE + sel]) moved = f;
+      if (fx < 0 && K[s.ARRFX]) fx = f;
+      if (K[s.ARRFX] === 2) pts = Math.max(pts, [...K.subarray(0x63C0, 0x7000)].reduce((n, v) => n + [0, 2, 4, 6].filter(b => ((v >> b) & 3) === 1).length, 0));
+      if (fx >= 0 && !K[s.ARRFX]) on = f;
+    }
+    run(m, hooks, 30);
+    check(moved >= 0 && fx >= 0 && K[s.M_COUNT + sel] === 3 && K[s.SQCOUNT] === 3 && tg() === '03',
+      `game: a squadron of 2 moves into the ship's sector (frame ${moved}, effect ${fx}) and becomes 3, TARGETS ${tg()}, COUNT ${K[s.M_COUNT + sel]}, SQCOUNT ${K[s.SQCOUNT]}`);
+    check(on - fx >= 40 && on - fx <= 80 && pts >= 20, `game: its points rush in for ${on - fx} frames (the original: 54), ${pts} pixels at once`);
+    check(K[s.ALIVE] && K[s.ALIVE + 1] && K[s.ALIVE + 2] && K[s.MSGON] && !K[s.APPR], 'game: three fighters appear, with the warning');
+    check(K[s.OVRUN] - o0 <= 1, `game: at most one frame overran during the move and the arrival (${K[s.OVRUN] - o0} did)`);
+    {   // firing during the arrival's siren: the siren waits 90 frames, voice 1 is the shot's
+      const siren = K[s.SNDON], hi = K[s.SNDHI], cnt = K[s.SNDCNT];
+      K[s.SNDCNT] = cnt || 5; K[s.SNDON] = 1;
+      run(m, hooks, 3, i => { m.mouse.left = i < 2; });
+      const lo = K[s.SNDLO];
+      run(m, hooks, 30);
+      check(K[s.SNDGATE] > 0 && K[s.SNDLO] === lo, `game: a shot makes the siren wait (${K[s.SNDGATE]} frames left), its writes stay out of the firing sound`);
+    }
+  }
+  {   // a fight: the colours change off the screen, the same way in every frame
+    const arm = () => { K[s.APPR] = 0; K[s.APRUN] = 0; K[s.LRMODE] = 0; K[s.SQCOUNT] = 200; K[s.CURG] = 0; K[s.GSIZE] = K[s.GSIZE + 1] = K[s.GSIZE + 2] = 200; K[s.SHLD] = 40;
+      for (let i = 0; i < 3; i++) { K[s.ALIVE + i] = 1; K[s.ENX + 2 * i] = 0x60 + i * 0x30; K[s.ENX + 2 * i + 1] = 0x88; K[s.ENY + 2 * i] = 0x80; K[s.ENY + 2 * i + 1] = 0x88; K[s.ENZ + 2 * i] = 0; K[s.ENZ + 2 * i + 1] = 0x87; } };
+    arm();
+    let frames = 0, shaky = 0, seen = '';
+    for (let f = 0; f < 1000; f++) {
+      m.mouse.left = f % 30 < 3; m.moveMouse(f % 200 < 100 ? 2 : -2, 0); if (f % 300 === 299) arm();
+      m.runFrame(); frames++;
+      const vl = m.vicLog;
+      for (let i = 0; i < vl.length; i += 4) {
+        const line = vl[i], cyc = vl[i + 1], r = vl[i + 2];
+        if ((r !== 0x20 && r !== 0x21) || line < 50 || line > 76 && line < 230 || line > 245) continue;
+        if (cyc >= 16 && cyc < 56) { shaky++; if (!seen) seen = `$D0${r.toString(16)} at line ${line}, cycle ${cyc}`; }
+      }
+    }
+    {   // light frames (the stars rest): a frame must not start before the wrap
+      K[s.APPR] = 0; K[s.ALIVE] = K[s.ALIVE + 1] = K[s.ALIVE + 2] = 0; K[s.SQCOUNT] = 0;
+      let early = 0;
+      for (let f = 0; f < 300; f++) { m.runFrame(); const vl = m.vicLog; for (let i = 0; i < vl.length; i += 4) if (vl[i + 2] === 0x20 && vl[i] < 50) early++; }
+      check(early === 0, `game: the border's colours never start above line 55 (${early} early writes)`);
+    }
+    {   // a shot in a tracked fight comes soon; the map stops it; dead fighters stay away
+      arm(); K[s.TON] = 1; run(m, hooks, 10);
+      let shots = 0, prev = 0;
+      for (let f = 0; f < 600; f++) { if (f % 100 === 99) arm(); m.mouse.left = f % 2 === 0; m.runFrame(); const v = K[s.SHOTON]; if (v && !prev) shots++; prev = v; }
+      m.mouse.left = false;
+      check(shots >= 15, `game: firing with tracking on: ${shots} shots in 600 frames`);
+      arm(); run(m, hooks, 3, i => { m.mouse.left = i < 2; });
+      run(m, hooks, 3, () => m.setKey(7, 5, true)); m.setKey(7, 5, false); run(m, hooks, 40);
+      check(K[s.MAPSHOWN] === 1 && !K[s.SHOTON] && !K[s.SHOTARM], 'game: opening the map stops the shot (its sound, the sprite of the planet)');
+      run(m, hooks, 3, () => m.setKey(7, 5, true)); m.setKey(7, 5, false); run(m, hooks, 30);
+      K[s.SNDON] = 1; K[s.SNDCNT] = 5; K[s.SNDRATE] = 1; K[s.SNDRLD] = 40;
+      run(m, hooks, 3, () => m.setKey(7, 5, true)); m.setKey(7, 5, false); run(m, hooks, 5);
+      check(K[s.MAPSHOWN] === 1 && !K[s.SNDON], 'game: opening the map stops the siren (voice 1 is for the beeps of the map)');
+      run(m, hooks, 3, () => m.setKey(7, 5, true)); m.setKey(7, 5, false); run(m, hooks, 30);
+      K[s.ALIVE] = K[s.ALIVE + 1] = K[s.ALIVE + 2] = 0; K[s.APPR] = 0; K[s.TRUN] = 0; K[s.TON] = 0;
+      for (let i = 0; i < 6; i += 2) { K[s.ENX + i] = 0x80; K[s.ENX + i + 1] = 0x88; K[s.ENY + i] = 0x80; K[s.ENY + i + 1] = 0x88; K[s.ENZ + i] = 0; K[s.ENZ + i + 1] = 0x87; }
+      run(m, hooks, 10);
+      check((K[s.EVIS] & 0x70) === 0, 'game: the slot of a dead fighter shows no sprite in view');
+    }
+    check(!m.stopped && shaky <= frames / 25, `game: in a fight the splits' colours change off the screen (${shaky} late writes in ${frames} frames${seen ? ', first ' + seen : ''})`);
+  }
 }
 
 // ---- phasor shot: C128 cockpit port against the original C64 routines ----------
@@ -336,7 +455,7 @@ function report(hooks, label) {
   run2.hooks.trace('SWEEPSND');
   run(run2.m, run2.hooks, 10); dogfight(run2);
   const sweeps = [];
-  run(run2.m, run2.hooks, 12, i => { run2.m.mouse.left = i < 2; if (i > 3) sweeps.push(run2.hooks.handlers[run2.p.symbols.SWEEPSND].callsLastFrame); });
+  run(run2.m, run2.hooks, 20, i => { run2.m.mouse.left = i < 2; if (i > 12) sweeps.push(run2.hooks.handlers[run2.p.symbols.SWEEPSND].callsLastFrame); });
   check(sweeps.every(n => n === 6), `phasor: sound swept 6 times per frame in flight (${sweeps.join(',')})`);
   check(K[ks.HUDE + 2] !== 0x79 || K[ks.HUDE + 1] !== 0x79, 'phasor: shots cost energy on the HUD');
   // timing: the longest launch and the busiest flight frame fit between lines 78 and 194
@@ -706,8 +825,8 @@ function report(hooks, label) {
     if (f === 150) var row = String.fromCharCode(...[...K.subarray(s.LRROW, s.LRROW + 40)].map(c => c === 0x60 || c === 0x40 ? 32 : c)).trim();
   }
   const rate = passes / frames;
-  check(K[s.TRUN] && row === 'AUTO TRACKING ENGAGED' && rate > 6.0 && rate < 6.4 && shown >= frames * 0.95 && K[s.OVRUN] === 0,
-    `tracking: A starts it ("${row}"), ${rate.toFixed(2)} passes a frame (original ~6.2), all 3 fighters kept in view ${shown}/${frames} frames while steering away, no overrun`);
+  check(K[s.TRUN] && row === 'AUTO TRACKING ENGAGED' && rate > 5.6 && rate < 6.1 && shown >= frames * 0.95 && K[s.OVRUN] === 0,
+    `tracking: A starts it ("${row}"), ${rate.toFixed(2)} passes a frame (the original on a real machine: 5.85), all 3 fighters kept in view ${shown}/${frames} frames while steering away, no overrun`);
   for (let f = 0; f < 30; f++) { m.setKey(1, 2, f < 10); m.runFrame(); }
   const off = !K[s.TRUN] && !K[s.TON];
   m.setKey(1, 2, true); for (let f = 0; f < 10; f++) m.runFrame(); m.setKey(1, 2, false);
@@ -779,6 +898,21 @@ for (const name of Object.keys(Profiles)) {
   check([...K.subarray(0x7680, 0x7CC0)].join() === art0 && [...K.subarray(0x4800, 0x4878)].join().slice(0, 40) === hud0.slice(0, 40),
     'game: the cockpit art and the HUD stay while the map is open');
   check([...K.subarray(0x6000, 0x63C0)].every((v, i) => true) && K[s.OVRUN] === 0, 'game: no frame overran while the map drew in');
+  {   // the star field goes on behind the map, on empty pixels only, as in the original
+    const lit = () => { const a = []; for (let i = 0x63C0; i < 0x7680; i++) for (let b = 0; b < 8; b += 2) if (((K[i] >> b) & 3) === 1) a.push(i * 8 + b); return a.join(); };
+    const lines = () => { let n = 0; for (let i = 0x63C0; i < 0x7680; i++) for (let b = 0; b < 8; b += 2) if (((K[i] >> b) & 3) === 3) n++; return n; };
+    const n0l = lines(), o0 = K[s.OVRUN];
+    let moved = 0, prev = lit();
+    run(m, hooks, 60, () => { const c = lit(); if (c !== prev) moved++; prev = c; });
+    check(moved >= 15 && lit().split(',').length >= 4, `game: the stars move behind the map (in ${moved} of 60 frames, ${lit().split(',').length} of 12 on empty pixels)`);
+    check(lines() === n0l && K[s.OVRUN] === o0, `game: the stars leave the map's lines alone (${n0l} pixels), no frame overran`);
+    // the cursor box sweeping over the sectors: the raster splits stay on time
+    let late = 0;
+    for (let i = 0; i < 240; i++) { m.moveMouse(i % 120 < 60 ? 6 : -6, i % 80 < 40 ? 4 : -4); m.setBreak(s.vbok, true); let r; while ((r = m.run()) !== 'break' && r !== 'stopped'); m.setBreak(s.vbok, false); const l = m.rasterLine(); if (l >= 48 && l < 251) late = Math.max(late, l); m.stepInstruction(); m.runFrame(); }
+    check(late === 0 && K[s.OVRUN] === o0, `game: moving the cursor box never runs late (${late ? 'line ' + late : 'all before line 48'})`);
+    check(K[s.PLMAT] === 0x10 && K[s.PLMAT + 2] === 0x10 && m.colorRam[0x1A2] === 0 && s.PLBMP === 0x6000 + 10 * 320 + 18 * 8 && [...K.subarray(s.PLBMP, s.PLBMP + 24)].every(v => (v & 0xAA) === 0),
+      'game: no lines under the planet (black cells, no pixels a hit flash would show)');
+  }
   const st = [...K.subarray(s.M_STATE, s.M_STATE + 60)];
   const idx = st.findIndex(v => v >= 1 && v <= 3), n0 = K[s.M_COUNT + idx];
   // the mouse pointer: steer it onto that sector, the box follows, fire selects it
@@ -802,7 +936,7 @@ for (const name of Object.keys(Profiles)) {
     K[s.M_MPX] = 17 + 12 * (e % 10) + 6; K[s.M_MPY] = 35 + 16 * Math.floor(e / 10) + 8; run(m, hooks, 3);
     run(m, hooks, 4, i => { m.mouse.left = i < 2; }); run(m, hooks, 30);
     const apprAfter = K[s.APPR];
-    let shot = 0; run(m, hooks, 6, i => { m.mouse.left = i < 2; if (K[s.SHOTON]) shot = 1; });
+    let shot = 0; run(m, hooks, 16, i => { m.mouse.left = i < 2; if (K[s.SHOTON]) shot = 1; });
     check(K[s.M_SELY] * 10 + K[s.M_SELX] === e && apprAfter === 0 && shot, `game: from an approach into the empty sector ${e % 10},${Math.floor(e / 10)}: no approach, the phasor fires`);
     K[s.M_SELX] = idx % 10; K[s.M_SELY] = Math.floor(idx / 10); K[s.SQCOUNT] = n0; K[s.M_COUNT + idx] = n0;
   }

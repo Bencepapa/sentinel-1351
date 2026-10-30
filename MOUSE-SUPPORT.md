@@ -226,8 +226,8 @@ It starts by itself.
 
 ## 5. One-file PRG
 
-`python mouse/onefile.py Sentinel-1351_v8.d64` turns the multi-file disk into
-a single self-unpacking `Sentinel-1351_v8.prg` (151 blocks). Load it with
+`python mouse/onefile.py Sentinel-1351_v9.d64` turns the multi-file disk into
+a single self-unpacking `Sentinel-1351_v9.prg` (151 blocks). Load it with
 `LOAD"SENTINEL-1351_V8",8` and type `RUN`, or drop it on VICE or an SD2IEC.
 
 How it works:
