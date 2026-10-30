@@ -154,8 +154,8 @@ frame:  LDA $D012       ; still in the border of the old frame (lines 251-255)? 
         STA $D018
         LDA #58
         JSR WAITLN
-        LDA #$0E        ; upper HUD: light blue border, dark gray background
-        STA BORDER
+        LDA HUDBRD      ; upper HUD: the border ($0CCC: light blue, the sound's pulse,
+        STA BORDER      ; the approach's green / red / yellow), dark gray background
         LDA #$0B
         STA BG
         LDA #74
@@ -489,7 +489,8 @@ sh3:    LSR A
         BCS nosh
         DEC SHX
         DEC SHX
-nosh:   LDX #NSTARS-1
+nosh:   JSR STARTK
+        LDX #NSTARS-1
 stl:    JSR ERASESTAR
         JSR MOVESTAR
         JSR PLOTSTAR
@@ -533,12 +534,8 @@ mx1:    STA ADX
         ADC #1
         DEC DIRY
 my1:    STA ADY
-        LDY #1          ; one step per frame, two every fourth frame
-        LDA FRMC
-        AND #3
-        BNE mtk
-        INY
-mtk:    STY NTICK
+        LDY NT0         ; steps this frame (STARTK: faster while rushing)
+        STY NTICK
 mloop:  LDA ADX         ; the longer axis steps every time, the other one by slope
         CMP ADY
         BCC majy
@@ -650,12 +647,6 @@ PIXADDR:LDY POSY
         TAX
         RTS
 
-RANDOM: LDA SEED
-        ASL A
-        BCC randok
-        EOR #$1D
-randok: STA SEED
-        RTS
 
 ; ---------------- input, cursor, guns ----------------
 ; Once per frame in the vertical blank. The 1351 (port 2) moves the crosshair, its
@@ -1341,6 +1332,23 @@ TRACK:  .BYTE 0
 TON:    .BYTE 0         ; tracking asked for ($62)
 TRUN:   .BYTE 0         ; the tracking loop runs ($64)
 TSLIM:  .BYTE 0
+HUDBRD: .BYTE $0E       ; the upper HUD's border ($0CCC)
+SNDON:  .BYTE 0         ; a voice 1 sweep plays ($F8)
+SNDCNT: .BYTE 0         ; ($08E5)
+SNDRATE:.BYTE 0         ; ($08E6)
+SNDRLD: .BYTE 0         ; ($08E7)
+SNDSTP: .BYTE 0         ; ($08E8)
+SNDDIR: .BYTE 0         ; ($08E9)
+SNDLO:  .BYTE 0         ; ($08EA)
+SNDHI:  .BYTE 0         ; ($08EB)
+SNDHI0: .BYTE 0         ; ($08EC)
+SNDPI:  .BYTE $16       ; ($0911)
+ENGON:  .BYTE 1         ; the engine's noise ($C376)
+ENGC:   .BYTE 1         ; ($C377)
+RSPD:   .BYTE $41       ; the rush's speed ($F209)
+STKX:   .BYTE 0
+NT0:    .BYTE 1
+RADPEND:.BYTE 0
 TPRESS: .BYTE 0         ; A / T pressed ($8C06)
 TKPREV: .BYTE 1
 TTGT:   .BYTE 0         ; the tracked fighter ($8B48)
@@ -1554,7 +1562,10 @@ wi1:    STA ENX,X
         RTS
 
 ; One frame of the fight (vertical blank).
-FIGHT:  INC EFRM
+FIGHT:  JSR SNDTICK     ; ($09AC) the sweep sounds, the HUD's border
+        JSR ENGTICK     ; ($C379) the engine
+        JSR MSGFRAME    ; ($13D5) the message row
+        INC EFRM
         LDA APPR        ; approaching a group: the long range scanner ($C6A9)
         BEQ fgdog
         JSR APFRAME
@@ -2460,7 +2471,8 @@ arr3:   LDA #$60
         DEY
         BPL arr3
         RTS
-arr2:   LDA #$01
+arr2:   JSR SECALERT    ; ($FD23) "ALERT  ENTERING GORGANITOR SECTOR", the sound
+        LDA #$01
         STA APPR
         STA RELAYOUT    ; (the original keeps the slots where hyperspace left them)
         LDA #$1E        ; ($FCB8) 30 counts of 2 frames before the scanner
@@ -2481,7 +2493,6 @@ APFRAME:LDA APRUN
         BEQ afl
         LDA #$00
         STA RELAYOUT
-        JSR MSGSTOP     ; (the scanner takes the message row)
         JSR LAYOUT      ; (the groups are placed in the next frames' vertical blank)
         INC APDLY       ; wait for it
         RTS
@@ -2489,7 +2500,19 @@ afl:    LDA LYACT
         BEQ afl2
         INC APDLY
         RTS
-afl2:   JSR APINIT
+afl2:   LDA $D012       ; (the scanner's start takes ~20 lines: not after a
+        CMP #206        ; long message step, the next frame then)
+        BCC afl5
+        INC APDLY
+        RTS
+afl5:   LDA MSGON       ; ($C6DE) the scanner waits for a standing message;
+        BEQ afl3        ; a scrolling one goes
+        LDA MSGMODE
+        BEQ afl4
+        INC APDLY
+        RTS
+afl4:   JSR MSGSTOP
+afl3:   JSR APINIT
         JSR RADMODE     ; ($C67B) long range (LRMODE set above)
         LDA #$01
         STA APRUN
@@ -2567,9 +2590,19 @@ zs1:    SEC
 VBWORK: JSR RADSTEP     ; ($9F1C, twice a frame) the scan line and the colour band
         JSR RADSTEP
         JSR CIRCLES
-        LDA EFRM        ; the radar: every other frame ($0C8A in the interrupt)
-        AND #$01
-        BNE vbr
+        LDA EFRM        ; the radar: every other frame ($0C8A in the interrupt);
+        AND #$01        ; when the star field took long (the rush), the next
+        BNE vbr0        ; frame
+        INC RADPEND
+vbr0:   LDA RADPEND
+        BEQ vbr
+        LDA $D012
+        CMP #251
+        BCS vbr1
+        CMP #6
+        BCS vbr
+vbr1:   LDA #$00
+        STA RADPEND
         JSR RADAR
 vbr:    LDA APPR
         BEQ vbdog
@@ -2577,8 +2610,7 @@ vbr:    LDA APPR
         BEQ vbw1
         RTS
 vbw1:   JMP STEER
-vbdog:  JSR MSGFRAME     ; ($13D5) the message row
-        LDA TRUN        ; the tracking computer's loop instead of the fight loop
+vbdog:  LDA TRUN        ; the tracking computer's loop instead of the fight loop
         BEQ vbd1
         JMP TRKFRAME
 vbd1:   LDA TPRESS      ; ($2D7A) A / T asks for tracking
@@ -2935,8 +2967,10 @@ bc4:    STX BCDT
         STA BCDO
         RTS
 
-CLOSEIN:LDX GSEL        ; ($C848) the chosen group in front, side and up 0-3:
-        JSR DIST        ; the ship rushes toward it
+CLOSEIN:LDY #$05        ; ($C848) the chosen group in front, side and up 0-3:
+        STY HUDBRD      ; the ship rushes toward it. The HUD's border: green,
+        LDX GSEL        ; red with the side 0-3, yellow with both
+        JSR DIST
         BPL ci1
         LDA #$00
         STA INFRONT
@@ -2953,6 +2987,8 @@ ci1:    LDA #$01
         BCS ci9
         LDA #$70
         STA LRROW+13
+        LDY #$02
+        STY HUDBRD
         LDA LRDIG+2
         CMP #$70
         BNE ci9
@@ -2963,7 +2999,12 @@ ci1:    LDA #$01
         BCS ci9
         LDA #$70
         STA LRROW+21
-        LDX #$04        ; 12 depth steps of 6 ($C89F, $C81E), then a drift ($C8AB)
+        LDY #$07
+        STY HUDBRD
+        LDA SNDON       ; ($C898) the rush's sound, unless one plays
+        BNE ci3
+        JSR SNDRUSH
+ci3:    LDX #$04        ; 12 depth steps of 6 ($C89F, $C81E), then a drift ($C8AB)
 ci2:    SEC
         LDA ENZ,X
         SBC #$48
@@ -2975,8 +3016,19 @@ ci2:    SEC
         DEX
         BPL ci2
         SEC
-        JMP EDRIFT
-ci9:    RTS
+        JSR EDRIFT
+        LDA RSPD        ; ($C8AE) faster and faster: the engine's pitch and the
+        CMP #$08        ; stars follow RSPD / 4
+        BCC ci8
+        SBC #$06
+        STA RSPD
+        LSR A
+        LSR A
+        STA $D40F
+ci8:    RTS
+ci9:    LDA #$41        ; ($C8CD)
+        STA RSPD
+        RTS
 
 ARRCHK: LDX #$02        ; ($C730) a group closer than $0400 arrives
 ac1:    LDA GSIZE,X
@@ -3079,7 +3131,12 @@ gi4:    INX
         STA FIREFLAG
         LDA #$FF        ; ($C807) the first enemy shot comes late
         STA EFTHR
-        RTS
+        LDA #$41        ; ($C7D7) the rush's speed back to rest
+        STA RSPD
+        LDA #$01        ; ($C7F7) the tracking computer is asked for at once
+        STA TON
+        STA ENGON       ; ($C7F9) the engine
+        JMP ALERT       ; ($C832) "WARNING THE GORGANITOR APPROACH" and the siren
 
 ; The number under the crosshair ($3935): the distance of the chosen group, or of
 ; the first live fighter, high byte / 2 in three digits drawn into the crosshair's
@@ -4577,7 +4634,9 @@ TRKMSG: LDA #<TMTEXT    ; ($8A1D -> $9BE5) "AUTO TRACKING ENGAGED", scrolled in,
 ; the row's colour flips between the two colours of MSGCOL (low nibble first,
 ; with a beep), MSGN times; then the row turns light green and stays.
 MSGSCR: STA MSGP        ; A/X = text ($FF ends it), Y = colour flips
+        STA PTR
         STX MSGP+1
+        STX PTR+1
         STY MSGN
         LDA MSGRATE
         STA MSGCD
@@ -4604,6 +4663,23 @@ ms1:    LDA #$60
         STA MSGFINE
         RTS
 
+MSGSTAT:JSR MSGSCR      ; ($9BE5 with $80: the text stands in the row at once)
+        LDA #$80
+        STA MSGMODE
+        LDA #$00
+        STA MSGFINE
+        LDA #$05
+        STA STRIPX
+        STA FINEX
+        LDY #$00
+mss1:   LDA (PTR),Y
+        CMP #$FF
+        BEQ mss2
+        STA LRROW,Y
+        INY
+        BNE mss1
+mss2:   RTS
+
 MSGFRAME:               ; ($13D5) once a frame
         LDA MSGFINE
         BEQ mf9
@@ -4617,7 +4693,12 @@ mf1:    STY FINEX
         CPY #$05
         BNE mf9
         JMP MSGTICK
-mf9:    RTS
+mf9:    LDA MSGON       ; (a standing message ticks every frame)
+        BEQ mf8
+        LDA MSGFINE
+        BNE mf8
+        JMP MSGTICK
+mf8:    RTS
 
 MSGTICK:LDA MSGON       ; ($9CD3)
         BEQ mt5
@@ -4642,7 +4723,12 @@ mt1:    STA COLROW,Y
         LDY #39
 mt2:    LDA #$0D
         STA COLROW,Y
-        DEY
+        LDA MSGMODE     ; a standing message goes
+        CMP #$80
+        BNE mt3
+        LDA #$60
+        STA LRROW,Y
+mt3:    DEY
         BPL mt2
         LDA #$80
         STA MSGMODE
@@ -4766,6 +4852,208 @@ tss1:   SEC
         RTS
 tss0:   CLC
         RTS
+
+; ---------------- the voice 1 sound effects and the HUD's border ($0969, $09AC) ----------------
+; A sweep of voice 1 (pulse, AD $72, SR $6F): SNDCNT times SNDRLD frames, each frame
+; 5 steps of SNDSTP up (SNDDIR <> 0) or down, from the high byte SNDHI0. While one
+; plays (SNDON, $F8) the upper HUD's border pulses through grays ($08EE), the engine
+; ("representing the engine"); else it is light blue. In the approach the scanner
+; sets it (CLOSEIN).
+SNDRUSH:LDA #$01        ; ($094E) the rush: once, 48 frames, up from $01xx by $1E
+        STA SNDDIR
+        STA SNDHI0
+        LDA #$1E
+        LDX #$01
+        LDY #$30
+        JMP SNDGO
+SNDSIREN:               ; ($0930) the siren: 8 times 40 frames, up from $1Exx by $FF
+        LDA #$01
+        STA SNDDIR
+        LDA #$1E
+        STA SNDHI0
+        LDA #$FF
+        LDX #$08
+        LDY #$28
+SNDGO:  STA SNDSTP      ; ($0969)
+        STX SNDCNT
+        STY SNDRATE
+        STY SNDRLD
+        LDA #$00
+        STA SNDON
+        STA $D404
+        STA $D400
+        STA SNDLO
+        LDA #$08
+        STA $D403
+        LDA #$6F
+        STA $D406
+        LDA #$72
+        STA $D405
+        LDA SNDHI0
+        STA SNDHI
+        STA $D401
+        LDA #$0F
+        STA $D418
+        STA SNDON
+        LDA #$41
+        STA $D404
+        RTS
+
+SNDTICK:LDA SNDON       ; ($09AC) once a frame
+        BNE sd1
+        LDA APPR
+        BNE sd0
+        LDA #$0E
+        STA HUDBRD
+sd0:    RTS
+sd1:    LDX SNDPI       ; the border's pulse
+        LDA APPR
+        BNE sd2
+        LDA PULSE,X
+        STA HUDBRD
+sd2:    DEC SNDPI
+        BPL sd3
+        LDA #$22
+        STA SNDPI
+sd3:    DEC SNDRATE
+        BNE sd5
+        LDA SNDRLD
+        STA SNDRATE
+        DEC SNDCNT
+        BNE sd4
+        LDA #$00        ; over
+        STA SNDON
+        STA $D404
+        LDA APPR
+        BNE sd0
+        LDA #$0E
+        STA HUDBRD
+        RTS
+sd4:    LDA SNDHI0      ; again from the start
+        STA $D401
+        STA SNDHI
+sd5:    LDY #$04
+        LDA SNDDIR
+        BNE sd7
+sd6:    SEC
+        LDA SNDLO
+        SBC SNDSTP
+        STA SNDLO
+        STA $D400
+        LDA SNDHI
+        SBC #$00
+        STA SNDHI
+        STA $D401
+        DEY
+        BPL sd6
+        RTS
+sd7:    CLC
+        LDA SNDLO
+        ADC SNDSTP
+        STA SNDLO
+        STA $D400
+        LDA SNDHI
+        ADC #$00
+        STA SNDHI
+        STA $D401
+        DEY
+        BPL sd7
+        RTS
+
+; The engine ($C379, once a frame while ENGON, $C376): a burst of noise on voice 3
+; every 6th frame. The rush lowers its pitch between bursts (CLOSEIN).
+ENGTICK:LDA ENGON
+        BEQ en9
+        DEC ENGC
+        BNE en9
+        LDA #$06
+        STA ENGC
+        LDA #$00
+        STA $D412
+        LDA #$08
+        STA $D40F
+        LDA #$68
+        STA $D40E
+        LDA #$A0
+        STA $D414
+        LDA #$22
+        STA $D413
+        LDA #$81
+        STA $D412
+en9:    RTS
+
+; Star steps this frame: one, two every fourth frame; while rushing the original
+; lowers every star's delay to RSPD / 4 ($C8C1): here up to 7 more steps.
+STARTK: LDY #1
+        LDA FRMC
+        AND #3
+        BNE stk1
+        INY
+stk1:   LDA APPR
+        BEQ stk2
+        LDA RSPD
+        LSR A
+        LSR A
+        LSR A
+        CMP #$07        ; $41-$38 -> none more, ... $05 -> 3 more (what the
+        BCS stk2        ; vertical blank has time for: each step of 12 stars)
+        EOR #$07
+        LSR A
+        STA STKX
+        TYA
+        CLC
+        ADC STKX
+        TAY
+stk2:   STY NT0
+        RTS
+
+; The arrival ($C832): "WARNING  THE GORGANITOR APPROACH" in yellow / orange,
+; flashing every 15th frame, 30 times (as it stands, not scrolled), and the siren.
+ALERT:  LDA #<WARNTX
+        LDX #>WARNTX
+        LDY #$87
+        STY MSGCOL
+        LDY #$0F
+        STY MSGRATE
+        LDY #30
+        JSR MSGSTAT
+        JMP SNDSIREN
+
+PULSE:  .BYTE $0F,$0F,$0C,$0C,$0C,$0C,$0C,$0C,$0C,$0B,$0B,$0B,$0B,$0B,$0B,$00,$00,$00
+        .BYTE $00,$00,$0B,$0B,$0B,$0B,$0B,$0C,$0C,$0C,$0C,$0C,$0C,$0C,$0F,$0F,$0F
+WARNTX: .BYTE $40,$40,$40,$40,$57,$41,$52,$4E,$49,$4E,$47,$40,$40,$54,$48,$45,$40,$47
+        .BYTE $4F,$52,$47,$41,$4E,$49,$54,$4F,$52,$40,$41,$50,$50,$52,$4F,$41,$43,$48,$FF
+
+RANDOM: LDA SEED
+        ASL A
+        BCC randok
+        EOR #$1D
+randok: STA SEED
+        RTS
+
+; Into a sector with a squadron ($FD23): "ALERT  ENTERING GORGANITOR SECTOR",
+; yellow / orange, 10 flips every 10th frame, standing; and voice 1 sweeping down
+; from $50xx by $40, 8 times 30 frames ($0921).
+SECALERT:
+        LDA #<SECTX
+        LDX #>SECTX
+        LDY #$87
+        STY MSGCOL
+        LDY #$0A
+        STY MSGRATE
+        LDY #$0A
+        JSR MSGSTAT
+        LDA #$00
+        STA SNDDIR
+        LDA #$50
+        STA SNDHI0
+        LDA #$40
+        LDX #$08
+        LDY #$1E
+        JMP SNDGO
+
+SECTX:  .BYTE $40,$40,$40,$40,$41,$4C,$45,$52,$54,$40,$40,$45,$4E,$54,$45,$52,$49,$4E
+        .BYTE $47,$40,$47,$4F,$52,$47,$41,$4E,$49,$54,$4F,$52,$40,$53,$45,$43,$54,$4F,$52,$FF
 
 ; The attackers drift back toward the middle of the view, 4 units per call:
 ; x $8832-$890E, y $885E-$88AE, depth $8640-$87E0 ($33B6; the original first

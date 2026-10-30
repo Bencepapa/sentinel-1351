@@ -127,6 +127,25 @@ x bit 8 shadow, the others hold whatever they hold).
   starts, when you use thrust (W), or when the computer is destroyed. The C128
   port uses A as well (T also works).
 
+- **Tracking switches itself on at every arrival** (`$C7F7 STA $62`): when a group
+  arrives and the short range fight begins, the computer is asked for at once, so
+  (while it works) every dogfight starts with AUTO TRACKING ENGAGED; A turns it
+  off. Only once it is destroyed do the fighters drift off the screen by default.
+- **The upper HUD's border tells the approach** (`$0CCC`, the operand of
+  `$0CCB LDX #$0E`): green while the chosen group is in front, red when it is also
+  level sideways (side reading 0-3), yellow when up is 0-3 too. Then the ship
+  rushes in: 12 depth steps a pass, the speed `$F209` falls from `$41` by 6 a pass,
+  the engine's noise (voice 3) drops with it and every star's delay is cut to
+  `$F209 / 4`, so the stars stream past.
+- **The border pulses with the sound effects** (`$09AC`): while a voice 1 sweep
+  plays (`$F8`) it runs through light gray, gray, dark gray, black and back (35
+  steps, one a frame); otherwise it is light blue. The sweeps: entering a sector
+  (down from `$50xx`, 8 x 30 frames, with "ALERT  ENTERING GORGANITOR SECTOR"),
+  the rush (up from `$01xx`, 48 frames) and the siren at the arrival (up from
+  `$1Exx`, 8 x 40 frames, with "WARNING  THE GORGANITOR APPROACH", which the
+  tracking message replaces at once). The engine's noise is a burst on voice 3
+  every 6th frame throughout (`$C379`).
+
 ## Misnamed in earlier notes
 
 - `$E3`, `$C847` and `$372C-$372F` (read by the steering `$39C1`) belong to the

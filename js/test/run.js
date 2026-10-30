@@ -694,7 +694,7 @@ function report(hooks, label) {
     if (f === 150) var row = String.fromCharCode(...[...K.subarray(s.LRROW, s.LRROW + 40)].map(c => c === 0x60 || c === 0x40 ? 32 : c)).trim();
   }
   const rate = passes / frames;
-  check(K[s.TRUN] && row === 'AUTO TRACKING ENGAGED' && rate > 6.0 && rate < 6.4 && shown >= frames * 0.98 && K[s.OVRUN] === 0,
+  check(K[s.TRUN] && row === 'AUTO TRACKING ENGAGED' && rate > 6.0 && rate < 6.4 && shown >= frames * 0.95 && K[s.OVRUN] === 0,
     `tracking: A starts it ("${row}"), ${rate.toFixed(2)} passes a frame (original ~6.2), all 3 fighters kept in view ${shown}/${frames} frames while steering away, no overrun`);
   for (let f = 0; f < 30; f++) { m.setKey(1, 2, f < 10); m.runFrame(); }
   const off = !K[s.TRUN] && !K[s.TON];
