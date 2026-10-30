@@ -60,7 +60,7 @@
     $('help').textContent = profile.help;
     $('overlay').style.display = 'none';
     $('memaddr').value = prog.symbols.SHIELDS !== undefined ? 'SHIELDS' : (prog.symbols.CURX !== undefined ? 'CURX' : '$1D00');
-    buildKeys(); buildCheats(); buildEvents(); buildWatches();
+    buildKeys(); showPad(); buildCheats(); buildEvents(); buildWatches();
     $('conout').textContent = '';
     con(prog.model.toUpperCase() + ' · ' + profile.title + ' · ' + Object.keys(prog.symbols).length + ' labels. Type help.');
     refresh(true);
@@ -463,6 +463,29 @@
   fireEl.addEventListener('mousedown', fireDown);
   fireEl.addEventListener('mouseup', fireUp);
   fireEl.addEventListener('mouseleave', function (e) { if (fireEl.classList.contains('down')) fireUp(e); });
+
+  // map and proton buttons (full screen), as the program's profile maps them
+  function padPress(k, on) {
+    if (!m || !k) return;
+    if (k.mouse === 'left' || k.mouse === 'both') m.mouse.left = on;
+    if (k.mouse === 'right' || k.mouse === 'both') m.mouse.right = on;
+    if (k.key) { var c = KEYS[k.key]; m.setKey(c[0], c[1], on); }
+  }
+  ['map', 'proton'].forEach(function (name) {
+    var el = $('pad' + name);
+    var k = function () { return profile && profile.pad ? profile.pad[name] : null; };
+    var dn = function (e) { audio.start(); e.preventDefault(); e.stopPropagation(); padPress(k(), true); el.classList.add('down'); };
+    var up = function (e) { e.preventDefault(); e.stopPropagation(); padPress(k(), false); el.classList.remove('down'); };
+    el.addEventListener('touchstart', dn, { passive: false });
+    el.addEventListener('touchend', up, { passive: false });
+    el.addEventListener('touchcancel', up, { passive: false });
+    el.addEventListener('mousedown', dn);
+    el.addEventListener('mouseup', up);
+    el.addEventListener('mouseleave', function (e) { if (el.classList.contains('down')) up(e); });
+  });
+  function showPad() {
+    ['map', 'proton'].forEach(function (name) { $('pad' + name).classList.toggle('on', !!(profile && profile.pad && profile.pad[name])); });
+  }
 
   // full screen: the screen alone, landscape where the device allows it; where
   // the Fullscreen API is missing (iPhone), the screen fills the window instead

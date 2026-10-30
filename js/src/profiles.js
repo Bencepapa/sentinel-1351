@@ -49,6 +49,7 @@ var SentinelProfiles = {
       { label: 'C=', key: 'AltLeft' },
       { label: 'RUN/STOP', key: 'Escape' },
     ],
+    pad: { map: { mouse: 'right' }, proton: { mouse: 'both' } },   // full screen buttons
     help: 'Mouse: crosshair. Left: fire, right: map, both: torpedo. Arrows + Right Ctrl: joystick. Alt = C= key.',
     fastStart: 'GAMEENTRY',     // run at full speed until the depacker reaches the game
   },
@@ -163,6 +164,7 @@ SentinelProfiles.game = (function (c) {
       { label: 'Track (A)', key: 'KeyA' },
       { label: 'SPACE', key: 'Space' },
     ],
+    pad: { map: { key: 'AltLeft' } },   // full screen buttons (no proton torpedoes in the port yet)
     help: 'Cockpit: mouse or arrows aim (off centre steers), left button / Right Ctrl fires, A tracking on / off, C= (Alt) opens the map, SPACE exits. ' +
           'Map: move the cursor, fire on another sector jumps there, SPACE goes back.',
   };

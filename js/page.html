@@ -80,6 +80,13 @@ select:focus-visible, button:focus-visible, input:focus-visible, #screen:focus-v
 #firebtn { display: none; position: absolute; z-index: 3; left: max(18px, env(safe-area-inset-left, 0px)); bottom: max(18px, env(safe-area-inset-bottom, 0px));
   width: 92px; height: 92px; border-radius: 50%; border: 2px solid rgba(255,255,255,0.35); background: rgba(181,38,30,0.55); color: #fff;
   font: 600 0.95rem var(--display); letter-spacing: 0.08em; touch-action: none; user-select: none; -webkit-user-select: none; -webkit-tap-highlight-color: transparent; }
+.padbtn { display: none; position: absolute; z-index: 3; width: 60px; height: 60px; border-radius: 50%; border: 2px solid rgba(255,255,255,0.3);
+  background: rgba(40,40,36,0.6); color: #eee; font: 600 0.7rem var(--display); letter-spacing: 0.06em; touch-action: none; user-select: none; -webkit-user-select: none; -webkit-tap-highlight-color: transparent;
+  left: calc(max(18px, env(safe-area-inset-left, 0px)) + 22px); }
+#padproton { bottom: calc(max(18px, env(safe-area-inset-bottom, 0px)) + 116px); background: rgba(60,90,170,0.55); }
+#padmap { bottom: calc(max(18px, env(safe-area-inset-bottom, 0px)) + 188px); background: rgba(40,120,70,0.55); }
+.padbtn.down { filter: brightness(1.5); transform: scale(0.95); }
+#screen:fullscreen .padbtn.on, #screen.fs .padbtn.on { display: block; }
 #firebtn.down { background: rgba(225,60,40,0.85); transform: scale(0.95); }
 #screen:fullscreen, #screen.fs { position: fixed; inset: 0; z-index: 50; border-radius: 0; padding: 0; background: #000;
   display: flex; align-items: center; justify-content: center; }
@@ -182,6 +189,8 @@ td canvas { display: block; width: 120px; height: 22px; }
         <div id="overlay" style="display:none"></div>
         <button class="fsbtn" id="fsbtn" type="button" aria-label="Full screen">⛶ Full screen</button>
         <button id="firebtn" type="button" aria-label="Fire">FIRE</button>
+        <button id="padmap" class="padbtn" type="button" aria-label="Map">MAP</button>
+        <button id="padproton" class="padbtn" type="button" aria-label="Proton torpedo">PROTON</button>
       </div>
 
       <div class="keys" id="keys"></div>
