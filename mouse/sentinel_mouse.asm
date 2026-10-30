@@ -10,7 +10,10 @@
 ; - Both buttons = SPACE (proton torpedo); the laser is held back meanwhile.
 ; - Mouse untouched for a while -> crosshair glides back to center, like the
 ;   original joystick behaviour.
-; - Outside the crosshair view (map etc.) mouse motion is turned into
+; - On the sector map the mouse moves a pointer (the crosshair) over the
+;   grid; the map's cursor box jumps to the sector under it, fire selects it
+;   (enhancement: the original only steps the box a sector at a time).
+; - Outside the crosshair view (other screens) mouse motion is turned into
 ;   joystick directions, so every screen stays usable.
 ; - No mouse (X pot stays $FF) -> original joystick behaviour.
 ;
@@ -20,8 +23,11 @@
 ;   $0D19  JSR CURSOR         (crosshair update, replaces $B30C)
 ;   $FE30/$FE68/$FEA0  keyboard scan leaves $DC00=$BF (port 2 pots -> SID)
 ;   $864A  difficulty menu reads JOY instead of $DC00 (sees mouse motion)
-;   $0100-$01BF  extra code (dead loader leftovers in the stack page;
-;                the game's stack stays above $01C0)
+;   $FBCE  JSR MSEL           (map loop: mouse pointer, replaces JSR $21C8)
+;   $129B  JSR MPY            (crosshair routine: its Y on the map screen)
+;   $0D12  JSR MPY0 / JMP $0D1C  (the line-59 split's sprite 0 Y off the cockpit)
+;   $0100-$01CF  extra code (dead loader leftovers in the stack page; the game's
+;                stack stays above $01E6, measured over title, menus and play)
 ;   old routine area $B2D8-$B399 is reused for the new code; its
 ;   self-modified operands live in YMAX/YMIN/YCEN/DDLY now
 
@@ -59,6 +65,10 @@ MFLAG   = $4B           ; bit7 set = no mouse
 CD      = $6F
 DDLY    = $ED
 OLDV    = $AB
+PX      = $8A           ; map pointer: x - 17 (0-119, multicolour pixels), never
+PY      = $8B           ; referenced by the game; y - 35 (0-95)
+MFRM    = $8D           ; frame of the last pointer move
+PSY     = $8E           ; pointer sprite Y for the crosshair routine
 
 ; =====================================================================
         * = $02A2
@@ -215,6 +225,12 @@ jsx:    LDY MDX
         .BYTE $2C
 jsl:    AND #$FB
 jsr:    RTS
+; the interrupt's line-59 split hides sprite 0 off the cockpit ($0D12): with the
+; map pointer it shows it at the pointer's Y instead (enhancement)
+MPY0:   LDA #0
+        JSR MPY
+        STA $D001
+        RTS
 ENDB3:
 
 ; =====================================================================
@@ -301,4 +317,73 @@ mdone:  TXA
         ORA #$01        ; right mouse button is wired to UP
         RTS
 RCNT:   .BYTE $00
+
+; ---- map pointer (enhancement) ----
+; map loop, every pass (replaces JSR $21C8): with a mouse the pointer moves once a
+; frame by the mouse motion; the box goes to the sector under it ($2213 draws it)
+MSEL:   BIT MFLAG
+        BMI msj
+        LDA $B077       ; the map is drawn ($21C8's own test)
+        ORA $B078
+        BEQ msr
+        LDA $A0
+        CMP MFRM
+        BEQ mscell
+        STA MFRM
+        LDX #1
+msl:    LDA PX,X
+        CLC
+        ADC MDX,X
+        CMP #$C0        ; below 0
+        BCS mslo
+        CMP MHI,X
+        BCC msst
+        LDA MHI,X
+        .BYTE $2C
+mslo:   LDA #0
+msst:   STA PX,X
+        DEX
+        BPL msl
+        LDA PX          ; the crosshair is the pointer: X = 2 * (PX + 17) - 33
+        ASL A
+        ORA #1
+        STA CURX
+        LDA PY
+        ADC #78         ; sprite Y = PY + 35 + 50 - 7 (C clear)
+        STA PSY         ; (sprite 0 stays on in $98 on the map: only its Y hides it)
+mscell: LDA PX          ; column (PX / 12), row (PY / 16)
+        LDX #$FF
+        SEC
+msc:    INX
+        SBC #12
+        BCS msc
+        LDA PY
+        LSR A
+        LSR A
+        LSR A
+        LSR A
+        TAY
+        CPX $20E2
+        BNE msm
+        CPY $20E1
+        BEQ msr
+msm:    JMP $2213
+msj:    JMP $21C8
+msr:    RTS
+MHI:    .BYTE 119,95
+; crosshair routine: A = its Y; on another screen the pointer's Y while the map
+; loop has moved it in the last 32 frames (it does not run every frame), else 0
+MPY:    LDY VIEW
+        BEQ mpr
+        LDA $A0
+        SEC
+        SBC MFRM
+        CMP #32
+        LDA PSY
+        BCC mpr
+        LDA $A0         ; hidden: keep MFRM 64 frames ahead, so the 8-bit frame
+        ADC #63         ; difference never comes back under 32 (C set)
+        STA MFRM
+        LDA #0
+mpr:    RTS
 END01:
