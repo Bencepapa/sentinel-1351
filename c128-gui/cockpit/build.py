@@ -22,7 +22,7 @@ Memory (bank 0, VIC bank 1 for the picture):
   $7CC0  bitmap rows 23-24 ($7CC0-$7FFF), behind the bottom text strip: pointers $F3-$FC =
          the phasor shot $67-$70, $FD = the fighter $2F
   $8000  the type-1 fighters' movement streams (original $E800-$ECFF, ref/streams-e800.bin)
-  $8C00  more code (the fight); bank 0 RAM up to $BFFF is visible with MMU setting $0E
+  $8500  more code (the fight; right after the streams); bank 0 RAM up to $BFFF is visible with MMU setting $0E
   (nothing at $5000-$5FFF: the C128's video chip reads the character ROM there)
   $6000  multicolor bitmap; the cockpit art fills cell rows 18-22 ($7680-$7CBF)
 """
@@ -43,7 +43,7 @@ XLO = 0x2F00
 XHI = 0x2F28
 COLORDATA = 0x3000
 STREAMS = 0x8000
-CODE2 = 0x8C00
+CODE2 = 0x8500
 
 
 def slot(pointer):

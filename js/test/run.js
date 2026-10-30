@@ -621,12 +621,15 @@ function report(hooks, label) {
     const t1 = [...R.subarray(0x57A1, 0x57B6), ...R.subarray(0x372C, 0x3730)].join(), t2 = [...K.subarray(ks.LRROW + 9, ks.LRROW + 30), ...K.subarray(ks.LRDIG, ks.LRDIG + 4)].join();
     if (t1 !== t2) { bad = { what: 'scanner', a: t1, b: t2 }; break; }
     // the radar, one slot a call, close or long range
-    R[0xD3] = near ? 0 : 0x80; K[ks.LRMODE] = near ? 0 : 1;
+    R[0xD3] = near ? 0 : 0x80; K[ks.LRMODE] = near ? 0 : 1; K[ks.RSLOT] = R[0x3051];
+    // the radar's range constants as $3194 rewrites them (close / long range)
+    [R[0x307C], R[0x3089], R[0x30B7], R[0x30C4]] = near ? [0x86, 0x8A, 0x82, 0x8A] : [0x01, 0xFE, 0x01, 0xFE];
+    [K[ks.RXLO], K[ks.RXHI], K[ks.RZLO], K[ks.RZHI]] = near ? [0x86, 0x8A, 0x82, 0x8A] : [0x01, 0xFE, 0x01, 0xFE];
     for (let c = 0; c < 3; c++) {
       callAt(o.m, 0x305F); callAt(k.m, ks.RADAR);
       const s = R[0x3051];
       const r1 = R[0x3058 + s] + ',' + R[0x305B + s], r2 = K[ks.RBX + s] + ',' + K[ks.RBY + s];
-      if (R[0x3051] !== K[ks.RSLOT] || (K[ks.RBON + s] && r1 !== r2)) { bad = { what: 'radar slot ' + s, a: r1, b: r2 }; break; }
+      if (R[0x3051] !== K[ks.RSLOT] || (K[ks.RBON + s] && r1 !== r2)) { bad = { what: 'radar slot ' + s + ' x ' + [R[0x16+2*s],R[0x17+2*s],K[ks.ENX+2*s],K[ks.ENX+2*s+1]] + ' z ' + [R[0x22+2*s],R[0x23+2*s],K[ks.ENZ+2*s],K[ks.ENZ+2*s+1]] + ' ops ' + [R[0x307C],R[0x3089],R[0x30B7],R[0x30C4],K[ks.RXLO],K[ks.RXHI]] + ' slot ' + R[0x3051] + '/' + K[ks.RSLOT], a: r1, b: r2 }; break; }
     }
     // the number under the crosshair: approach (group g) or the first live fighter
     R[0xE3] = K[ks.APPR] = t & 2 ? 1 : 0; R[0x5B] = 0;
@@ -646,13 +649,13 @@ function report(hooks, label) {
   const s = p.symbols, K = m.ram;
   let f = 0;
   while (!K[s.APRUN] && f < 200) { m.runFrame(); f++; }
-  m.runFrame();
+  for (let i = 0; i < 12; i++) m.runFrame();     // (the readings come every 16 passes, ~7 frames)
   const sizes = [...K.subarray(s.GSIZE, s.GSIZE + 3)];
   const row = String.fromCharCode(...[...K.subarray(s.LRROW + 9, s.LRROW + 30)].map(c => c - 0x40));
   check(K[s.APRUN] && sizes.join() === '3,3,3' && K[s.LRROW + 9] === 0x7B && K[s.LRROW + 17] === 0x7C && K[s.LRROW + 25] === 0x7D,
     `approach: after ${f} frames the scanner runs, groups ${sizes.join('/')}, row 23 "${row}"`);
   const g0 = K[s.GSEL];
-  m.mouse.left = true; m.runFrame(); m.runFrame(); m.mouse.left = false; m.runFrame();
+  m.mouse.left = true; for (let i = 0; i < 10; i++) m.runFrame(); m.mouse.left = false; m.runFrame();   // (fire is sampled every 16 passes)
   check(K[s.GSEL] === 2 && g0 === 0 && !K[s.SHOTON], `approach: fire chooses the next group (${g0} -> ${K[s.GSEL]}), no shot`);
   // put the chosen group straight ahead, far: the ship rushes to it and it arrives
   const g = K[s.GSEL];

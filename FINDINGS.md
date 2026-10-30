@@ -79,6 +79,8 @@ Hits after the shields are gone still take hit points from the systems (from
 | `$3244` | The sprite collision register `$D01E` is read and stored at `$323C`, but the hit test uses positions only. | not ported |
 | `$3CC4` | A kill decrements the HUD's TARGETS ones digit directly (`DEC $5476`), with no borrow from the tens digit. | kept |
 | `$8301-$83FC` | The message reads "STELLER GRID UPDATE DESTROYED". | (messages not ported yet) |
+| `$C6A9` | The approach loop draws the star field and more in every pass, so it makes only about 2.3-8 (on average 3.4) passes a frame; the scanner readings and the blip (`$3776`, every 16 passes) change about every 5 frames. | the port runs 3.4 passes a frame |
+| `$9F51` | The radar's marks have no colour of their own: the band of colour RAM under the radar shifts one cell every 8 calls through black, greys and white, so a mark changes colour as the band passes over it. | ported |
 | `$C947` | Enemy fire and the guns (`$9568`, every 16th frame) run at the speed of the main loop or the frame counter, so they are slower than they look: the guns follow the crosshair one step per 16 frames. | the port calls them at the same rates |
 
 ## How the enemy shot and our hits work (for players)

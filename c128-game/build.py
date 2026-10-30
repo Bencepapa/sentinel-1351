@@ -41,7 +41,7 @@ import build as map_build                          # noqa: E402
 
 LOAD = 0x1C01
 ENTRY = 0x1D00
-CODE2 = 0x8C00
+CODE2 = 0x8500
 MAPCODE = 0xA500         # provisional: assemble() puts the map right after the cockpit's code
 VDCDATA = 0x2900
 GLUE = 0x5300            # game.asm's code and data (after the master copy at $5000)

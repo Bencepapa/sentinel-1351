@@ -192,9 +192,9 @@ nolaunch:
         JSR SWEEPSND    ; the phasor sound is swept 6 times a frame while a shot
         JSR SWEEPSND    ; flies: once in $1424, 3 times after it ($0C3B-$0C41),
         JSR SWEEPSND    ; at line 194 ($0C60) and at line 233 ($0CBA)
-        LDA APPR        ; approaching (no phasor then): steering, drift, closing in,
-        BEQ nov         ; arrival
-        JSR APVIEW
+        LDA APPR        ; approaching (no phasor then): the approach loop's passes
+        BEQ nov         ; in the 3D view's time
+        JSR APPASSES
 nov:    LDA #182        ; the explosions use what is left of the 3D view's time
                         ; (a point takes up to 11 lines)
         STA EXLIM
@@ -1414,7 +1414,7 @@ L5A:    .BYTE 0
 
 
 ; =================== the fight, part 2 of the code ===================
-        * = $8C00
+        * = $8500
 
 ; ---------------- the fighters: one type-1 wave ----------------
 ; Ported from the original (C64 addresses in brackets); PLAN-C128-COCKPIT.md
@@ -2452,38 +2452,92 @@ afl:    LDA LYACT
         INC APDLY
         RTS
 afl2:   JSR APINIT
+        JSR RADMODE     ; ($C67B) long range (LRMODE set above)
         LDA #$01
         STA APRUN
 af0:    RTS
-af1:    JSR LRSCAN
-        JMP NUMBER
+af1:    RTS
 
-; Approaching, in the 3D view's time (no phasor then): the original steers every
-; 4 passes, drifts every 8, closes in every pass and checks the arrival every 32.
-APVIEW: LDA APRUN
-        BEQ apv9
-        JSR STEER
-        JSR STEER
-        JSR EDRIFT
-        JSR EDRIFT
-        JSR CLOSEIN
-        LDA EFRM
-        AND #$01
-        BNE apv9
-        JMP ARRCHK
-apv9:   RTS
+; The approach loop ($C6A9), pass by pass. Measured in the original (JS machine,
+; approach.state): it makes 2.3 to 8, on average about 3.4 passes a frame (it
+; draws the star field three times and more in every pass), against 16 in a fight. APACC counts them in 1/256ths;
+; APCNT is its pass counter ($89, counted down): steering every 4 passes, the
+; scanner's readings and the distance number every 16, enemy fire and closing in
+; every pass, the drift every 8, everything 6 closer every 128, the arrival check
+; every 32.
+APPASSES:
+        LDA APRUN
+        BEQ app9
+        CLC
+        LDA APACC
+        ADC #$66        ; + 3.4 passes ($0366 / 256)
+        STA APACC
+        LDA APACC+1
+        ADC #$03
+        STA APACC+1
+app1:   LDA APACC+1
+        BEQ app9
+        LDA $D012       ; (a pass takes up to ~70 lines: the rest waits for the
+        CMP #112        ; next frame)
+        BCS app9
+        DEC APACC+1
+        JSR APPASS
+        LDA APRUN       ; (a group arrived: the dogfight)
+        BNE app1
+app9:   RTS
+APPASS: DEC APCNT
+        LDA APCNT
+        AND #$03
+        BNE ap1
+        JSR STEER       ; ($C6C6)
+ap1:    LDA APCNT
+        AND #$0F
+        BNE ap2
+        JSR LRSCAN      ; ($C6D2, $C6DB)
+        JSR NUMBER
+ap2:    JSR EFIRE       ; ($C6EB)
+        LDA APCNT
+        AND #$7F
+        BNE ap3
+        JSR ZSTEP       ; ($C6F7)
+ap3:    LDA APCNT
+        AND #$07
+        BNE ap4
+        SEC
+        JSR EDRIFT      ; ($C706)
+ap4:    JSR CLOSEIN     ; ($C721)
+        LDA APCNT
+        AND #$1F
+        BNE ap5
+        JMP ARRCHK      ; ($C72D-$C746)
+ap5:    RTS
+
+ZSTEP:  LDX #$04        ; ($C81E) every slot 6 closer
+zs1:    SEC
+        LDA ENZ,X
+        SBC #$06
+        STA ENZ,X
+        LDA ENZ+1,X
+        SBC #$00
+        STA ENZ+1,X
+        DEX
+        DEX
+        BPL zs1
+        RTS
 
 ; The vertical blank's share (2 MHz, after the star field).
-VBWORK: JSR RADAR
-        LDA LYACT       ; laying the groups out: a group a frame
-        BEQ vbw0
-        JSR LYSTEP
-vbw0:   LDA APPR
+VBWORK: JSR RADSTEP     ; ($9F1C, twice a frame) the scan line and the colour band
+        JSR RADSTEP
+        JSR CIRCLES
+        LDA EFRM        ; the radar: every other frame ($0C8A in the interrupt)
+        AND #$01
+        BNE vbr
+        JSR RADAR
+vbr:    LDA APPR
         BEQ vbdog
         LDA APRUN
         BEQ vbw1
-        JSR STEER       ; ($C6C6) every 4 passes while approaching (the other two
-        JMP STEER       ; in the 3D view's time, APVIEW)
+        RTS
 vbw1:   JMP STEER
 vbdog:  JSR STEER       ; ($2D34) a fight: once a frame, and enemy fire
         JMP EFRAME
@@ -2858,17 +2912,19 @@ ci1:    LDA #$01
         BCS ci9
         LDA #$70
         STA LRROW+21
-        LDX #$04        ; 16 passes of 12 depth steps of 6 ($C89F, $C81E)
+        LDX #$04        ; 12 depth steps of 6 ($C89F, $C81E), then a drift ($C8AB)
 ci2:    SEC
         LDA ENZ,X
-        SBC #$80
+        SBC #$48
         STA ENZ,X
         LDA ENZ+1,X
-        SBC #$04
+        SBC #$00
         STA ENZ+1,X
         DEX
         DEX
         BPL ci2
+        SEC
+        JMP EDRIFT
 ci9:    RTS
 
 ARRCHK: LDX #$02        ; ($C730) a group closer than $0400 arrives
@@ -2967,6 +3023,8 @@ gi4:    INX
         STA APPR
         STA APRUN
         STA LRMODE
+        JSR RADMODE     ; ($C7EA) close range
+        LDA #$00
         STA FIREFLAG
         LDA #$FF        ; ($C807) the first enemy shot comes late
         STA EFTHR
@@ -3024,6 +3082,240 @@ dg1:    LDA DIGF,Y
         RTS
 DIGOFS: .BYTE $00,$01,$02,$0F,$10,$11,$1E,$1F,$20,$2D
 
+; The radar's mode ($3194): close range for the fight, long range for the
+; approach. The original rewrites the radar's range constants (operands $307C,
+; $3089, $30B7, $30C4 from $3233-$323A): close x $86A0-$8AA0, depth $8201-$8A01;
+; long x $01A0-$FEA0, depth $0101-$FE01. Its ellipse in the box changes: long
+; range a small one (radius 4), close range the big one (radius 8): the new one
+; is plotted (value 2), the old one erased. A beep on voice 2; the box's colour
+; band starts moving ($9EE5). LRMODE = the mode to switch to.
+RADMODE:LDY LRMODE
+        LDA RTAB,Y
+        STA RXLO
+        LDA RTAB+2,Y
+        STA RXHI
+        LDA RTAB+4,Y
+        STA RZLO
+        LDA RTAB+6,Y
+        STA RZHI
+        LDA #$04        ; long: plot 4, erase 8; close: plot 8, erase 4
+        LDX #$08
+        CPY #$00
+        BNE rmd1
+        LDA #$08
+        LDX #$04
+rmd1:   STA CRAD1
+        STX CRAD2
+        LDA #$02        ; (the two circles are drawn in the next two vertical
+        STA CPEND       ; blanks, CIRCLES: each takes about 100 lines)
+        LDA #$00        ; ($31EA) the beep
+        STA $D40B
+        STA $D407
+        STA $D409
+        STA $D40D
+        LDA #$0A
+        STA $D40A
+        LDA #$2A
+        STA $D40C
+        LDA #$60
+        STA $D408
+        LDA #$41
+        STA $D40B
+        LDA #$01        ; ($C680) the colour band moves
+        STA SHACT
+        RTS
+RTAB:   .BYTE $86,$01,$8A,$FE,$82,$01,$8A,$FE
+
+CIRCLES:LDA CRUN        ; a circle under way: 2 more steps (vertical blank)
+        BEQ ccs0
+        JMP CIRCSTEP
+ccs0:   LDA CPEND       ; a pending circle of RADMODE
+        BEQ ccs9
+        DEC CPEND
+        BEQ ccs1
+        LDA CRAD1       ; the new one, plotted
+        LDX #$00
+        JMP CIRCLE
+ccs1:   LDA CRAD2       ; the old one, erased
+        LDX #$01
+        JMP CIRCLE
+ccs9:   RTS
+
+; A circle ($3635): centre x 79, y 163 (multicolour pixels: an ellipse), radius
+; A, X = 0 plots value 2 ($EF45), 1 erases ($EF10). The original's midpoint
+; steps, eight points a step.
+CIRCLE: STA CR47
+        STX CMODE
+        LDA #$80
+        STA CR44
+        LDA #$00
+        STA CR48
+        STA CR45
+        LDA #$01
+        STA CRUN
+CIRCSTEP:               ; (port: 2 steps a call, CRUN = 0 when the circle is done)
+        LDA #$02
+        STA CSN
+cc1:    CLC             ; ($3660)
+        LDA CR44
+        ADC CR48
+        ADC CR48
+        ADC #$01
+        STA CR45
+        SEC
+        LDA CR45
+        SBC CR47
+        SBC CR47
+        CLC
+        ADC #$01
+        STA CR46
+        CLC             ; (x + r, y + s), (x - r, y + s)
+        LDA #79
+        ADC CR47
+        STA POSX
+        CLC
+        LDA #163
+        ADC CR48
+        STA POSY
+        JSR CPLOT
+        SEC
+        LDA #79
+        SBC CR47
+        STA POSX
+        JSR CPLOT
+        SEC             ; (x - r, y - s), (x + r, y - s)
+        LDA #79
+        SBC CR47
+        STA POSX
+        SEC
+        LDA #163
+        SBC CR48
+        STA POSY
+        JSR CPLOT
+        CLC
+        LDA CR47
+        ADC #79
+        STA POSX
+        JSR CPLOT
+        CLC             ; (x + s, y + r), (x - s, y + r)
+        LDA #79
+        ADC CR48
+        STA POSX
+        CLC
+        LDA #163
+        ADC CR47
+        STA POSY
+        JSR CPLOT
+        SEC
+        LDA #79
+        SBC CR48
+        STA POSX
+        JSR CPLOT
+        CLC             ; (x + s, y - r), (x - s, y - r)
+        LDA #79
+        ADC CR48
+        STA POSX
+        SEC
+        LDA #163
+        SBC CR47
+        STA POSY
+        JSR CPLOT
+        SEC
+        LDA #79
+        SBC CR48
+        STA POSX
+        JSR CPLOT
+        LDA CR45        ; ($36E3)
+        STA CR44
+        INC CR48
+        LDA CR46
+        BMI cc2
+        SEC
+        LDA #$80
+        SBC CR46
+        STA CR49
+        JMP cc3
+cc2:    AND #$7F
+        STA CR49
+cc3:    LDA CR44
+        BMI cc4
+        SEC
+        LDA #$80
+        SBC CR44
+        STA CR4A
+        JMP cc5
+cc4:    AND #$7F
+        STA CR4A
+cc5:    LDA CR49
+        CMP CR4A
+        BCS cc6
+        LDA CR46
+        STA CR44
+        DEC CR47
+cc6:    LDA CR47
+        CMP CR48
+        BCC cc7
+        DEC CSN
+        BEQ cc8
+        JMP cc1
+cc7:    LDA #$00
+        STA CRUN
+cc8:    RTS
+CPLOT:  JSR PIXADDR     ; value 2 ($EF45) or cleared ($EF10)
+        LDA (PTR),Y
+        AND CLEARM,X
+        LDY CMODE
+        BNE cp9
+        ORA MASK2,X
+cp9:    LDY #$00
+        STA (PTR),Y
+        RTS
+
+; The radar's scan line and colour band ($9F1C, twice a frame): the line moves a
+; pixel while the short range scanner works; every 8 calls the next colour of the
+; band (black, dark gray, gray, light gray, white: $9ED5) goes in at the left of
+; the box's 4 colour RAM rows (row 18-21, columns 12-27) and the rest move right.
+RADSTEP:LDA SYSHP+2
+        BEQ rx1
+        LDX SCANX
+        INX
+        CPX #$E0
+        BNE rx0
+        LDX #$60
+rx0:    STX SCANX
+rx1:    DEC SHD
+        BEQ rx2
+        RTS
+rx2:    LDA #$08
+        STA SHD
+        LDX SHI
+        LDA BANDTAB,X
+        STA SHC
+        DEX
+        BPL rx3
+        LDX #$0F
+rx3:    STX SHI
+        LDA SHACT
+        BNE rx4
+        RTS
+rx4:    LDX #$00        ; 4 rows
+rx5:    LDY BANDROW,X
+        LDA #$0F
+        STA SHN
+rx6:    LDA $DADB,Y        ; (the cell to the left)
+        STA $DADC,Y
+        DEY
+        DEC SHN
+        BNE rx6
+        LDA SHC
+        STA $DADC,Y
+        INX
+        CPX #$04
+        BNE rx5
+        RTS
+BANDROW:  .BYTE 15,55,95,135      ; row offset + 15 (the rightmost cell)
+BANDTAB:  .BYTE $00,$00,$00,$BB,$BB,$BB,$CC,$CC,$CC,$FF,$FF,$FF,$11,$11,$11,$11
+
 ; The radar ($305F, once a frame, one slot each time): a small H in the scanner's
 ; box for each slot within range. Close (the fight): x $86A0-$8AA0 and depth
 ; $8201-$8A01, 1/16 scale, needs the short range scanner. Long range (the
@@ -3041,13 +3333,13 @@ rd1:    STY RSLOT
         SBC #$A0
         STA DT0
         LDA ENX+1,X
-        SBC #$86
+        SBC RXLO        ; ($307C: $86 close, $01 long range, self-modified by $3194)
         STA DT1
         BCS rq1
         JMP rdout
 rq1:    LDA #$A0
         SBC ENX,X
-        LDA #$8A
+        LDA RXHI        ; ($3089: $8A / $FE)
         SBC ENX+1,X
         BCS rq2
         JMP rdout
@@ -3072,13 +3364,13 @@ rd3:    STA RBXN
         SBC #$01
         STA DT0
         LDA ENZ+1,X
-        SBC #$82
+        SBC RZLO        ; ($30B7: $82 / $01)
         STA DT1
         BCS rq3
         JMP rdout
 rq3:    LDA #$01
         SBC ENZ,X
-        LDA #$8A
+        LDA RZHI        ; ($30C4: $8A / $FE)
         SBC ENZ+1,X
         BCS rq4
         JMP rdout
@@ -3222,7 +3514,10 @@ VIEWVB: LDA MAPSHOWN
         ORA WIPE
         BEQ vv1
         JMP MAPVBHK
-vv1:    JMP STARS
+vv1:    LDA LYACT       ; laying the groups out (a group a frame, up to ~100 lines):
+        BEQ vv2         ; instead of the star field in those few frames
+        JMP LYSTEP
+vv2:    JMP STARS
 MAPINHK:RTS             ; (c128-game: the map's mouse, cursor and choice)
 MAPVBHK:RTS             ; (c128-game: the map's draw-in, blink, planet)
 TICKHK: RTS             ; (c128-game: the map's TICKER)
@@ -3232,16 +3527,7 @@ TICKHK: RTS             ; (c128-game: the map's TICKER)
 ; firing gun's yellow while a shot flies (with the red gun: red and yellow); and
 ; the radar's scan line (shape $05, white, twice as tall), which sweeps the
 ; scanner box 2 pixels a frame ($9F1C, while the short range scanner works).
-SPR7:   LDA SYSHP+2     ; ($9F1C, twice a frame) the scan line
-        BEQ s7a
-        LDX SCANX
-        INX
-        INX
-        CPX #$E0
-        BCC s7b
-        LDX #$60
-s7b:    STX SCANX
-s7a:    LDX S7I
+SPR7:   LDX S7I         ; (the scan line moves in VBWORK: RADSTEP)
         LDA S7PTR,X
         STA SPRPTR+7
         LDA $D010
@@ -4358,3 +4644,27 @@ PTON:   .BYTE 0
 CURYS:  .BYTE 0
 S7I:    .BYTE 2         ; ($118E)
 SCANX:  .BYTE $60       ; the scan line's x ($9ECF)
+APACC:  .BYTE 0,0       ; approach passes, 1/256ths (port)
+APCNT:  .BYTE 0         ; ($89)
+RXLO:   .BYTE $86       ; the radar's range ($307C, $3089, $30B7, $30C4)
+RXHI:   .BYTE $8A
+RZLO:   .BYTE $82
+RZHI:   .BYTE $8A
+CRAD2:  .BYTE 0
+CMODE:  .BYTE 0
+CR44:   .BYTE 0         ; the circle's working bytes ($44-$4A)
+CR45:   .BYTE 0
+CR46:   .BYTE 0
+CR47:   .BYTE 0
+CR48:   .BYTE 0
+CR49:   .BYTE 0
+CR4A:   .BYTE 0
+SHD:    .BYTE 8         ; ($9ED2)
+SHI:    .BYTE $0F       ; ($9ED4)
+SHC:    .BYTE 0         ; ($9ED3)
+SHN:    .BYTE 0
+SHACT:  .BYTE 0         ; ($9EE5)
+CRAD1:  .BYTE 0
+CPEND:  .BYTE 0         ; circles of RADMODE still to draw (port)
+CRUN:   .BYTE 0
+CSN:    .BYTE 0
