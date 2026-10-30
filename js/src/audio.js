@@ -105,7 +105,7 @@ var SentinelAudio = (function () {
     registerProcessor('sid-processor', SidProcessor);
   }
 
-  function Audio() { this.ctx = null; this.node = null; this.muted = false; }
+  function Audio() { this.ctx = null; this.node = null; this.muted = false; this.sync = true; }
 
   Audio.prototype.start = function () {
     if (this.ctx) { if (this.ctx.state !== 'running') this.ctx.resume(); return Promise.resolve(); }
@@ -118,22 +118,32 @@ var SentinelAudio = (function () {
     return this.ctx.audioWorklet.addModule(url).then(function () {
       self.node = new AudioWorkletNode(self.ctx, 'sid-processor');
       self.node.connect(self.ctx.destination);
+      self.sync = true;
     }).catch(function (e) { console.warn('SID audio unavailable', e); });
   };
 
   // Called after every emulated frame with the machine's SID write log.
   Audio.prototype.frame = function (m, frameStartCycle) {
     if (!this.node || this.muted) return;
-    this.node.port.postMessage({ frameStart: frameStartCycle, log: m.sidLog.slice() });
+    var log = m.sidLog.slice();
+    if (this.sync) {                       // the worklet starts from silence: give it the
+      var pre = [];                        // registers written before the audio started
+      for (var r = 0; r < 25; r++) pre.push(0, r, m.sid[r]);   // (volume, envelopes...)
+      log = pre.concat(log);
+      this.sync = false;
+    }
+    this.node.port.postMessage({ frameStart: frameStartCycle, log: log });
   };
 
   Audio.prototype.reset = function (cycle) {
     if (this.node) this.node.port.postMessage({ reset: true, cycle: cycle - 2 * 19656 });
+    this.sync = true;
   };
 
   Audio.prototype.setMuted = function (on) {
     this.muted = on;
     if (on && this.node) this.node.port.postMessage({ reset: true, cycle: 0 });
+    if (!on) this.sync = true;
   };
 
   return Audio;

@@ -2596,10 +2596,12 @@ VBWORK: JSR RADSTEP     ; ($9F1C, twice a frame) the scan line and the colour ba
         INC RADPEND
 vbr0:   LDA RADPEND
         BEQ vbr
+        BIT $D011       ; lines 256-311 (bit 8): in time
+        BMI vbr1
         LDA $D012
         CMP #251
         BCS vbr1
-        CMP #6
+        CMP #20         ; (it takes up to ~26 lines)
         BCS vbr
 vbr1:   LDA #$00
         STA RADPEND

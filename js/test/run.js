@@ -643,6 +643,18 @@ function report(hooks, label) {
   K[ks.APPR] = 0; K[ks.LRMODE] = 0;
 }
 
+// ---- the approach: the radar keeps up (every other frame) while steering ----
+{
+  const { m, hooks, p } = boot('cockpit', 'trace');
+  const s = p.symbols, K = m.ram;
+  let f = 0; while (!K[s.APRUN] && f < 300) { m.runFrame(); f++; }
+  hooks.trace('RADAR'); let n = 0; const x0 = [0, 1, 2].map(i => K[s.RBX + i]).join();
+  for (let i = 0; i < 100; i++) { m.joy2 = 4; m.runFrame(); n += hooks.handlers[s.RADAR].callsLastFrame; }
+  m.joy2 = 0;
+  const x1 = [0, 1, 2].map(i => K[s.RBX + i]).join();
+  check(n >= 45 && x0 !== x1 && K[s.OVRUN] === 0, `approach: the radar is redrawn ${n} times in 100 frames while turning (marks ${x0} -> ${x1}), no overrun`);
+}
+
 // ---- the tracking computer: aim and pull ($8B49 / $8BED) against TAIM / TMOVE ----
 {
   function callAt(m, addr, regs) {
