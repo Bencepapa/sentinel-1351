@@ -22,7 +22,7 @@
   // Joystick in port 2 (not part of the matrix): arrows + Right Ctrl / Numpad 0
   var JOY = { ArrowUp: 1, ArrowDown: 2, ArrowLeft: 4, ArrowRight: 8, ControlRight: 16, Numpad0: 16 };
 
-  var m = null, hooks = null, dbg = null, prog = null, progName = 'c64game', profile = null;
+  var m = null, hooks = null, dbg = null, prog = null, progName = 'game', profile = null;
   var audio = new SentinelAudio(), audioFrame = 0;
   var vicCtx = $('vic').getContext('2d'), vdcCtx = $('vdc').getContext('2d');
   var vicImg = vicCtx.createImageData(Video.VIC_W, Video.VIC_H);
@@ -602,7 +602,7 @@
     this.value = '';
   });
 
-  boot('c64game');
+  boot('game');
   slotButtons();
   requestAnimationFrame(tick);
 })();
