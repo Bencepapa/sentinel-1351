@@ -360,6 +360,12 @@ function report(hooks, label) {
       for (let f = 0; f < 300; f++) { m.runFrame(); const vl = m.vicLog; for (let i = 0; i < vl.length; i += 4) if (vl[i + 2] === 0x20 && vl[i] < 50) early++; }
       check(early === 0, `game: the border's colours never start above line 55 (${early} early writes)`);
     }
+    {   // the next group's approach ends tracking, whatever its pass counter says
+      K[s.APPR] = 1; K[s.APRUN] = 1; K[s.LRMODE] = 1; K[s.TRUN] = 1; K[s.TRACK] = 1; K[s.TON] = 1; K[s.TACC] = 0; K[s.TACC + 1] = 0; K[s.TPC] = 1;
+      run(m, hooks, 3);
+      check(!K[s.TRUN] && !K[s.TRACK], 'game: tracking ends when the approach begins, the stars follow the steering again');
+      K[s.APPR] = 0; K[s.APRUN] = 0; K[s.LRMODE] = 0;
+    }
     {   // a shot in a tracked fight comes soon; the map stops it; dead fighters stay away
       arm(); K[s.TON] = 1; run(m, hooks, 10);
       let shots = 0, prev = 0;

@@ -2478,7 +2478,10 @@ arr2:   JSR SECALERT    ; ($FD23) "ALERT  ENTERING GORGANITOR SECTOR", the sound
         JSR LRCLEAR
 arr9:   RTS
 
-APFRAME:LDA APRUN
+APFRAME:LDA TRUN        ; the approach began: tracking ends ($8A34 sees $63). Its own check
+        BEQ afg0        ; comes only every 32 passes, and it has no passes here any more:
+        JSR TRKEND      ; left on, the stars would not follow the steering (TSTARS)
+afg0:   LDA APRUN
         BNE af1
         LDA EFRM        ; ($C64C, every 32 passes) waiting for the scanner
         AND #$01

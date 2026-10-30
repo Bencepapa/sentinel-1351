@@ -8,7 +8,7 @@
 //   c128  native C128 mode as the tests use it: MMU configuration register at
 //         $FF00/$D500, VDC at $D600, $D030 2 MHz bit
 //   c64   C64 memory map from the processor port $00/$01, used by the full
-//         patched game (Sentinel-1351_v8.prg)
+//         patched game (Sentinel-1351_v9.prg)
 //
 // No ROMs: the programs bank them out or never call them. ROM areas read as RAM,
 // the character ROM is an original font (font.js).
