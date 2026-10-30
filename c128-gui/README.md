@@ -1,6 +1,6 @@
 # Sentinel GUI assets and layout (C64 original)
 
-Everything here is read from the C64 game (`Sentinel-1351_v8`) so the C128 port can
+Everything here is read from the C64 game (`Sentinel-1351_v9`) so the C128 port can
 rebuild the cockpit. `python c128-gui/extract_sprites.py` regenerates the files in
 `ref/` straight from the disk image; nothing has to be run in an emulator.
 

@@ -1,6 +1,6 @@
 # Findings: bugs and quirks in the original
 
-Things found in the C64 game (`Sentinel-1351_v8`, C64 addresses) while porting it
+Things found in the C64 game (`Sentinel-1351_v9`, C64 addresses) while porting it
 to the C128 and checking the port against the original routine by routine
 (`js/test/run.js`). For each one: what the code does, what it causes in play,
 and what the C128 port does. "Kept" means the port does the same, so that the

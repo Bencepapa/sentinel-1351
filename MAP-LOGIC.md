@@ -1,6 +1,6 @@
 # Sentinel sector map: how the strategic layer works
 
-Findings from disassembling `Sentinel-1351_v8` (the C64 game). All addresses are
+Findings from disassembling `Sentinel-1351_v9` (the C64 game). All addresses are
 C64 memory addresses. The rules were read from the code and then checked by
 running the original game's routines in VICE 3.7 next to the C128 port (see
 "Verification"). The type names hunter / guard / drifter are my own labels.

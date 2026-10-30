@@ -1,6 +1,6 @@
 """Extract every sprite of Sentinel from a (patched or original) multi-file D64.
 
-usage: python c128-gui/extract_sprites.py [Sentinel-1351_v8.d64]
+usage: python c128-gui/extract_sprites.py [Sentinel-1351_v9.d64]
 
 The game keeps all sprite shapes in VIC bank 1 ($4000-$7FFF), 64 bytes per shape,
 addressed by a sprite pointer 0-255 (address = $4000 + pointer * 64):
@@ -27,7 +27,7 @@ sys.path.insert(0, os.path.join(HERE, '..', 'mouse', 'tools'))
 sys.path.insert(0, os.path.join(HERE, '..', 'mouse'))
 from build import file_sectors, read_file   # noqa: E402
 
-D64 = sys.argv[1] if len(sys.argv) > 1 else os.path.join(HERE, '..', 'Sentinel-1351_v8.d64')
+D64 = sys.argv[1] if len(sys.argv) > 1 else os.path.join(HERE, '..', 'Sentinel-1351_v9.d64')
 POINTERS = list(range(0x20, 0x50)) + list(range(0x60, 0x80))
 # multicolor sprites (per the user): ships, the shot, mines / drones. Drawn with
 # 2-bit pixels, 2 pixels wide; bit pairs 01 / 10 / 11 get three different colours.

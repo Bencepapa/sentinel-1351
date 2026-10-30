@@ -76,9 +76,18 @@ BASIC 7.
 - `c128-flight/`: native C128 bitmap/MMU/flight-rendering test
 - `MOUSE-SUPPORT.md`: complete C64 patch documentation
 - `LESSONS-ADVGUI.md`: reusable C64 mouse-driver and testing notes
+- `manual.TXT`: the game's original manual (see Credits)
 
 ## Status
 
 The C64 mouse patch and both native C128 tests have been exercised in VICE and
 interactively with 1351 input. A complete native C128 port of the game has not
 yet been produced.
+
+## Credits
+
+`manual.TXT` is an unchanged copy of the Project 64 etext of the Sentinel manual
+(`SENTIN10.TXT`, March 1997, etext #181), converted by Chris Rogerson from the British
+cassette version. The original game is by Bryan Brandenburg (spelled Brian Brandenberg in
+the manual), (c) 1984
+Synsoft, distributed in the UK by US Gold.

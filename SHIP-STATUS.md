@@ -1,6 +1,6 @@
 # Sentinel: the ship's systems and damage
 
-Findings from the C64 code (`Sentinel-1351_v8`), read by disassembly and checked
+Findings from the C64 code (`Sentinel-1351_v9`), read by disassembly and checked
 against the memory image. All addresses are C64 addresses. Nothing here has been
 watched over a long play session yet, so treat the exact rates as "from the code".
 

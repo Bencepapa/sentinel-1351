@@ -1,4 +1,4 @@
-; Labels for the patched C64 game (Sentinel-1351_v8.prg), for the JS debugger.
+; Labels for the patched C64 game (Sentinel-1351_v9.prg), for the JS debugger.
 ; One per line:  NAME $ADDR  ; comment
 ; Collected from MOUSE-SUPPORT.md, MAP-LOGIC.md and c128-gui/README.md, plus the
 ; game variables found with the JS debugger (marked "found"). Add your own here;

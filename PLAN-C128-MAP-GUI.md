@@ -3,7 +3,7 @@
 Branch: `c128-map-gui`. Gun and shooting work is on the other machine, so this
 branch stays out of the flight-kernel files (`c128-flight/flight.asm`).
 
-Analysis source: a full 64 KB memory image rebuilt from `Sentinel-1351_v8.d64`
+Analysis source: a full 64 KB memory image rebuilt from the patched game (then `Sentinel-1351_v8.d64`; v9 keeps these addresses)
 (same code path as `mouse/onefile.py: image()`), disassembled with
 `mouse/tools/dis6502.py`. Everything below marked *(hyp)* is read from
 disassembly only and has not been confirmed in VICE yet.
