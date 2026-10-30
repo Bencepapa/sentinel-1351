@@ -46,6 +46,7 @@ def export(name, folder, source, prg):
     load = data[0] | data[1] << 8
     return {
         'model': 'c128',
+        'file': os.path.basename(prg),
         'load': load,
         'entry': symbols['START'],
         'code': [min(chunks), max(a + len(b) for a, b in chunks.items())],
@@ -73,6 +74,7 @@ def export_c64_game():
     digits = bytes(b for b in data[sys_at + 1:sys_at + 8] if 0x30 <= b <= 0x39)
     return {
         'model': 'c64',
+        'file': 'Sentinel-1351_v9.prg',
         'load': load,
         'entry': int(digits),
         'prg': base64.b64encode(data).decode('ascii'),

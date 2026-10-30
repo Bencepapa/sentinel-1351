@@ -24,6 +24,9 @@ the CPU is faster than on the real machine, and the original's main loop rates w
 `m.dma = true` adds them (43 cycles on a bad line, 3 + 2 per sprite on a sprite line);
 the timing tests use it, and its rates matched what VICE shows.
 
+The page links the running program's PRG for download (from the bytes it embeds) and the
+GitHub repository.
+
 ## Debugger
 
 The page is a workbench: the machine on the left, the debugger on the right.

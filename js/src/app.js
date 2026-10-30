@@ -58,12 +58,25 @@
     $('vdcwrap').style.display = name === 'map' ? '' : 'none';
     $('victag').textContent = prog.model === 'c64' ? 'VIC-II · C64' : 'VIC-IIe · 40 col';
     $('help').textContent = profile.help;
+    setDownload();
     $('overlay').style.display = 'none';
     $('memaddr').value = prog.symbols.SHIELDS !== undefined ? 'SHIELDS' : (prog.symbols.CURX !== undefined ? 'CURX' : '$1D00');
     buildKeys(); showPad(); buildCheats(); buildEvents(); buildWatches();
     $('conout').textContent = '';
     con(prog.model.toUpperCase() + ' · ' + profile.title + ' · ' + Object.keys(prog.symbols).length + ' labels. Type help.');
     refresh(true);
+  }
+
+  // The link downloads the running program's own PRG, from the bytes embedded in the page.
+  var downloadUrl = null;
+  function setDownload() {
+    var a = $('download');
+    if (downloadUrl) URL.revokeObjectURL(downloadUrl);
+    downloadUrl = URL.createObjectURL(new Blob([base64(prog.prg)], { type: 'application/octet-stream' }));
+    a.href = downloadUrl;
+    a.download = prog.file;
+    a.textContent = 'Download ' + prog.file;
+    a.title = prog.model === 'c64' ? 'For a C64 or x64sc: LOAD and RUN' : 'For a C128 or x128 in C128 mode: LOAD and RUN';
   }
 
   function base64(s) {
