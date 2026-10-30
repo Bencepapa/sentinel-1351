@@ -116,6 +116,17 @@ x bit 8 shadow, the others hold whatever they hold).
   and only while it is shown in the middle of the view. The C128 port's default
   difficulty was 1; it is now 0 (skirmish, the slowest).
 
+- **The tracking computer is switched on and off with A** (`$8C07` reads key A,
+  `$FDE7`). Only in a fight, and only while the computer works (system 4, `$3D`).
+  It takes up to 2 frames to come on; then the crosshair turns into an animated
+  bracket and "AUTO TRACKING ENGAGED" scrolls along the bottom row. While it is
+  on, the stick does not steer: the view turns by itself toward the first live
+  fighter and keeps it (and usually the whole group) on screen. Press A again to
+  steer yourself; it is checked only every ~5 frames, so hold the key a moment.
+  It also switches itself off when the group is gone, when the long range phase
+  starts, when you use thrust (W), or when the computer is destroyed. The C128
+  port uses A as well (T also works).
+
 ## Misnamed in earlier notes
 
 - `$E3`, `$C847` and `$372C-$372F` (read by the steering `$39C1`) belong to the
