@@ -72,9 +72,10 @@ The counters are read by other code, which is what a destroyed system disables
 
 The text block at `$9497` holds the words REPAIRED and OPERATIONAL, and the routine
 at `$932D` lists the eight systems (`$DD` = working, `$72` = destroyed) when the
-ship is in a base sector ("ENTERING BASE SECTOR", `$3FB9`). Exactly what is repaired
-and how is not traced yet; the C128 panel restores the starting values when the
-player visits a base (simplification, marked in the code).
+ship is in a base sector ("ENTERING BASE SECTOR", `$3FB9`). The manual: a status report,
+then repairs, fuel and one proton. The code's repair rules are not traced yet; the C128
+panel restores the starting values when the player visits a base (simplification, marked
+in the code).
 
 ## Verification (C128 port against the original)
 
@@ -98,5 +99,8 @@ original destroyed-message ("PHASORS DESTROYED CAPTAIN").
 
 ## Not understood yet
 
-- What each destroyed system disables, and the repair rules at a base station.
-- The meaning of `$FD`, which blocks damage while non-zero.
+- What each destroyed system disables, beyond the scanners, sequencer and tracking computer
+  ported so far, and the repair rules at a base station.
+- The meaning of `$FD`, which blocks damage while non-zero. It is written around the
+  hyperspace code (`$B580`, `$B6F0`, `$B785`), so it may be the deflector of the manual;
+  not checked.

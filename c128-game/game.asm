@@ -48,6 +48,39 @@ GAMEINIT:               ; once, from the cockpit's START
         JSR SHOWSEC
         JMP SECTORIN
 
+; Z set: the map's key is down: C=, or with a mouse its right button, held alone for
+; 5 frames as in the 1351 patch (both buttons: not until they are released).
+MAPKEY: LDA CIA1PB
+        AND #$20
+        BEQ g_mk9
+        LDA MPRES
+        ORA M_MPRES
+        BEQ g_mk8
+        LDA #$FF        ; port 2: the right button is wired to UP
+        STA CIA1PA
+        LDA CIA1PA
+        AND #$11
+        BEQ g_mk3       ; both
+        CMP #$10
+        BEQ g_mk1       ; right alone
+        LDA #$00        ; released
+        STA RCNT
+        BEQ g_mk8
+g_mk1:  LDA RCNT
+        BMI g_mk8
+        CMP #MAPDLY
+        BCC g_mk2
+        LDA #$00        ; (long enough)
+        RTS
+g_mk2:  INC RCNT
+        BNE g_mk8
+g_mk3:  LDA #$80
+        STA RCNT
+g_mk8:  LDA #$01
+g_mk9:  RTS
+RCNT:   .BYTE 0
+MAPDLY  = 5
+
 ; C= in the cockpit (a new press): the map opens or closes.
 MAPTOG: LDA MAPSHOWN
         BEQ MAPOPEN

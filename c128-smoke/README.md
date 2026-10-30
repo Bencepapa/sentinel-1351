@@ -13,8 +13,8 @@ It verifies the parts that the existing mouse patch needs:
 - one update per frame while running at 1 MHz;
 - visibility of the native C128 MMU register at `$FF00`.
 
-It deliberately does not switch the MMU or load the game yet. That should be
-the next test after this hardware/input baseline works.
+It deliberately does not switch the MMU or load the game; `c128-flight` is the
+MMU test.
 
 ## Build
 
@@ -44,8 +44,5 @@ screen, not after `GO64`.
 ## What success proves
 
 Success proves that the Sentinel mouse algorithm and its required C64-style
-I/O devices work without entering C64 mode. It does not yet prove that the
-game's almost-64-KB memory image can run under C128 MMU control. The next
-milestone is a small MMU trampoline that alternates between I/O-visible and
-all-RAM configurations while executing outside `$D000-$DFFF`, followed by
-relocation of the game's live `$FF00-$FF14` routine.
+I/O devices work without entering C64 mode. The port went on as a rewrite, routine by
+routine (`c128-game`), so the original's memory image does not run under the C128 MMU.

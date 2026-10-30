@@ -1,12 +1,13 @@
-# C128 port plan: map screen and GUI
+# The map screen and GUI: what the original does
 
-Branch: `c128-map-gui`. Gun and shooting work is on the other machine, so this
-branch stays out of the flight-kernel files (`c128-flight/flight.asm`).
+The map is ported (`c128-map/`, joined into the game in `c128-game/`). This file keeps
+what was traced on the way, in the order it was found. Ideas for later are
+[GitHub issues](https://github.com/Bencepapa/sentinel-1351/issues).
 
 Analysis source: a full 64 KB memory image rebuilt from the patched game (then `Sentinel-1351_v8.d64`; v9 keeps these addresses)
 (same code path as `mouse/onefile.py: image()`), disassembled with
 `mouse/tools/dis6502.py`. Everything below marked *(hyp)* is read from
-disassembly only and has not been confirmed in VICE yet.
+disassembly only.
 
 ## What the code tells us about the map
 
@@ -19,47 +20,11 @@ disassembly only and has not been confirmed in VICE yet.
 - Map exit is `$FC59` (`$B8=0`), and the sector walk-up at `$FC96-$FDDE`
   rebuilds the cockpit.
 - Map data: sector grid index from `$22D6` (X=`$92`, Y=`$93`), sector state in
-  `$033C,X` and `$0378,X`, text screen near `$4400`, colour RAM `$D800`
-  *(hyp, from the `$BA99` fills with Y=`$44` / `$D8`)*.
+  `$033C,X` and `$0378,X`.
 - Text is drawn by `JSR $9BE5` with a string pointer pushed on the stack
   (three PHA before the call, X/Y = column/row) and `$0921`.
-- `$BA99` looks like "fill 32 pages with A starting at page Y" *(hyp)*. The
-  mouse notes already say `$BA72` clears the `$6000-$7FFF` bitmap, so the
-  family is the screen/bitmap clear helpers.
-
-## Why the map first
-
-| | Map screen | Flight GUI |
-|---|---|---|
-| Video mode | Text screen at `$4400` + colour RAM. VIC-IIe is identical to the C64 here. | Multicolor bitmap with five raster splits per frame. |
-| Dependencies | Sector tables (`$033C`, `$0378`), text routine `$9BE5`, a few fills. | Whole raster IRQ chain, sprite multiplexing, bitmap layout. |
-| Overlap with the gun work | None | High: HUD, crosshair and torpedoes sit in the same IRQ. |
-| Input | Joystick / mouse directions (`MSYN` path from the C64 patch) | Same, plus flight steering. |
-
-Recommendation: port the map first, flight GUI second.
-
-## Steps
-
-1. **Confirm the map facts in VICE 3.7** (`C:\C64\GTK3VICE-3.7-win64\bin\x128.exe`
-   in C64 mode, or `x64sc`). Use `-remotemonitor`, press C=, then dump
-   `$4400`, `$D800`, `$033C-$03B3`, `$0378`; watch `$B8`. Save PNGs as
-   reference.
-2. **Extract the map data and strings** into a standalone include
-   (`c128-map/mapdata.inc`): sector tables, glyph set the map uses, strings
-   called through `$9BE5`.
-3. **Native C128 map test** (`c128-map/map.asm` + `build.py`, same shape as
-   `c128-flight`, reusing `mouse/tools/asm.py`):
-   BASIC 7 stub at `$1C01`, VIC-IIe text mode, copy the glyph set to a RAM
-   charset (MMU config `$0E` as in the flight test), draw the grid from the
-   tables, move a cursor with 1351 deltas and joystick.
-4. **Port the text routine** (`$9BE5`) as a clean 6510 routine, no
-   stack-pushed pointer, and keep the original string format.
-5. **Hook point for the full game** later: the map loop must return the chosen
-   sector and cursor state the same way `$FC96` expects (`$92/$93`).
-6. **Then the flight GUI**: list what the cockpit draws outside the 3D view
-   (HUD, crosshair, torpedo/laser sprites) and decide which parts go into the
-   raster IRQ. Coordinate with the shooting branch first.
-
+- `$BA99` fills 13 rows of 40 cells from row 4 with A, in the matrix (Y=`$44`) or colour
+  RAM (Y=`$D8`). `$BA72` fills pages: `$BAB0` clears the bitmap's `$6500-$75FF`.
 
 ## Confirmed in VICE 3.7 (x64sc, skirmish, map open)
 
@@ -87,19 +52,6 @@ Reference files: `c128-map/ref/map-screen.png`, `c128-map/ref/map-state.txt`
   lets the monitor hold a key down.
 - The game keeps running while the map is open (shields and time change),
   so freeze it at once with the monitor.
-
-### Effect on the plan
-
-- The map shares the **bitmap renderer** with the flight view. The C128
-  flight test already has multicolor bitmap setup, the MMU `$0E` transition
-  and the original pixel primitives, so the map port builds on
-  `c128-flight/flight.asm` rather than a new text-mode harness.
-- Step 3 becomes: native C128 test that draws the grid and icons into the
-  `$6000` bitmap, with the `$4400` matrix / `$D800` colours, then adds the
-  cursor.
-- Overlap with the shooting branch is therefore larger than first thought:
-  reuse the pixel primitives read-only and put new code in a separate file.
-
 
 ## Map routines traced (static, `$2000-$2400` region)
 
@@ -137,22 +89,6 @@ All addresses are in the C64 memory image; none are run on the C128 yet.
   `$0A5A` split index) + `$223D` (SID blip). Exit = `$FC59` (`$B8=0`).
   Per-frame blink and update = `$2B14`.
 
-### Port order for the map
-
-1. `$EF45` pixel primitive + `$EE46/$EE52/$EE56` tables (already in
-   `c128-flight`).
-2. Cell address helper `$BA11`, glyph drawer `$0816`, and the glyph bitmaps
-   (chars `$60-$6A`).
-3. Grid line command stream `$2024` and its interpreter (find it).
-4. Sector data tables + `$215C` redraw loop.
-5. Cursor `$2384` + input `$21C8`.
-
-
-- Icon routine and grid-drawing routine addresses (trace writes to
-  `$6000-$7FFF` while the map opens).
-- What `$033C` / `$0378` hold (they are filled with sector flags/counts:
-  values 0..9, `$80`, `$FF`).
-
 ## Grid draw-in effect (traced with VICE 3.7 from an in-flight snapshot)
 
 The grid is not a static line list. `$B094` (called every frame from the
@@ -180,12 +116,6 @@ per-frame step and `$B2D2` is `JMP $EF53` (plot a pixel with the layering rule).
   scanlines 3 and 4 of every 2nd cell row starting at row 4). Each grid cell is
   12 px wide and 16 px tall (160x200 multicolor pixel units), 10 x 6 cells.
 
-### Port consequence
-
-A native C128 version does not need the sweep: draw the 11 vertical and
-7 horizontal lines straight into the bitmap with the byte patterns above (or
-reuse the sweep for the same look), then draw the sector icons on top.
-
 ### Icon layer is dynamic (from the user)
 
 Icons are not drawn once: squadrons move between cells, a mothership blinks
@@ -195,13 +125,6 @@ per-frame update layer: keep sector state, redraw only the changed cells
 drawing glyph `$60`), and animate the blink and the planet from a frame
 counter. `$2B14` is the original per-frame map blink/update hook.
 
-### First C128 build: grid draw-in
-
-`c128-map/` holds the native test (`map.asm`, `build.py`, `README.md`): the
-sweep, the pause and the beeping sound are ported; the finished bitmap matches
-the original on all 463 grid-only cells. The user ran it in x128 and confirmed
-the grid effect looks as expected (sound not explicitly confirmed).
-
 ### Quirks found while debugging
 
 - C= is read only on frames with `$A0 AND 3 = 2` (`$0B43-$0B59` picks
@@ -210,61 +133,4 @@ the grid effect looks as expected (sound not explicitly confirmed).
   and Tab is CTRL.
 - Snapshots: launch `x64sc` with `-sound -sounddev dummy`. `+sound` plus a
   snapshot that restores a SID engine produced "Cannot initialize SID Engine".
-- Shield counter address not found yet (`$B6` was a false lead).
-
-## Ideas for later
-
-- **Ship status on the second display** (from the user, now started on the branch `c128-ship-status`, see `SHIP-STATUS.md`; what is below is the original idea): the VDC text screen has room
-  next to the map for the ship's systems. The ship has about ten subsystems that
-  can be damaged, so the panel would list each one and mark which are down
-  (colour or blink per system, like the map's attack rings). Not looked at yet:
-  where the original keeps the damage flags, how the game names the systems, and
-  what happens when one fails. Start by finding the damage state in the C64 code
-  (watch which bytes change when the player takes hits) and the system names.
-- **Message line on the main screen**: the VIC-IIe side only records `LASTMSG`; the
-  second display already prints the game's messages.
-- **Planet and mothership events in the flight view**: the cockpit side of the
-  attack rings and of the planet being surrounded.
-
-## Optional C128 features (not in the original, from the user)
-
-The C128 runs the VIC picture at the same 1 MHz as the C64 (same cycles per frame, same
-sprites and modes), so these are extras, not requirements. The native C128 gives more
-memory, the 2 MHz mode while the VIC shows only border (bottom border, vertical blank, top
-border; the 40-column picture blanks in 2 MHz mode) and the VDC as a second display.
-
-- **Sun and planet in the 3D view.** The sun is visible from every sector, the planet only
-  from the adjacent sectors.
-  - Sun: a 2x2 block of X/Y-expanded multicolor sprites (about 96x84 pixels), with `$D01B`
-    set so it sits behind the bitmap and the stars pass in front of it (the same priority
-    trick as the guns). Fixed place per sector, maybe a small parallax against the crosshair.
-  - Planet: one or two expanded sprites, a small disc two sectors away and a larger one in
-    the neighbouring sector; the neighbour state comes from the map data.
-  - Sprites 1, 2 and 4-7 are free in the view (sprite 3 between the lines 78 and 194).
-    More objects can reuse sprites in separate bands (a raster multiplex, as the guns do).
-  - To check first: do the original's 80 sprite shapes contain a sun or planet shape, or do
-    we draw our own; does the bitmap keep its background transparent for the priority.
-  - A raster IRQ instead of the polled waits would make the sprite switches steadier.
-- **2 MHz work in the vertical blank** (mouse, guns, star field) to leave margin for the above.
-- **Enhanced star field** (the C128 mode only; the original look stays the default). Memory is
-  no limit (a star needs about 4 bytes); the cost is processor time (a few hundred cycles per
-  star per frame at 1 MHz), so more stars need the 2 MHz work in the vertical blank
-  (roughly 50-100 stars). From cheapest to biggest:
-  1. **Fading with the darker grays.** A multicolor bitmap cell has three colours besides the
-     background: two from the colour matrix (`$4400`) and one from colour RAM. Dark, mid and
-     light gray in the sky cells give stars three brightness levels at no extra cost per
-     star: a star starts dim and gets brighter as it nears the edge (depth cue).
-  2. **Per-star depth.** Each star gets its own speed, near stars faster than far ones.
-  3. **Perspective zoom.** Speed proportional to the distance from the centre, accelerating
-     like a real 3D star field (the original's speed is nearly constant, about 1.1-1.4
-     pixels per frame, so this is a deliberate departure).
-  4. **More stars** with the 2 MHz time.
-
-## Open questions
-
-- Which charset does the map use: ROM, or a custom one in the game's RAM?
-- Does the map use sprites (cursor, markers)? `$D028` is set to 6 at
-  `$FCB5`, so sprite 7 colour is touched on exit.
-- C128-native 40-col vs 80-col: this plan keeps 40 columns and the VIC-IIe.
-- VICE 3.7 vs the 3.9 command in `c128-flight/README.md`: the flag
-  `-controlport2device 3` should exist in both; verify.
+- The shields are at `$844F` (`SHIP-STATUS.md`).

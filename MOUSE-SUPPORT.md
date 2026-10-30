@@ -4,9 +4,9 @@ This document describes how mouse support was added to *Sentinel* by Bryan
 Brandenburg (Synapse Software). The game is a first-person space shooter: the
 joystick moves a crosshair, and the ship turns toward it.
 
-- Patched disk: `Sentinel-1351.d64` (built from the original `Sentinel.d64`)
+- Patched disk: `Sentinel-1351_v9.d64` (built from the original `Sentinel.d64`, which is not in the repository)
 - Source: `mouse/sentinel_mouse.asm`
-- Build: `python mouse/build.py [in.d64] [out.d64]`
+- Build: `python mouse/build.py Sentinel.d64 Sentinel-1351_v9.d64`
 
 ## Controls with a mouse
 
@@ -118,6 +118,11 @@ bit is masked out of the joystick byte and handled separately.
 | `$0D19` | `JSR $B30C` | `JSR CURSOR` |
 | `$FE30`, `$FE68`, `$FEA0` | `LDA #$7F` | `LDA #$BF` |
 | `$864A` | `LDA $DC00` | `LDA $96 / NOP` (the menu sees mouse directions too) |
+| `$FBCE` | `JSR $21C8` | `JSR MSEL` (the map's mouse pointer) |
+| `$129B` | `LDY $B8 / BEQ / LDA #0` | `JSR MPY` + `NOP`s (the crosshair routine's Y on the map) |
+| `$0D12` | `LDA #0 / STA $D001 / BEQ` | `JSR MPY0 / JMP $0D1C` (the line-59 split keeps the pointer's Y) |
+| `$FC9D` | `JSR $0D81` | `JSR JUMPCLR` (fix of the original: a jump also clears the map's boxes, see FINDINGS.md bug 7) |
+| `$53C0` | unused sprite shape `$4F`, all zero | the map pointer's shape, a + |
 | 12 writers of `$B333/$B340/$B349/$B38C` | `STA` into old operands | `STA` into the new variables `DDLY/YMAX/YMIN/YCEN` |
 
 ### Routines
@@ -158,9 +163,9 @@ not assumed.
 |---|---|---|---|
 | `$B2D8-$B399` | 194 | CURSOR, CAPPLY, MOVCHK, MSYN | The original input routines are replaced entirely, and their self-modified operands are relocated. |
 | `$02A2-$02FF` | 94 | JOYIN, POTRD | Unused by the KERNAL, never referenced by the game, and still intact after filling it with a marker byte and playing. |
-| `$03B4-$03F5` + `$03F6-$03FF` | 66 + 10 | CLAMP, SIDE + variables | Same tests (fill pattern, reference scan) |
+| `$03B4-$03F5` + `$03F6-$03FF` | 66 + 10 | CLAMP, SIDE, MHI, RCNT + variables | Same tests (fill pattern, reference scan) |
 | `$0334-$033B` | 8 | steering tables | Unused by the KERNAL, never referenced by the game |
-| `$0100-$01BF` | 192 | MCUR, MBTN | Dead leftovers of the crack's loader, garbled by stack pushes and never called. The game's stack stays at about `$01F0`, and the code survived play in VICE. |
+| `$0100-$01D7` | 216 | MCUR, MBTN, MSEL, MPY, JUMPCLR (full) | Dead leftovers of the crack's loader, garbled by stack pushes and never called. The game's stack stays above `$01E6` (measured over title, menus and play), and the code survived play in VICE. |
 | zero page `$4B $6F $AB $ED` | 4 | flags/temporaries | Not used as an operand anywhere in the game code |
 
 Pitfalls found along the way:
@@ -201,8 +206,8 @@ text ("THE 20TH C") appeared on the map.
 ## 4. Building and testing
 
 ```bash
-python mouse/build.py
-"C:\dev\c64\vice\win\bin\x64sc.exe" -controlport2device 3 -autostart Sentinel-1351.d64
+python mouse/build.py Sentinel.d64 Sentinel-1351_v9.d64
+"C:\dev\c64\GTK3VICE-3.9-win64\bin\x64sc.exe" -controlport2device 3 -autostart Sentinel-1351_v9.d64
 ```
 
 In VICE, `Alt+Q` grabs the mouse. `-controlport2device 1` gives you a joystick
@@ -213,7 +218,7 @@ each hook, and fails if any code chunk outside its free region.
 
 ### Loading the files
 
-The PRGs in `prg/` are not standalone programs. `SENTINEL` loads `SN0`, which
+The files on the disk are not standalone programs. `SENTINEL` loads `SN0`, which
 loads the rest from **device 8**. All five files must be on the same disk:
 attach the D64, or copy the files to an SD2IEC folder or a real disk, then
 run:
@@ -228,7 +233,7 @@ It starts by itself.
 
 `python mouse/onefile.py Sentinel-1351_v9.d64` turns the multi-file disk into
 a single self-unpacking `Sentinel-1351_v9.prg` (151 blocks). Load it with
-`LOAD"SENTINEL-1351_V8",8` and type `RUN`, or drop it on VICE or an SD2IEC.
+`LOAD"SENTINEL-1351_V9",8` and type `RUN`, or drop it on VICE or an SD2IEC.
 
 How it works:
 

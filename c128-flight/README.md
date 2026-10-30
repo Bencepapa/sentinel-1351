@@ -2,18 +2,14 @@
 
 This test exercises a point-star perspective field in native C128 mode. It uses
 the same multicolor layering rule as Sentinel's pixel primitives at `$EF53` and
-`$EEE6`: pixel value 2 is never overwritten by a star. The original seven-pixel
-hostile-squadron marker from `$3166-$3193` and its matching erase walk from
-`$3138-$3165` remain in the source for the later three-squadron integration,
-but are not used for the background stars.
+`$EEE6`: pixel value 2 is never overwritten by a star.
 
 The surrounding loop is intentionally small rather than pretending to be the
 complete game. This harness moves twelve single multicolor pixels away from a
 mouse-controlled vanishing point in the real `$6000-$7FFF` bitmap. Stars start
 and respawn at pseudorandom safe screen positions. This movement is test
-scaffolding, not original game behavior. The full projection and steering code
-is not included yet because it depends on sector data, movement streams, three
-16-bit world-coordinate sets, and the complete raster IRQ.
+scaffolding, not original game behavior; the real star field, steering and fight
+are in [`c128-gui/cockpit`](../c128-gui/cockpit).
 
 ## Build and run
 
@@ -36,9 +32,6 @@ MMU transition. The harness selects configuration `$0E`
 ROM at `$4000-$7FFF`; without this, writes reach bitmap RAM but erase operations
 read ROM bytes back and leave corrupt trails. The original MMU configuration
 is restored on exit.
-
-It does not yet execute original code from RAM under the C128 KERNAL at
-`$E000-$FFFF`.
 
 The real shot, with its hit test and sound, is in
 [`c128-gui/cockpit`](../c128-gui/cockpit).

@@ -110,8 +110,8 @@ PATCHES_COCKPIT = [
     # SPACE leaves only on a new press; C= opens and closes the map
     ('        LDA CIA1PB\n        AND #$10\n        BNE nospace\n        JMP EXIT\nnospace:LDA #$BF        ; port 2 pots for the next frame\n',
      '        LDA CIA1PB\n        AND #$10\n        BNE nospace\n        LDA SPREV\n        BNE nosp2\n        JMP EXIT\n'
-     'nospace:LDA #$00\n        STA SPREV\nnosp2:  LDA CIA1PB      ; (game) C= opens / closes the map (the original\'s map key)\n'
-     '        AND #$20\n        BNE nomapk\n        LDA CPREV\n        BNE nomap\n        LDA #$01\n        STA CPREV\n        JSR MAPTOG\n'
+     'nospace:LDA #$00\n        STA SPREV\nnosp2:  JSR MAPKEY      ; (game) C= or the right mouse button: the map opens / closes\n'
+     '        BNE nomapk\n        LDA CPREV\n        BNE nomap\n        LDA #$01\n        STA CPREV\n        JSR MAPTOG\n'
      '        JMP nomap\nnomapk: LDA #$00\n        STA CPREV\n'
      'nomap:  LDA #$BF        ; port 2 pots for the next frame\n'),
     # the hooks

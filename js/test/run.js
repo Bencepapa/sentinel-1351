@@ -360,6 +360,16 @@ function report(hooks, label) {
       for (let f = 0; f < 300; f++) { m.runFrame(); const vl = m.vicLog; for (let i = 0; i < vl.length; i += 4) if (vl[i + 2] === 0x20 && vl[i] < 50) early++; }
       check(early === 0, `game: the border's colours never start above line 55 (${early} early writes)`);
     }
+    {   // the right mouse button opens and closes the map like C=, held alone for 5 frames
+      const map0 = K[s.MAPSHOWN];
+      run(m, hooks, 2, () => { m.mouse.right = true; });
+      const early = K[s.MAPSHOWN]; run(m, hooks, 8); m.mouse.right = false; run(m, hooks, 4);
+      const opened = K[s.MAPSHOWN];
+      run(m, hooks, 10, () => { m.mouse.right = true; }); m.mouse.right = false; run(m, hooks, 20);
+      check(early === map0 && opened !== map0 && K[s.MAPSHOWN] === map0, 'game: the right mouse button opens and closes the map');
+      run(m, hooks, 10, () => { m.mouse.right = true; m.mouse.left = true; }); m.mouse.right = false; m.mouse.left = false; run(m, hooks, 4);
+      check(K[s.MAPSHOWN] === map0, 'game: both buttons do not open the map');
+    }
     {   // the next group's approach ends tracking, whatever its pass counter says
       K[s.APPR] = 1; K[s.APRUN] = 1; K[s.LRMODE] = 1; K[s.TRUN] = 1; K[s.TRACK] = 1; K[s.TON] = 1; K[s.TACC] = 0; K[s.TACC + 1] = 0; K[s.TPC] = 1;
       run(m, hooks, 3);

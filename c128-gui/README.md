@@ -17,7 +17,7 @@ identical to the running game, so there is nothing to generate:
 | `$20-$30` | `$4800-$4C3F` | enemy twin-pod fighters, tiny to close, in several rotations |
 | `$31-$38` | `$4C40-$4E3F` | enemy ships (lens-shaped), one shape per distance (tiny to big); **multicolor** (user) |
 | `$39-$3D` | `$4E40-$4FFF` | the planet, five globe frames (`$39-$3C` are cycled, see below) |
-| `$3E-$44` | `$4F80-$513F` | small spiky shapes, growing: the shot; **multicolor** (user) |
+| `$3E-$44` | `$4F80-$513F` | small spiky shapes, growing: the type 2 ships; **multicolor** (user) |
 | `$45`, `$46` | `$5140-$51BF` | blank on disk, **filled at run time** (see below) |
 | `$47`, `$48` | `$51C0-$523F` | two big diagonal arms, mirrored: the gun barrels (left, right) |
 | `$49-$4B` | `$5240-$52FF` | the tracking crosshair, animated |
@@ -53,12 +53,11 @@ raster interrupt):
 - sprite 1 is the planet on the map (pointers `$39-$3C`, every 8th frame) and is
   reused in flight for enemy fire and the basestar;
 - sprites 5 and 6 get pointers `$45` / `$46`, which are blank on disk: at `$CF64`
-  the game copies 128 bytes (two shapes) from a table into `$5140-$51BF` and
-  steps through the table, with both sprites X-expanded. It looks like a close
-  approach / ramming animation after which the ship is hit five times (`$84D7`);
+  the game copies 128 bytes (two shapes) from `$A000-$AFFF` into `$5140-$51BF`, with both
+  sprites X-expanded: the enemy mothership's torpedo, which then hits the ship five times
+  (`$84D7`). The player's proton torpedo shows the same frames at `$4040` (`FINDINGS.md`);
 - sprite 4 gets `$4C` (`$374C`);
-- `$47` / `$48` (the two big diagonal arms) are not set by any constant in the
-  code; they may be the barrels of the gun base, or drawn some other way. To do.
+- `$47` / `$48` (the two big diagonal arms) are the gun barrels (sprite 7 in the cockpit).
 
 ## Font (`ref/charset-4000.bin`, `ref/charset-sheet.png`)
 
@@ -159,19 +158,20 @@ white, light red, orange, white, red, black (`$1303`).
 
 ```powershell
 python c128-gui/cockpit/build.py
-& "C:\C64\GTK3VICE-3.7-win64in8.exe" -40col -controlport2device 3 `
+& "C:\dev\c64\GTK3VICE-3.9-win64\bin\x128.exe" +go64 -40col -controlport2device 3 `
   -autostart c128-gui\cockpit\sentinel-c128-cockpit.prg
 ```
 
 (`-controlport2device 3` is the 1351 mouse, press Alt+Q in VICE to grab it; without it
-use a joystick in port 2.) **SPACE** returns to BASIC, **T** switches target
-tracking on and off (the crosshair then animates `$49-$4B`).
+use a joystick in port 2.) **SPACE** returns to BASIC, **A** or **T** switches the
+tracking computer. The standalone cockpit fights squadron after squadron; the game is
+`c128-game`. What is ported and how it is checked: `PLAN-C128-COCKPIT.md`.
 
 - **Picture**: the raster schedule above, polled in the main loop: HUD strip with the
   light-blue border and dark-gray background, the black 3D view with a small star field,
   the cockpit art captured from the original (radar viewport, the two gun bases, the gray
   band, rivets; `ref/cockpit-art.bin`), the font and the sprite shapes at their original
-  addresses. The HUD numbers are the captured ones (static).
+  addresses.
 - **Crosshair** (sprite 0, shape `$7D`): follows the 1351 or the joystick with the
   original mouse patch's logic: X 0-254, Y 88-173, joystick steps of 3 and 2 per
   frame with the flight-stick inversion, and a glide back to the centre after 64 frames
@@ -180,18 +180,17 @@ tracking on and off (the crosshair then animates `$49-$4B`).
   twice as wide): the original routine `$9568` lean them with the steering direction and
   bring them back to rest; while a phasor shot flies, the gun it came from is red
   (original `$1241`).
-- **Phasor shot** (sprite 1, multicolor shapes `$70` down to `$67`; branch `c128-port`):
+- **Phasor shot** (sprite 1, multicolor shapes `$70` down to `$67`):
   press fire to launch it from the gun on the other side of the crosshair, as the
   original's `$1424` / `$1467` / `$1526` and its line routine `$3580` do; it flies to the
   crosshair, slowing as it recedes, and holding fire repeats it. A shot costs 10 energy
   on the HUD. Checked
   frame by frame against the original routines in `js/test/run.js`; details in
   `PLAN-C128-COCKPIT.md`.
-- **Type-1 fighters** (sprites 4-6, shapes `$20-$2F` by depth; branch `c128-port`): a wave of
+- **Type-1 fighters** (sprites 4-6, shapes `$20-$2F` by depth): a wave of
   three twin-pod fighters flies its original movement streams and drifts back toward the
   middle of the view, as the original's `$FF1B`, `$2F6D`, `$33B6` and `$2E36` do (checked
-  frame by frame for 2000 frames in `js/test/run.js`). They cannot be hit yet and do not react
-  to steering.
+  frame by frame for 2000 frames in `js/test/run.js`).
 
 Result on a real x128 run (user screenshot, `ref/cockpit-c128-working.png`): HUD, rivets,
 crosshair with its digits, guns behind the bases, radar and star field all correct.
@@ -203,15 +202,7 @@ at `$5F40`, showed noise there while the bitmap was fine.
 Checked in VICE: the writes to the video registers happen on the same lines as in the
 original's quiet frame (56 / 58, 74, 75, 76 / 77, 78, 194, 230, 233, 242); the cursor
 and gun variables follow the original rules for right, left, up, down, fire and release
-(limits, tilt of the two guns, glide back to rest). Not checked: how it looks, the real 1351
-mouse path, and the sprites' on-screen position.
-
-## Not done yet
-
-- Where the numbers in the squares of `$7D` come from (digits copied from `$64`, per the
-  user) and what they show; `$47` / `$48`; the player's shot (`$3E-$44`) in the code.
-- The data behind the run-time sprites `$45` / `$46` (table at `($5D)`, `$CF64`).
-- The rest of the lower GUI: the radar contents, the emplacements as bitmap data.
+(limits, tilt of the two guns, glide back to rest).
 
 ## The original star field (traced in VICE, snapshot in flight)
 
@@ -222,10 +213,9 @@ mouse path, and the sprites' on-screen position.
 - New stars start anywhere in a 128 x 128 square around it: x = random & $7F + 16,
   y = random & $7F + 36. A star that leaves x 3-155, y 17-180 is replaced.
 - Plotting only touches empty bitmap pixels (`$EF30`), erasing only a star's own pixel.
-- Measured speed away from the centre: about **1.1-1.4 pixels per frame**, nearly the same at
-  every distance (the first C128 version used 1 + distance/16, 2-5 pixels per frame).
-- The C128 cockpit now does this: 10 stars, fixed centre, a step along the longer axis
-  every frame (two every fourth frame) and the other axis by slope. Steering shifts all
-  stars by 2 pixels every second frame (stick left, stars right; up, stars up; as the original).
-  Not ported: stars over the cockpit art.
+- Measured speed away from the centre: about **0.4-0.5 pixels per frame** with the VIC's
+  stolen cycles (`m.dma`), which matches VICE; each star has its own delay, which shortens.
+- The C128 cockpit: 12 stars, fixed centre, 0.44 steps a frame along the longer axis and the
+  other axis by slope. Steering shifts all stars by 2 pixels every second frame (stick left,
+  stars right; up, stars up; as the original). Not ported: stars over the cockpit art.
 

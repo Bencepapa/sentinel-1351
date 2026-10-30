@@ -5,19 +5,20 @@ joined into one `.prg`, without changing either standalone program.
 
 ```powershell
 python c128-game/build.py
-& "C:\C64\GTK3VICE-3.7-win64in8.exe" -40col -controlport2device 3 `
+& "C:\dev\c64\GTK3VICE-3.9-win64\bin\x128.exe" +go64 -40col -controlport2device 3 `
   -autostart c128-game\sentinel-c128-game.prg
 ```
 
-In the browser page: **Program → C128 game (cockpit + map)**.
+It is the browser page's default program.
 
 ## How it plays
 
 - The ship starts in sector 05.03 (map cell 4,2), empty as in the original.
-- **C=** (Alt in the page) opens the map **in the cockpit's 3D view**, as in the
+- **C=** (Alt in the page) or the **right mouse button** (held alone for 5 frames, as
+  in the C64 patch) opens the map **in the cockpit's 3D view**, as in the
   original in flight: the view wipes a row a frame, and the grid
   draws in with its beeps; the HUD, the radar, the guns and the scanner row stay.
-  C= again closes it (the view wipes back, the stars return).
+  The same key again closes it (the view wipes back, the stars return).
 - **The fight goes on behind the map**: the stars keep moving, the fighters fly
   behind its lines and icons, enemy shots still hit the ship. While the map is
   open the mouse moves its cursor and turns the stars (no phasor, no steering).
@@ -70,13 +71,16 @@ Every patch is checked to match exactly once, so a change in either program that
 breaks the join stops the build with the patch that no longer fits.
 
 Timing: the VIC-IIe takes cycles from the processor on bad lines and sprite lines,
-and the JS machine runs without that unless `m.dma` is set. `js/test/run.js` runs
-without it, so VICE is the reference for anything near a limit.
+and the JS machine runs without that unless `m.dma` is set. The game's split and fight
+tests set it; VICE stays the reference for anything near a limit. The map's code ends
+just below `$C000`: more code in the cockpit's second chunk needs a move (the build
+stops if it does not fit).
 
 Tests (`js/test/run.js`, "game:"): the start sector, the world ticking with the
 map closed, the map opening in the view (art and HUD untouched, no overrun), a
 jump into a squadron's sector (the approach begins, TARGETS), the HUD's sector,
-the view's colours back, kills emptying the sector, C= closing the map.
+the view's colours back, kills emptying the sector, C= closing the map, the right
+button, fire on the ship's own sector, a squadron coming in, the splits' timing.
 
-Not yet: hyperspace, types 2 and 3, motherships, the second display while
-flying.
+Not yet: hyperspace, proton torpedoes, thrust (W), types 2 and 3, motherships and
+bases, the second display while flying, game over, and the destroyed-system messages.

@@ -2,7 +2,7 @@
 
 The browser version follows the C128 port instead of being a second codebase.
 The unchanged binaries run on a JS 6502 core: the native C128 programs
-(cockpit, map, flight) and the full patched C64 game (`Sentinel-1351_v9.prg`).
+(the C128 game, cockpit, map, flight) and the full patched C64 game (`Sentinel-1351_v9.prg`).
 The chips around them are replaced by JS:
 
 | Part | How it is handled |
@@ -19,8 +19,10 @@ The chips around them are replaced by JS:
 
 Timing is a PAL frame of 312 lines x 63 cycles; `$D012` follows the cycle
 count, so the tests' raster waits work unchanged. `$D030` bit 0 doubles the
-cycles per frame (C128). Bad lines and sprite DMA do not steal cycles yet, so
-the CPU is a little faster than on the real machine.
+cycles per frame (C128). Bad lines and sprite DMA do not steal cycles on the page, so
+the CPU is faster than on the real machine, and the original's main loop rates with it.
+`m.dma = true` adds them (43 cycles on a bad line, 3 + 2 per sprite on a sprite line);
+the timing tests use it, and its rates matched what VICE shows.
 
 ## Debugger
 
@@ -88,7 +90,7 @@ python js/bundle.py         # js/index.html (separate scripts) and js/dist/senti
 node js/test/run.js         # headless checks, PNG snapshots in js/test/out
 ```
 
-The headless checks run the four programs (C64 game, cockpit, map, flight) with the ports in verify mode. They compare
+The headless checks run the five programs (C128 game, C64 game, cockpit, map, flight) with the ports in verify mode. They compare
 the map's grid cells with the original game's bitmap (`c128-map/ref`), and
 exercise the cursor, fast ticks, the planet sprite, the cockpit crosshair and vertical-blank budget (`OVRUN`), and the exits. For the C64 game they start a game and test the debugger: breakpoints, single steps, write watches, save / load in the middle of a frame (same memory 60 frames later), the cheats on a directly called `HIT`, and the game-over event.
 

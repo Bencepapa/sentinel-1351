@@ -109,16 +109,14 @@ display it is a 3x3 block of custom characters whose shapes are redrawn per fram
 from the same four frames. Checked from the VIC-II state in VICE (sprite 1 enabled
 at 167/123, pointer cycling `$39,$3A,$3B,$3C`, colour 4,5,6,7,8 on consecutive frames
 while surrounded) and on the captured second display; the main screen picture itself
-was not seen. The icons are
-animated every frame in the original (squadrons move between cells, a surrounded
-mothership blinks), so the animation will be a per-frame update on top of this.
+was not seen.
 
 ## Build and run
 
 ```powershell
 python c128-map/build.py
-& "C:\C64\GTK3VICE-3.7-win64\bin\x128.exe" `
-  -40col -autostart c128-map\sentinel-c128-map.prg
+& "C:\dev\c64\GTK3VICE-3.9-win64\bin\x128.exe" `
+  +go64 -40col -autostart c128-map\sentinel-c128-map.prg
 ```
 
 See the controls under Cursor.
@@ -143,7 +141,6 @@ Confirmed by the user in x128: the grid effect looks as expected. Not
 explicitly confirmed: the sound. (x128 opens two windows, VIC-IIe and
 VDC; the effect is on the VIC-IIe one.)
 
-Not verified by me: the on-screen picture and the audible result. The monitor's
-`screenshot` command only captures the 80-column (VDC) screen on `x128`, so
-this was checked by memory and register dumps. Please run it and compare the
-look and sound with the original.
+The monitor's `screenshot` command only captures the 80-column (VDC) screen on `x128`, so
+the checks above used memory and register dumps; `-exitscreenshotvicii` captures the
+VIC-IIe window.

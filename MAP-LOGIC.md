@@ -164,15 +164,15 @@ the original game's own routines running in VICE (same input, same result):
 - Attack rings (`$3E7E`): fresh rings, rings about to expire, a broken ring and an
   already destroyed mothership give identical sector maps, counters and flags in
   the original and the port. The planet-colour code (`INC $D028` every frame
-  while surrounded, cyan otherwise) was confirmed to run in the port; the planet
-  sprite itself is not drawn yet.
+  while surrounded, cyan otherwise) was confirmed to run in the port.
 - Start layout: 24 squadrons at difficulty 2, 4 blue and 4 orange motherships,
   sizes 3-9, the start sector empty.
 
 ## Not yet understood
 
-- `$C8D4` looks like an encounter countdown: while a squadron sits in the player's
-  sector it counts `$C8D3` down from 15 ticks and then sets `$E3`; not yet confirmed in play.
+- `$C8D4`, once a tick: while a squadron sits in the player's sector and nothing is going
+  on, it counts `$C8D3` down from 15 and then sets `$E3`, the approach. A squadron that moves
+  in starts its arrival at the end of the move (`$BEDF`, `$1AF2`, ported).
 - Combat in the sector: `$3CD9` decrements the count when the player destroys a
   squadron, `$3F4A` clears a sector, `$CFE6` turns a type-2 squadron into
   type 3 with half the count (`$CFC8` loop).

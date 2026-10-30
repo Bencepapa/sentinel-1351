@@ -1,8 +1,25 @@
-# C128 port plan: the cockpit becomes the game
+# C128 port: status, and how the original's fight works
 
-Branch `c128-port`. The native C128 cockpit (`c128-gui/cockpit/cockpit.asm`)
-grows feature by feature until it plays like the original. Each feature is
-ported from the C64 code and checked against it.
+The native C128 cockpit (`c128-gui/cockpit/cockpit.asm`), joined with the map in
+`c128-game`, grows feature by feature until it plays like the original. Each feature
+is ported from the C64 code and checked against it.
+
+## Status
+
+Done: the cockpit and its raster schedule, the phasor shot, type-1 fighters, steering,
+hits and explosions, enemy fire and the ship being hit, the approach with the long range
+scanner, the tracking computer, the message row, the voice 1 sweeps, the map in the 3D
+view, a squadron coming into the ship's sector.
+
+Left, in a suggested order:
+
+1. **Hyperspace** (see below), now an instant jump.
+2. **Proton torpedoes** (`FINDINGS.md`) and thrust (W, `$FEA7`).
+3. **Squadron types 2 and 3** (all fight as type 1).
+4. **Mothership and base sequences**, mines, docking.
+5. **What the other destroyed systems disable**, their messages, and game over. So far
+   the scanners, the sequencer and the tracking computer act on their counters.
+6. **Fighters warping in** when lingering in an empty sector (the manual; `$F96B`).
 
 ## How the work goes now
 
@@ -25,11 +42,11 @@ For each feature:
    check the timing (the cockpit's raster schedule leaves the vertical blank for
    input and stars, and lines 78-194 free while the 3D view is drawn).
 5. **Look at it** in the page, and in VICE / on real hardware when timing matters
-   (the JS machine does not steal cycles for bad lines and sprites yet).
+   (the JS machine steals cycles for bad lines and sprites only with `m.dma`).
 
 ## Done
 
-### Phasor shot (this branch)
+### Phasor shot
 
 Original `$1424` (per frame, in the IRQ), `$1467` (launch, from the main loop),
 `$1526` (one of 48 sub-ticks per frame), line routine `$3580`, sound `$15C7` /
@@ -53,8 +70,7 @@ Original `$1424` (per frame, in the IRQ), `$1467` (launch, from the main loop),
 - The gun that fired is red while the shot flies (`$1241`); a shot costs 10
   energy on the HUD; shots are counted (`$F43B`, used in the rating).
 - The last 10 points of the path are the hit test window (`$3370`, `$1616`); the
-  test itself (`$B7BA`) compares the shot with the enemy sprites. Not ported yet:
-  there are no enemies.
+  test itself (`$B7BA`) compares the shot with the enemy sprites.
 
 Port differences: the path is made 24 points per frame instead of all at once
 (the original's main loop can spend a whole frame on it, the cockpit's polled
@@ -62,7 +78,7 @@ loop cannot); the phasor work runs between lines 78 and 194. The test compares
 five shots frame by frame with the original (path, shape, position, colour,
 position on the path): identical.
 
-### Type-1 fighters, step (a) of the dogfight (this branch)
+### Type-1 fighters, step (a) of the dogfight
 
 A type-1 wave starts with the cockpit (`NEWWAVE` / `WAVEINIT`, original
 `$FF1B`): three twin-pod fighters fly their movement streams (`MOVEN`, original
@@ -82,7 +98,7 @@ HUD and bottom text strips and never shown as bitmap, so the VIC can use them as
 lines). In the original the carry going into the drift's comparisons comes from
 unrelated code; the test sets it, so in play a drift step can differ by one unit.
 
-### Steering, hits and explosions, steps (b) and (c) (this branch)
+### Steering, hits and explosions, steps (b) and (c)
 
 - **Steering** (`STEER`, original `$39C1`): translated instruction for
   instruction from the disassembly (every line keeps its address as a comment).
@@ -108,8 +124,6 @@ unrelated code; the test sets it, so in play a drift step can differ by one unit
   loop passes between steps (about 8 a frame in a fight), the port counts 8 a
   frame; a step (up to 76 pixels) is spread over the free time of the 3D view
   and the fight slot, with a raster check per point.
-- When all three are destroyed a new wave of three comes (the squadron and wave
-  bookkeeping, `$3CD6-$3D4B`, belongs to the approach phase, not done yet).
 
 Found in the original: a kill with the fighter's sprite above y 60 (or at 240
 and below) jumps from `$3320` to `$3337` with a byte still on the stack, so the
@@ -118,20 +132,19 @@ the byte. The explosion's points can reach bitmap rows 0-2, which in the port
 hold sprite shapes, so the port does not plot there (hidden behind the HUD
 anyway).
 
-### Enemy fire and the ship being hit, step (d) (this branch)
+### Enemy fire and the ship being hit, step (d)
 
 - **Enemy fire** (`EFRAME` / `EFIRE`, `$C947`): the fighters take turns; when the
   delay runs out (by difficulty) the one whose turn it is fires if it is shown at
   x `$44-$FF`, y `$6C-$B3`. The shot is sprite 2, single colour, doubled, its
   colour cycling, shapes `$67` up to `$70`, moving away from the middle of the
   view; at `$70` it reaches the ship. The original calls `$C947` once per main
-  loop pass (about 16 a frame); the port calls it 16 times a frame.
+  loop pass; the port calls it 13 times a frame (see Speeds).
 - **The ship hit** (`SHIPHIT`, `$84D7` / `$85D9`, the map program's model): a
   random working system loses a point, the shields one point (HUD), below 0 the
   ship is lost (`SHIPLOST`; the game-over sequence is not ported, the cockpit goes
-  on). Difficulty `DIFF` (0-4, default 1) sets systems, shields and the fire rate.
-  The destroyed-system messages are not shown yet (no message line in the
-  cockpit).
+  on). Difficulty `DIFF` (0-4, default 0) sets systems, shields and the fire rate.
+  The destroyed-system messages are not shown yet.
 - **Flash** (`$1321` with `$1303`): white, light red, orange, white, red, black.
 - **The second explosion** (`EXPLODE2`, `$9DAA`): 12 points, all two pixels tall,
   where the shot reached the ship; generated from the first.
@@ -151,47 +164,15 @@ work run there at twice the speed. The JS machine's raster timing follows `$D030
 field (one step before the movers instead of after them). In 6000 frames of aimed
 play no slot runs late and no frame overruns.
 
-Not yet: the approach and the arrival of the wave, the tracking computer, types
-2 and 3, the squadron count, the game-over sequence, system messages and what a
-destroyed system disables.
+## One program, the approach, the scanners
 
-## Next (from the user, 2026-10-29): one program, the approach, the scanners
+`c128-game/` joins the cockpit and the map (see its README): the map opens in the 3D
+view with the fight going on behind it, fire on another sector jumps there at once,
+the world's clock runs all the time, the sector's squadron comes in groups, TARGETS and
+the kills follow the map's COUNT. The cockpit picture's master copies are at
+`$5000-$5FDF` (bank 0 RAM the VIC-IIe cannot use).
 
-### A. The map and the cockpit as one program (done: `c128-game/`)
-
-Second step done: the map opens in the 3D view with the fight going on behind
-it, the world's clock runs all the time (see `c128-game/README.md`).
-
-Done: `c128-game/` joins both programs (see its README): C= opens the map, fire on
-another sector jumps there at once, the sector's squadron comes in waves, TARGETS
-and the kills follow the map's COUNT. The plan below was the starting point;
-the picture copy went to `$5000-$5FDF` (bank 0 RAM the VIC-IIe cannot use).
-
-
-The user's idea: the map program's grid in the cockpit, squadrons only in the
-sectors where the map has them, and for now an instant jump from sector to
-sector (hyperspace later). How:
-
-- **One `.prg`**: the map's code (`c128-map/map.asm`, `$1D00-$37FF` today) moves
-  into bank 0 RAM beside the fight code (`$8C00+` / `$A000+`); the shared tables
-  (`YLO`/`YHI`/`XLO`/`XHI`, `RANDOM`, `PIXADDR`) are kept once; labels that clash
-  are renamed.
-- **The bitmap is shared** (`$6000`), as in the original (the map clears it,
-  `$BA72`, and draws the grid): going to the map saves nothing, coming back
-  redraws the cockpit art from a copy. The copy (8 KB bitmap + 1 KB matrix + 1 KB
-  colour) goes to RAM bank 1 (the C128's second 64 KB; the MMU's common RAM lets
-  the copy routine reach both banks) or, if it fits, bank 0 `$A000-$BFFF`.
-- **The VIC bank** stays bank 1; the map's planet sprites (`$4E40`, pointers
-  `$39-$3C`) and the VDC character data (`$4000-$43FF` in the map program, the HUD
-  font in the cockpit) are only copied to the VDC once, so they can live anywhere.
-- **The world**: `STATE` / `COUNT` (the map's sector table) decide what a jump
-  meets: type 1-3 and the number of ships; an empty sector has no fighters.
-  `TARGETS` on the HUD = `COUNT`, as the original sets it on arrival (`$FCE9`). A
-  kill lowers `COUNT` (`$3CD9`); the last one empties the sector (`$3CDE`).
-- **Keys**: the right button / C= opens the map (as in the original), choosing a
-  sector and fire jumps at once (hyperspace, step 3, replaces this later).
-
-### B. The approach phase and the long range scanner (traced, ported)
+### The approach phase and the long range scanner
 
 **Ported** (cockpit and c128-game): arrival (`ARRIVE`), the groups' layout
 (`LAYOUT` / `LYPLACE`, `$3D58` / `$3DA6`), the long range scanner's row with its
@@ -206,8 +187,7 @@ number with the original in 600 random cases; a play test aligns a group, rushes
 in and sees it arrive. Per frame the port steers 4 times, drifts twice and rushes
 the distance of 16 passes at once; the layout runs a group a frame in the vertical
 blank; the approach's work uses the 3D view's time (no phasor then). Not ported:
-the arrival messages (`$9BE5`), the radar ellipse's size change between the modes
-(`$3194`), the engine sound of the rush, sprites for groups that come close.
+sprites for groups that come close.
 On arrival the original leaves the groups where hyperspace put them; the port lays
 them out at once.
 
@@ -249,9 +229,9 @@ Thrust (`$FEA7`, `$C81E`) only moves the objects in the sector closer. So far
 nothing shows another way; to check in the game: a write watch on `$92` in the
 page's debugger while doing it shows which code changes the sector.
 
-## Next, in a suggested order
+## Reference: what the original does
 
-### 1. Enemies in the view and the hit test (start of the dogfight)
+### Enemies
 
 What the code says about the enemies (found with the JS workbench; labels in
 `js/c64-symbols.txt`):
@@ -316,7 +296,8 @@ calls (`$2F8B`), so the bigger ships move more slowly. Types 2 and 3 use other
 x / y tables (`$FF15`, `$FF18`).
 
 **Frame budget** (measured with `m.dma`, the VIC's stolen cycles): colours change in
-the horizontal blank (`WAITHB`). In a fight the fighters and the tracking passes run
+the horizontal blank (`WAITST`: a second look at the raster halves the polling's jitter;
+line 76's are timed by the bad line 75). In a fight the fighters and the tracking passes run
 in the 3D view's free time, or at 2 MHz when a shot's launch used it up (the stars
 then wait a frame). 2 MHz runs from line 251 to 47: lines 243-250 show the text row with the lower screws,
 so the VIC-IIe needs its accesses there. The squadrons' move and a squadron's
@@ -327,20 +308,11 @@ VICE; rates measured without it are too fast): stars 0.44 pixels a frame (0.48 i
 empty sector, 0.38 in a fight), fighters 0.79 stream steps a frame, enemy fire 13 calls a
 frame, tracking 5.85 passes a frame, a shot about 25 frames (it charges 7 first).
 
-**Port notes.** The cockpit is frame-locked, the original is not: one stream
-step per frame matches the original's rate in the JS machine (0.99 per frame).
-VIC bank 1 has exactly 16 sprite slots free (`$4C00-$4FFF`; `$5000-$5FFF` shows
+**Port notes.** The cockpit is frame-locked, the original is not: its rates are
+in Speeds above. VIC bank 1 has exactly 16 sprite slots free (`$4C00-$4FFF`; `$5000-$5FFF` shows
 the character ROM on the C128), so the shot and the fighters get one slot each,
 refilled from shape tables kept elsewhere. Bank 0 RAM `$8000-$BFFF` is free with
 the cockpit's MMU setting (`$0E`) for the new code and tables.
-
-Suggested order inside this step: (a) the dogfight with one type-1 wave:
-fighters on their streams, the drift, the sprites by depth; (b) steering
-(`$39C1`); (c) the hit test and the explosion (`$60-$63`); (d) enemy fire and the
-player being hit (`$84D7`); (e) the approach phase (groups, long-range scanner,
-group selection, closing in, fighters arriving one by one) and the tracking
-computer; (f) types 2 and 3; (g) waves and the squadron count. Open question from
-the user: can the enemy mothership's torpedo be shot down?
 
 The squadrons: twin-pod fighters (shapes `$20-$30`, several rotations), lens
 ships (`$31-$38`, multicolor), mines / drones (`$71-$7C`); enemy fire `$66-$70`
@@ -353,19 +325,15 @@ is the same shrinking sequence as the player's shot. Known entry points:
 - the ship being hit: `$84D7` is called from `$2953`, `$CA7B`, `$CD3B`, `$CF90`
   (enemy fire reaching the player, a ram, ...); `SHIP-STATUS.md` has the damage
   rules, already ported for the map program's ship panel;
-- the squadron marker in the bitmap (`$3166`, a small H) is already in
-  `c128-flight`.
+- the squadron marker in the bitmap (`$3166`, a small H): ported as the radar's marks
+  (`MARKER`).
 
-To find first: the enemy movement and AI (who writes the sprite shadow
-positions `$EB+`), how a squadron's size (`COUNT`) becomes sprites, what ends the
-fight.
-
-### 2. Scanners and the tracking computer
+### Scanners and the tracking computer
 
 - long range scanner (system 1, `$3A`, read at `$30EC`), short range scanner
   (system 2, `$3B`, read at `$30D8`, `$9A5A`), scan sequencer (system 6, `$3F`,
   `$3813`): the rectangle under the view (the "radar" with the circle) shows
-  them;
+  them; **done**;
 - automatic tracking computer (system 4, `$3D`, read at `$89EB`, `$8A5A`):
   **done** (`TRKCHK`, `TRKFRAME`/`TPASS`, `TAIM`, `TMOVE`). A (or T) asks for it;
   its own main loop `$8A34` replaces the fight loop: no steering, the view turns
@@ -374,21 +342,20 @@ fight.
   ported as `MSGSCR`/`MSGTICK`/`MSGFRAME`), the crosshair animates. A destroyed
   computer switches it off. See FINDINGS.md for the rates.
 
-Each is disabled when its system counter reaches 0, which ties into the ship
-status panel.
+Each is disabled when its system counter reaches 0.
 
-### 3. Hyperspace
+### Hyperspace
 
 From the map, fire picks a sector; `$B700` counts the jump (`$B3DA` up to
 `$3A`, `$B3DB` every 6), the star field changes, `$B764` returns to the cockpit
 and recentres the crosshair, `$FCB8` sets the new sector `$92` / `$93` (off by up
 to a column when the hyperspace coordinator, system 5, is destroyed), `$FBFB`
-checks what is in the sector (`$FC77` for a mothership). The C128 map program
-already has the map and the cursor; this joins the map and the cockpit into one
-program, so it is also where the memory layout of the combined program gets
-decided.
+checks what is in the sector (`$FC77` for a mothership). From the manual: Crsr aborts
+the jump; W holds the booster; the long range scanner runs, meteoroids come, fire works
+the deflector (blue flash and energy, or red and a shield without it). Memory: the map's
+code is full up to `$C000`, so the new code goes in the glue (`$5300-$5FFF`), or bank 1.
 
-### 4. Mothership sequences
+### Mothership sequences
 
 How the user remembers them: the motherships are drawn as concentric strange
 circles that grow as the ship closes in; the enemy (orange) mothership fires a
@@ -409,25 +376,14 @@ player) and repairs the ship. What the code shows so far:
   be shot down (the hit test's sprite slots) or dodged.
 - **The friendly mothership**: tractor beam and repair, not traced yet; the
   repair list is at `$932D` ("ENTERING BASE SECTOR" `$3FB9`, see
-  `SHIP-STATUS.md`).
+  `SHIP-STATUS.md`). The manual: a status report, then repairs, fuel and one proton.
 - Entering a mothership sector: `$FBFB` / `$FC77`; mines `$71-$7C` (`$CCDF`,
   `$CD27`).
 
 ## Open questions
 
-- Memory: the cockpit, the map and the fight together will not fit the current
-  layout (code `$1D00-$2CFF`). Bank 1 RAM, or splitting code by screen, has to be
-  decided before hyperspace joins the programs.
-- The original runs the shot in its IRQ; the cockpit polls the raster. A raster
-  IRQ (noted in `PLAN-C128-MAP-GUI.md`) would make adding the fight easier.
+- Can the enemy mothership's torpedo be shot down or dodged?
+- A raster IRQ for the lower strip would remove its last late frames (about 0.2% in a
+  tracked fight); the polled schedule is good enough for now.
 
-## Enhancement ideas (optional, from the user)
-
-- Done: a mouse pointer on the sector map (C128 map, c128-game, and the C64
-  1351 patch: the crosshair is the pointer there).
-
-- **Target rectangle during the approach**: while turning toward a fighter group,
-  draw a rectangle on the screen where the selected group is (the port knows its
-  bearing and pitch), instead of only the numbers under the crosshair.
-- **Elite-style 3D radar**: show each contact's height above or below the radar
-  plane with a vertical line from its blip, like Elite's scanner.
+Ideas beyond the original are [GitHub issues](https://github.com/Bencepapa/sentinel-1351/issues).
