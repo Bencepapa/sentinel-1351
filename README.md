@@ -43,11 +43,11 @@ python c128-smoke/build.py
 ### Flight-kernel test
 
 [`c128-flight`](c128-flight) runs a multicolor bitmap flight loop in native
-C128 mode. It carries over Sentinel's original seven-pixel hostile-squadron
-marker, which intentionally appears as a small `H`, its erase walk, and its
-protected-pixel layering rule. The game tracks three squadrons; this test
-harness moves twelve markers to stress the renderer while the 1351 controls
-the vanishing point. Its movement and respawning are test scaffolding, not the
+C128 mode. Its point-star field uses Sentinel's protected-pixel layering rule
+while the 1351 controls the vanishing point and the left button fires a laser
+sprite. Twelve stars start and respawn at pseudorandom screen positions. The original seven-pixel `H` draw/erase routines
+remain in the source for later integration of the game's three hostile
+squadrons. The current movement and respawning are test scaffolding, not the
 original game logic.
 
 This test also exercises the first required C128 MMU transition. Configuration

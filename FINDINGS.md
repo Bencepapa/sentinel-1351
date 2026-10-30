@@ -146,6 +146,35 @@ x bit 8 shadow, the others hold whatever they hold).
   tracking message replaces at once). The engine's noise is a burst on voice 3
   every 6th frame throughout (`$C379`).
 
+## How our weapons use sprites
+
+- **The phasor shot is a sprite, not a line in the bitmap.** The line routine
+  `$3580` stores the shot's path as X and Y point lists in pages `$0400` and
+  `$0500`, and sprite 1 steps through them. A press sets `$D0`.
+- **The proton torpedo's request.** SPACE leaves a non-zero value in `$FDE5`. The
+  game loops copy it into `$BACE`: every 32nd pass at `$2E1F` and `$9136`, and
+  also at `$8AE5` in the tracking loop.
+  While `$BACE` is set, the shot is dropped (`$1428` clears `$D0`), enemy fire
+  stops (`$C947`) and the planet does not turn (`$B850`).
+- **Launch (`$BADA`).** With no torpedoes left (`$8450`), the request is cleared
+  and only a sound plays (`$BC6F`). Otherwise the count drops by one, the launch
+  sound starts on voices 1 and 2 (`$BBB2`), and `$BACF` marks the flight.
+- **Flight (`$BB1B`).** It uses two white sprites, 1 and 2, with x doubled and with
+  multicolour, y doubling and the x high bits off. Their shapes are `$01` and `$02`
+  (`$B1`, `$B2`), so they show `$4040-$40BF` in the `$4000` video bank. They start at
+  x `$A0`, y `$C8` and `$DD`, and move up 2 pixels a step. Each step copies the next
+  128 bytes of animation to `$4040` (`$BB5A`): 32 frames (`$BAD0`), `$A000-$AFFF`.
+  This is the same data as the enemy torpedo's animation (`$CF04`), which shows it
+  with shapes `$45`/`$46` at `$5140`.
+- **End (`$BB70`).** The sprites go off, their colours return ($D028 `$0E`, $D029
+  `$07`) and the flags clear. `$BAD1` then starts the blast (`$BBE4`), unless the
+  check at `$BB81-$BB8D` skips it. The blast sets up `$160A-$160D` for the points
+  and draws a growing ring around x `$50`, y `$64`, the middle of the 160x200 bitmap
+  (`$3635`, `$364C`), with radius `$43` growing by 6 up to `$28`. The ring runs
+  twice (`$BAD3`).
+- **For a port:** the torpedo depends on far more than the shot: the animation
+  data, the bitmap ring, the points and the three systems it holds back.
+
 ## Misnamed in earlier notes
 
 - `$E3`, `$C847` and `$372C-$372F` (read by the steering `$39C1`) belong to the

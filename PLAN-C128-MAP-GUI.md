@@ -14,7 +14,8 @@ disassembly only and has not been confirmed in VICE yet.
   `$FDEC` (set by the keyboard scan, or by the mouse patch's right button)
   is stored into `$B8` at `$FB5F` and starts the map.
 - Real entry is `$FB48-$FBC0` (setup) and `$FBC1-$FC95` (per-frame loop).
-  A near copy at `$4040-$40BF` is stale data and not the live code *(hyp)*.
+  A near copy at `$4040-$40BF` is stale data and not the live code *(hyp;
+  the proton torpedo overwrites it with sprite frames at `$BB5A`, see FINDINGS.md)*.
 - Map exit is `$FC59` (`$B8=0`), and the sector walk-up at `$FC96-$FDDE`
   rebuilds the cockpit.
 - Map data: sector grid index from `$22D6` (X=`$92`, Y=`$93`), sector state in

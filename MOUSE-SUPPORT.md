@@ -72,6 +72,13 @@ that the crosshair position drives the menu selection, and that holding the
 joystick direction makes the ship turn. Simulated input was injected by
 patching or poking memory over the monitor connection.
 
+### Following the weapon paths
+
+The port reader represents fire with `$97=1`, while the cockpit path uses `$D0`
+as the actual laser request. The torpedo's trigger is the SPACE flag at `$FDE5`.
+How both weapons then fly and use their sprites is in
+[FINDINGS.md](FINDINGS.md#how-our-weapons-use-sprites).
+
 ## 2. Reading a 1351 on the C64
 
 The 1351 in proportional mode reports its position through the SID POT
