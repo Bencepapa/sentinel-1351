@@ -69,6 +69,18 @@ Hits after the shields are gone still take hit points from the systems (from
 - Port: the map program stops at the hit that loses the ship; the cockpit keeps
   the original's behaviour for now (the game-over sequence is not ported).
 
+### 6. The tracking computer's planet masks are read from zero page (`$8B75`-`$8BBB`)
+
+While tracking, the aim (`$8B49`) builds a joystick-like mask in `$89CA` (`$FF`
+with one bit cleared per direction) that turns the planet (`$B846`). The bits are
+cleared with `AND $FB`, `AND $F7`, `AND $FE`, `AND $FD`: zero page, not the
+immediates `#$FB`, `#$F7`, `#$FE`, `#$FD` that were meant (`$F7` is the sprite
+x bit 8 shadow, the others hold whatever they hold).
+
+- In play: the planet moves in odd directions, or not at all, while tracking
+  (mostly `$89CA` = `$00`: all four directions at once, which cancel out).
+- Port: no planet in the cockpit yet; not ported.
+
 ## Quirks (behaviour that looks accidental but is part of the game)
 
 | Where | What | Port |
@@ -81,6 +93,8 @@ Hits after the shields are gone still take hit points from the systems (from
 | `$8301-$83FC` | The message reads "STELLER GRID UPDATE DESTROYED". | (messages not ported yet) |
 | `$C6A9` | The approach loop draws the star field and more in every pass, so it makes only about 2.3-8 (on average 3.4) passes a frame; the scanner readings and the blip (`$3776`, every 16 passes) change about every 5 frames. | the port runs 3.4 passes a frame |
 | `$9F51` | The radar's marks have no colour of their own: the band of colour RAM under the radar shifts one cell every 8 calls through black, greys and white, so a mark changes colour as the band passes over it. | ported |
+| `$8A34` | The tracking computer runs its own main loop instead of the fight loop: no steering at all, about 6.2 passes a frame; enemy fire every pass, the streams every 6-8 passes and the drift every 4 (+2 per difficulty level), a shot launches only every 64th pass (up to ~10 frames late). It pulls only the first live fighter into a box around the view, 1-3 units every 3rd pass; the others stay in view by themselves. | the port runs the same schedule at 6.2 passes a frame |
+| `$8C07` | The tracking key (A) is forgotten when released; the tracking loop looks at it only every 32 passes (~5 frames), so a very short tap may not stop tracking. | kept (A or T in the port) |
 | `$C947` | Enemy fire and the guns (`$9568`, every 16th frame) run at the speed of the main loop or the frame counter, so they are slower than they look: the guns follow the crosshair one step per 16 frames. | the port calls them at the same rates |
 
 ## How the enemy shot and our hits work (for players)

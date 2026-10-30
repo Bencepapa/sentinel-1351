@@ -44,6 +44,7 @@ TARGETS = $4876         ; the last digit of TARGETS on the HUD (original $5476)
 LRTAB   = $3600         ; the long range scanner's scale 0-128 -> 0-99 (original $ED00, build.py)
 DIGF    = $3690         ; the digits drawn under the crosshair (original sprite $64, build.py)
 LRROW   = $4B98         ; text row 23: the long range scanner (original $5798)
+COLROW  = $DB98         ; its colours
 BLPTR   = $36           ; sprite pointers $36-$38: the blip, shapes $4C-$4E
 PASSES  = 8             ; main loop passes of the original per frame in a fight
 SHOTPTR = $F3           ; sprite pointers of the shot shapes $67-$70: $F3-$FC (bitmap rows
@@ -187,6 +188,13 @@ vbg2:   STA BORDER
         JSR FIREPH      ; the phasors, while the 3D view is drawn (the original runs
         LDA SHOTARM     ; $1424 in its interrupt and launches from its main loop,
         BEQ nolaunch    ; $2DFC; here the time until line 194 is free)
+        LDA TRUN        ; (tracking: only every 64 passes, TLOK)
+        BEQ dolaunch
+        LDA TLOK
+        BEQ nolaunch
+        LDA #$00
+        STA TLOK
+dolaunch:
         JSR LAUNCH
 nolaunch:
         JSR SWEEPSND    ; the phasor sound is swept 6 times a frame while a shot
@@ -195,7 +203,11 @@ nolaunch:
         LDA APPR        ; approaching (no phasor then): the approach loop's passes
         BEQ nov         ; in the 3D view's time
         JSR APPASSES
-nov:    LDA #182        ; the explosions use what is left of the 3D view's time
+nov:    LDA TRUN        ; tracking: its passes too
+        BEQ nov2
+        LDA #112
+        JSR TRKSL2
+nov2:    LDA #182        ; the explosions use what is left of the 3D view's time
                         ; (a point takes up to 11 lines)
         STA EXLIM
         JSR EXPLODE
@@ -221,7 +233,7 @@ nov:    LDA #182        ; the explosions use what is left of the 3D view's time
         STA BG
         LDA #$1B
         STA $D011
-        LDA #$05
+        LDA STRIPX      ; (the message row's fine scroll, $0A4A)
         STA $D016
         LDA #$20
         STA $D018
@@ -455,7 +467,9 @@ STARS:  INC FRMC
         LDA #0          ; steering shifts every star (the original: +-2 pixels, here every 2nd frame):
         STA SHX         ; stick left -> stars right, up -> stars up, as in the original
         STA SHY
-        LDA FRMC
+        JSR TSTARS      ; tracking: the computer turns the view
+        BCS nosh
+shj:    LDA FRMC
         LSR A
         BCS nosh
         LDA JOYG
@@ -651,34 +665,7 @@ INPUT:  JSR POTS
         STA CIA1PA
         LDA CIA1PA
         STA JRAW
-        LDA #$FB        ; T (column 2, row 6) toggles target tracking (the animated crosshair)
-        STA CIA1PA
-        LDA CIA1PB
-        AND #$40
-        BNE tup
-        LDA TPREV
-        BNE tdone
-        LDA #1
-        STA TPREV
-        LDA TRACK
-        EOR #1
-        STA TRACK
-        JMP tdone
-tup:    LDA #0
-        STA TPREV
-tdone:  LDA TRACK       ; tracking animation: $49, $4A, $4B every 16th frame
-        BEQ tno
-        INC FCNT
-        LDA FCNT
-        AND #$0F
-        BNE tno
-        LDA TRFRAME
-        CLC
-        ADC #1
-        CMP #$34        ; the tracking frames $49-$4B of the original, now $31-$33
-        BCC tfok
-        LDA #$31
-tfok:   STA TRFRAME
+        JSR TKEYS       ; A / T: the tracking computer; the tracking crosshair
 tno:    LDA MPRES
         BEQ ijoy
         LDA JRAW        ; mouse: its buttons, the steering mask makes the directions
@@ -956,8 +943,21 @@ rsend:  RTS
 ; shot sprite frame by frame.
 
 FIREPH:                 ; per frame ($1424). The original first stops here when the
-        LDA FIREFLAG    ; phasor cannons are destroyed ($39), a torpedo flies, the map
-        BEQ phret       ; is shown or ($E3); none of those exist in this program yet.
+        LDA APPR        ; phasor cannons are destroyed ($39), a torpedo flies, the map
+        BEQ phgo        ; is shown or approaching ($E3): then it clears the firing
+        LDA SHOTON      ; state $D0-$D2 (a shot in flight is dropped, the guns stop
+        ORA SHOTARM     ; firing)
+        BEQ phret
+        LDA #$00
+        STA SHOTON
+        STA SHOTARM
+        STA FIREFLAG
+        STA HITWIN
+        STA SHOTVIS
+        STA $D404
+        RTS
+phgo:   LDA FIREFLAG
+        BEQ phret
         LDA SHOTON
         BEQ pharm
         JMP phfly
@@ -1338,6 +1338,38 @@ CD:     .BYTE 0
 DTIMER: .BYTE DDLY
 FCNT:   .BYTE 0
 TRACK:  .BYTE 0
+TON:    .BYTE 0         ; tracking asked for ($62)
+TRUN:   .BYTE 0         ; the tracking loop runs ($64)
+TSLIM:  .BYTE 0
+TPRESS: .BYTE 0         ; A / T pressed ($8C06)
+TKPREV: .BYTE 1
+TTGT:   .BYTE 0         ; the tracked fighter ($8B48)
+TACC:   .BYTE 0,0       ; passes owed (port)
+TPC:    .BYTE 0         ; the loop's pass counter ($89)
+TCAIM:  .BYTE 1         ; ($89C5)
+TCST:   .BYTE 1         ; ($89C6)
+TCDR:   .BYTE 1         ; ($89C7)
+TCMV:   .BYTE 2         ; ($89C9)
+TDX:    .BYTE 0         ; ($89C2-$89C4)
+TDY:    .BYTE 0
+TDZ:    .BYTE 0
+TSX:    .BYTE 0         ; ($D5, $D6)
+TSY:    .BYTE 0
+TSPEND: .BYTE 0
+TLOK:   .BYTE 0
+MSGP:   .BYTE 0,0       ; ($9D34)
+MSGCOL: .BYTE 0
+MSGC1:  .BYTE 1         ; ($9BDF, $9BE0)
+MSGC2:  .BYTE 7
+MSGTG:  .BYTE 1         ; ($9BE4)
+MSGRATE:.BYTE 8         ; ($9BDC)
+MSGCD:  .BYTE 8         ; ($9BDD)
+MSGN:   .BYTE 0         ; ($9BDE)
+MSGON:  .BYTE 0         ; ($9BE3)
+MSGMODE:.BYTE $80       ; ($9BE2)
+MSGFINE:.BYTE 0         ; ($13D4)
+FINEX:  .BYTE 5         ; ($13D3)
+STRIPX: .BYTE 5         ; ($0A4A)
 TRFRAME:.BYTE $31
 TPREV:  .BYTE 1
 SEED:   .BYTE $80
@@ -1527,7 +1559,12 @@ FIGHT:  INC EFRM
         BEQ fgdog
         JSR APFRAME
         JMP fgcom
-fgdog:  LDX #$00
+fgdog:  LDA TRUN        ; (tracking: streams and drift run in its passes)
+        BEQ fgd1
+        JSR TRKSLOT
+        JMP fg1
+fgd1:
+        LDX #$00
         JSR MOVEN
         LDX #$02
         JSR MOVEN
@@ -2444,6 +2481,7 @@ APFRAME:LDA APRUN
         BEQ afl
         LDA #$00
         STA RELAYOUT
+        JSR MSGSTOP     ; (the scanner takes the message row)
         JSR LAYOUT      ; (the groups are placed in the next frames' vertical blank)
         INC APDLY       ; wait for it
         RTS
@@ -2539,7 +2577,20 @@ vbr:    LDA APPR
         BEQ vbw1
         RTS
 vbw1:   JMP STEER
-vbdog:  JSR STEER       ; ($2D34) a fight: once a frame, and enemy fire
+vbdog:  JSR MSGFRAME     ; ($13D5) the message row
+        LDA TRUN        ; the tracking computer's loop instead of the fight loop
+        BEQ vbd1
+        JMP TRKFRAME
+vbd1:   LDA TPRESS      ; ($2D7A) A / T asks for tracking
+        BEQ vbd2
+        STA TON
+        LDA #$00
+        STA TPRESS
+vbd2:   LDA EFRM        ; ($2D61) looked at every 32 passes (2 frames)
+        AND #$01
+        BNE vbd3
+        JSR TRKCHK
+vbd3:   JSR STEER       ; ($2D34) a fight: once a frame, and enemy fire
         JMP EFRAME
 
 LAYOUT: JSR WAVEINIT    ; ($3D58) the groups: slots 0-2, far away
@@ -4273,6 +4324,447 @@ az1:    AND #$7F
         STA ENZ,X
         BCS az0
         DEC ENZ+1,X
+        RTS
+
+; ---------------- the automatic tracking computer ($89E6-$8C22) ----------------
+; A (or T) asks for it in a fight ($8C07, read by the fight loop, $2D7A). The fight
+; loop looks every 32 passes ($2D61 -> $89E6): with the computer working (SYSHP+4,
+; $3D) it starts its own main loop ($8A34) instead of the fight loop. That loop:
+; no steering ($39C1 is not called), the view turns by itself toward the first
+; live fighter (TAIM, $8B49, every 4 passes) and that fighter is pulled into the
+; box x $8847-$88F9, y $8869-$88A3, depth $8650-$87CF (TMOVE, $8BED: 1, 2, 3
+; units every 3 passes); enemy fire every pass, the fighters' streams and the
+; drift at rates of their own (tables), a shot launches only every 64 passes.
+; Every 32 passes it ends on A again, when no fighter is left, when the approach
+; starts or thrust is used ($63), or when the computer is destroyed. It makes
+; about 6.2 passes a frame (measured), against ~16 of the fight loop.
+TRKCHK: LDA TON         ; ($89E6) every other frame of a fight
+        BNE tk1
+        RTS
+tk1:    LDA SYSHP+4
+        BNE tk2
+        STA TON         ; ($89EF) destroyed: off
+        STA TRUN
+        STA TRACK
+        STA TTGT
+        RTS
+tk2:    LDA TRUN
+        BNE tk9
+        LDA #$00        ; ($89FD) start
+        STA TTGT
+        STA TACC
+        LDA #$01
+        STA TRUN
+        STA TRACK
+        STA TCAIM
+        STA TCST
+        LDA #$31        ; ($8A2F) the crosshair: $49
+        STA TRFRAME
+        JMP TRKMSG
+tk9:    RTS
+
+TRKEND: LDA #$00        ; ($8A4E)
+        STA TON
+        STA TRUN
+        STA TRACK
+        STA TPRESS
+        RTS
+
+TRKFRAME:               ; a frame of the tracking loop: owed in the vertical blank
+        CLC             ; (2 MHz), run until line 30; the rest in the fight's slot
+        LDA TACC        ; (TRKSLOT, lines 194-222)
+        ADC #$2C        ; + 6.17 passes ($062C / 256)
+        STA TACC
+        LDA TACC+1
+        ADC #$06
+        STA TACC+1
+tf1:    LDA TACC+1
+        BEQ tf9
+        LDA $D012
+        CMP #30
+        BCC tf2
+        CMP #251
+        BCC tf9
+tf2:    DEC TACC+1
+        JSR TPASS
+        LDA TRUN
+        BNE tf1
+        STA TACC+1
+tf9:    RTS
+
+TRKSLOT:LDA #222        ; the fight's slot: until line 222
+TRKSL2: STA TSLIM       ; (the 3D view's: until line 112)
+ts1:    LDA TACC+1
+        BEQ ts9
+        LDA $D012
+        CMP TSLIM
+        BCS ts9
+        DEC TACC+1
+        JSR TPASS
+        LDA TRUN
+        BNE ts1
+        STA TACC+1
+ts9:    RTS
+
+TPASS:  LDA TPC         ; ($8A34)
+        AND #$1F
+        BNE tp2
+        LDA TPRESS      ; A again ($8C07)
+        BNE tpx
+        LDA ALIVE
+        ORA ALIVE+1
+        ORA ALIVE+2
+        BEQ tpx
+        LDA APPR        ; ($63: the approach began, or thrust)
+        BNE tpx
+tp2:    LDA SYSHP+4
+        BNE tp3
+tpx:    JMP TRKEND
+tp3:    DEC TPC
+        JSR EFIRE       ; ($C947)
+        DEC TCAIM       ; ($89C5) every 4 passes: aim
+        BNE tp4
+        LDA #$04
+        STA TCAIM
+        JSR TAIM
+tp4:    DEC TCST        ; ($89C6) the streams: every 8,7,7,6,6 / 4,4,4,3,3 /
+        BNE tp5         ; 7,7,7,6,5 passes by type and difficulty
+        LDX ETYPE
+        LDA TSTRB-1,X
+        CLC
+        ADC DIFF
+        TAX
+        LDA TSTRT,X
+        STA TCST
+        LDX #$00
+        JSR MOVEN
+        LDX #$02
+        JSR MOVEN
+        LDX #$04
+        JSR MOVEN
+tp5:    DEC TCDR        ; ($89C7) the drift: every 4,3,3 + 2 * difficulty passes
+        BNE tp6
+        LDX ETYPE
+        LDA DIFF
+        ASL A
+        ADC TDRT-1,X
+        STA TCDR
+        SEC
+        JSR EDRIFT
+tp6:    LDA TPC         ; ($8AA9) a shot launches only now
+        AND #$3F
+        BNE tp7
+        LDA #$01
+        STA TLOK
+tp7:    LDA TPC         ; ($8B08) every 16: the lost fighters' depth to 0
+        AND #$0F
+        BNE tp8
+        LDX #$04
+        LDY #$02
+td1:    LDA ALIVE,Y
+        BNE td2
+        STA ENZ+1,X
+td2:    DEX
+        DEX
+        DEY
+        BPL td1
+tp8:    DEC TCMV        ; ($89C9) every 3 passes: pull the target
+        BNE tp9
+        LDA #$03
+        STA TCMV
+        JMP TMOVE
+tp9:    RTS
+
+; Aim ($8B49): the first live fighter; for each axis below / above the box: the
+; step that pulls it in (sign and size) and the star field's turn (+-2, as the
+; stick would: $D5 x, $D6 y; one step of the stars with it, $EE25). The
+; comparisons use the carry as it comes, as in the original. The original also
+; moves the planet ($89CA -> $B846, with masks read from zero page $FB, $F7, $FE,
+; $FD instead of immediates); there is no planet in the cockpit.
+TAIM:   LDX #$FF
+ta0:    INX
+        CPX #$03
+        BCC ta00
+        RTS
+ta00:   LDA ALIVE,X
+        BEQ ta0
+        TXA
+        STX TTGT
+        ASL A
+        TAX
+        LDA ENX,X
+        SBC #$46
+        LDA ENX+1,X
+        SBC #$88
+        BCC ta2
+        LDA ENX,X
+        SBC #$FA
+        LDA ENX+1,X
+        SBC #$88
+        BCS ta1
+        LDA #$00
+        TAY
+        BEQ ta3
+ta1:    LDA #$FE
+        LDY #$81
+        BMI ta3
+ta2:    LDA #$02
+        LDY #$01
+ta3:    STA TSX
+        STY TDX
+        LDA ENY,X
+        SBC #$68
+        LDA ENY+1,X
+        SBC #$88
+        BCC ta5
+        LDA ENY,X
+        SBC #$A4
+        LDA ENY+1,X
+        SBC #$88
+        BCS ta4
+        LDA #$00
+        TAY
+        BEQ ta6
+ta4:    LDA #$FE
+        LDY #$82
+        BMI ta6
+ta5:    LDA #$02
+        LDY #$02
+ta6:    STA TSY
+        STY TDY
+        LDA ENZ,X
+        SBC #$50
+        LDA ENZ+1,X
+        SBC #$86
+        BCC ta8
+        LDA ENZ,X
+        SBC #$D0
+        LDA ENZ+1,X
+        SBC #$87
+        BCS ta7
+        LDY #$00
+        BEQ ta9
+ta7:    LDY #$83
+        BMI ta9
+ta8:    LDY #$03
+ta9:    STY TDZ
+        LDA #$01        ; the stars take the turn in the next frame
+        STA TSPEND
+        RTS
+
+TMOVE:  LDA TTGT        ; ($8BED)
+        ASL A
+        TAX
+        LDA TDX
+        JSR ADDX
+        LDA TDY
+        JSR ADDY
+        LDA TDZ
+        JMP ADDZ
+
+TRKMSG: LDA #<TMTEXT    ; ($8A1D -> $9BE5) "AUTO TRACKING ENGAGED", scrolled in,
+        LDX #>TMTEXT    ; white / yellow, every 8th step, 18 times
+        LDY #$71
+        STY MSGCOL
+        LDY #$08
+        STY MSGRATE
+        LDY #18
+        JMP MSGSCR
+
+; ---------------- system messages in row 23 ($9BE5, $9CD3, $13D5) ----------------
+; A message scrolls in from the right, 2 pixels a frame (the strip's fine scroll,
+; $13D3: 5, 3, 1, 7, ...), a character every 4 frames; every MSGRATE characters
+; the row's colour flips between the two colours of MSGCOL (low nibble first,
+; with a beep), MSGN times; then the row turns light green and stays.
+MSGSCR: STA MSGP        ; A/X = text ($FF ends it), Y = colour flips
+        STX MSGP+1
+        STY MSGN
+        LDA MSGRATE
+        STA MSGCD
+        LDA MSGCOL
+        AND #$0F
+        STA MSGC1
+        LDA MSGCOL
+        LSR A
+        LSR A
+        LSR A
+        LSR A
+        STA MSGC2
+        LDA #$00
+        STA MSGMODE
+        LDY #39
+ms1:    LDA #$60
+        STA LRROW,Y
+        LDA #$00
+        STA COLROW,Y
+        DEY
+        BPL ms1
+        LDA #$01
+        STA MSGON
+        STA MSGFINE
+        RTS
+
+MSGFRAME:               ; ($13D5) once a frame
+        LDA MSGFINE
+        BEQ mf9
+        LDY FINEX
+        STY STRIPX
+        DEY
+        DEY
+        BPL mf1
+        LDY #$07
+mf1:    STY FINEX
+        CPY #$05
+        BNE mf9
+        JMP MSGTICK
+mf9:    RTS
+
+MSGTICK:LDA MSGON       ; ($9CD3)
+        BEQ mt5
+        DEC MSGCD
+        BNE mt5
+        LDA MSGRATE
+        STA MSGCD
+        LDA MSGTG
+        EOR #$01
+        STA MSGTG
+        TAX
+        LDA MSGC1,X
+        LDY #39
+mt1:    STA COLROW,Y
+        DEY
+        BPL mt1
+        JSR MSGBEEP
+        DEC MSGN
+        BNE mt5
+        LDA #$00        ; done: light green, and it stays
+        STA MSGON
+        LDY #39
+mt2:    LDA #$0D
+        STA COLROW,Y
+        DEY
+        BPL mt2
+        LDA #$80
+        STA MSGMODE
+        RTS
+mt5:    LDA MSGMODE
+        BPL mt6
+        LDA #$00        ; (port: the fine scroll stops at 5 once the message is
+        STA MSGFINE     ; over, for the scanner's digits; the original keeps
+        LDA #$05        ; cycling it under the empty row)
+        STA STRIPX
+        STA FINEX
+        RTS
+mt6:    LDY #$00
+mt7:    LDA LRROW+1,Y
+        STA LRROW,Y
+        INY
+        CPY #39
+        BNE mt7
+        LDA MSGP
+        STA PTR
+        LDA MSGP+1
+        STA PTR+1
+        LDY #$00
+        LDA (PTR),Y
+        CMP #$FF
+        BNE mt8
+        LDA #$60
+        BNE mt9
+mt8:    INC MSGP
+        BNE mt9
+        INC MSGP+1
+mt9:    STA LRROW+39
+        RTS
+
+MSGSTOP:LDA #$00        ; (port) the approach takes the row over
+        STA MSGON
+        STA MSGFINE
+        LDA #$80
+        STA MSGMODE
+        LDA #$05
+        STA STRIPX
+        STA FINEX
+        RTS
+
+MSGBEEP:LDA #$00        ; ($9D4A) voice 2
+        STA $D40B
+        STA $D407
+        STA $D40D
+        STA $D409
+        LDA #$03
+        STA $D40A
+        LDA #$02
+        STA $D40C
+        LDA #$3F
+        STA $D408
+        LDA #$41
+        STA $D40B
+        RTS
+
+TMTEXT: .BYTE $40,$40,$40,$40,$40,$40,$40,$40,$40,$41,$55,$54,$4F,$40,$54,$52
+        .BYTE $41,$43,$4B,$49,$4E,$47,$40,$45,$4E,$47,$41,$47,$45,$44,$FF
+TSTRB:  .BYTE 0,5,10
+TSTRT:  .BYTE 8,7,7,6,6, 4,4,4,3,3, 7,7,7,6,5
+TDRT:   .BYTE 4,3,3
+
+TKEYS:
+        LDA #$FD        ; A (column 1, row 2, as in the original: $FDE7) or T
+        STA CIA1PA      ; (column 2, row 6): the tracking computer
+        LDA CIA1PB
+        AND #$04
+        BEQ tkd
+        LDA #$FB
+        STA CIA1PA
+        LDA CIA1PB
+        AND #$40
+        BEQ tkd
+        LDA #$00        ; released: the press is forgotten ($8C07)
+        STA TKPREV
+        STA TPRESS
+        BEQ tdone
+tkd:    LDA TKPREV
+        BNE tdone
+        LDA #$01
+        STA TKPREV
+        STA TPRESS
+tdone:  LDA TRACK       ; ($12AE) tracking: the crosshair $49, $4A, $4B every 16th
+        BEQ tno9        ; frame (type 1, or the target is close: depth $86xx),
+        INC FCNT        ; else $49 (now $31-$33)
+        LDA FCNT
+        AND #$0F
+        BNE tno9
+        LDY #$31
+        LDA ETYPE
+        CMP #$01
+        BEQ tan
+        LDA TTGT
+        ASL A
+        TAX
+        LDA ENZ+1,X
+        CMP #$86
+        BNE tst
+tan:    LDY TRFRAME
+        INY
+        CPY #$34
+        BNE tst
+        LDY #$31
+tst:    STY TRFRAME
+tno9:   RTS
+
+TSTARS: LDA TRUN        ; ($8B49 -> $EE25, every 4 passes, about 1.5 a frame);
+        BEQ tss0        ; C = 1: done
+        LDA TSPEND
+        BEQ tss1
+        LDA #$00
+        STA TSPEND
+        LDA TSX
+        STA SHX
+        LDA TSY
+        STA SHY
+tss1:   SEC
+        RTS
+tss0:   CLC
         RTS
 
 ; The attackers drift back toward the middle of the view, 4 units per call:

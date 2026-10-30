@@ -354,9 +354,13 @@ fight.
   (system 2, `$3B`, read at `$30D8`, `$9A5A`), scan sequencer (system 6, `$3F`,
   `$3813`): the rectangle under the view (the "radar" with the circle) shows
   them;
-- automatic tracking computer (system 4, `$3D`, read at `$89EB`, `$8A5A`): the
-  animated crosshair `$49-$4B` (already in the cockpit as the T key) and
-  presumably steering toward a target (`$5C` non-zero while tracking).
+- automatic tracking computer (system 4, `$3D`, read at `$89EB`, `$8A5A`):
+  **done** (`TRKCHK`, `TRKFRAME`/`TPASS`, `TAIM`, `TMOVE`). A (or T) asks for it;
+  its own main loop `$8A34` replaces the fight loop: no steering, the view turns
+  toward the first live fighter and pulls it into the view, "AUTO TRACKING
+  ENGAGED" scrolls in row 23 (the system message scroller `$9BE5`/`$9CD3`/`$13D5`,
+  ported as `MSGSCR`/`MSGTICK`/`MSGFRAME`), the crosshair animates. A destroyed
+  computer switches it off. See FINDINGS.md for the rates.
 
 Each is disabled when its system counter reaches 0, which ties into the ship
 status panel.

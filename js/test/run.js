@@ -643,6 +643,66 @@ function report(hooks, label) {
   K[ks.APPR] = 0; K[ks.LRMODE] = 0;
 }
 
+// ---- the tracking computer: aim and pull ($8B49 / $8BED) against TAIM / TMOVE ----
+{
+  function callAt(m, addr, regs) {
+    const c = m.cpu, ret = 0xFFF4, p = c.p;
+    Object.assign(c, regs || {});
+    c.push(((ret - 1) >> 8) & 255); c.push((ret - 1) & 255); c.pc = addr; c.p |= 4;
+    for (let i = 0; i < 2e6 && c.pc !== ret; i++) { c.step(); if (c.jam) throw new Error(c.jam); }
+    c.p = p;
+  }
+  const o = boot('c64game', 'trace'); run(o.m, o.hooks, 250);
+  const k = boot('cockpit', 'trace'); run(k.m, k.hooks, 5); dogfight(k);
+  const R = o.m.ram, K = k.m.ram, ks = k.p.symbols;
+  let seed = 4242; const rnd = () => (seed = (seed * 1103515245 + 12345) & 0x7FFFFFFF) >> 8 & 255;
+  let bad = null, n = 0;
+  for (let t = 0; t < 1000 && !bad; t++) {
+    const alive = [rnd() & 1, rnd() & 1, 1];
+    for (let i = 0; i < 3; i++) {
+      R[0x5F + i] = K[ks.ALIVE + i] = alive[i];
+      const v = [rnd(), 0x87 + (rnd() & 3), rnd(), 0x87 + (rnd() & 3), rnd(), 0x85 + (rnd() & 3)];
+      [R[0x16 + 2 * i], R[0x17 + 2 * i], R[0x1C + 2 * i], R[0x1D + 2 * i], R[0x22 + 2 * i], R[0x23 + 2 * i]] = v;
+      [K[ks.ENX + 2 * i], K[ks.ENX + 2 * i + 1], K[ks.ENY + 2 * i], K[ks.ENY + 2 * i + 1], K[ks.ENZ + 2 * i], K[ks.ENZ + 2 * i + 1]] = v;
+    }
+    callAt(o.m, 0x8B49); callAt(k.m, ks.TAIM);
+    const a1 = [R[0x8B48], R[0x89C2], R[0x89C3], R[0x89C4]].join(), a2 = [K[ks.TTGT], K[ks.TDX], K[ks.TDY], K[ks.TDZ]].join();
+    const sx = K[ks.TDX] === 1 ? 2 : K[ks.TDX] === 0x81 ? 0xFE : 0, sy = K[ks.TDY] === 2 ? 2 : K[ks.TDY] === 0x82 ? 0xFE : 0;
+    if (a1 !== a2 || K[ks.TSX] !== sx || K[ks.TSY] !== sy) { bad = { what: 'aim', a: a1, b: a2 + ' stars ' + K[ks.TSX] + ',' + K[ks.TSY] }; break; }
+    callAt(o.m, 0x8BED); callAt(k.m, ks.TMOVE);
+    const p1 = [...R.subarray(0x16, 0x28)].join(), p2 = [0, 1, 2].map(i => [K[ks.ENX + 2 * i], K[ks.ENX + 2 * i + 1]]).flat()
+      .concat([0, 1, 2].map(i => [K[ks.ENY + 2 * i], K[ks.ENY + 2 * i + 1]]).flat(), [0, 1, 2].map(i => [K[ks.ENZ + 2 * i], K[ks.ENZ + 2 * i + 1]]).flat()).join();
+    if (p1 !== p2) { bad = { what: 'pull', a: p1, b: p2 }; break; }
+    n++;
+  }
+  if (bad) console.log('      ' + bad.what + '\n      orig ' + bad.a + '\n      port ' + bad.b);
+  check(!bad, `tracking: the aim and the pull match the original (${n} random cases)`);
+}
+
+// ---- the tracking computer as it plays ----
+{
+  const { m, hooks, p } = boot('cockpit', 'trace');
+  const s = p.symbols, K = m.ram;
+  run(m, hooks, 5); dogfight({ m, p });
+  for (let i = 0; i < 3; i++) { K[s.ALIVE + i] = 1; K[s.ENX + 2 * i] = 0x60 + i * 0x30; K[s.ENX + 2 * i + 1] = 0x88; K[s.ENY + 2 * i] = 0x80; K[s.ENY + 2 * i + 1] = 0x88; K[s.ENZ + 2 * i] = 0; K[s.ENZ + 2 * i + 1] = 0x87; }
+  K[s.SYSHP + 4] = 3; K[s.OVRUN] = 0;
+  hooks.trace('TPASS');
+  let passes = 0, frames = 0, shown = 0;
+  for (let f = 0; f < 700; f++) {
+    m.setKey(1, 2, f >= 5 && f < 25); m.moveMouse(3, 0); m.runFrame();
+    if (f > 60) { passes += hooks.handlers[s.TPASS].callsLastFrame; frames++; if ((K[s.EVIS] & 0x70) === 0x70) shown++; }
+    if (f === 150) var row = String.fromCharCode(...[...K.subarray(s.LRROW, s.LRROW + 40)].map(c => c === 0x60 || c === 0x40 ? 32 : c)).trim();
+  }
+  const rate = passes / frames;
+  check(K[s.TRUN] && row === 'AUTO TRACKING ENGAGED' && rate > 6.0 && rate < 6.4 && shown >= frames * 0.98 && K[s.OVRUN] === 0,
+    `tracking: A starts it ("${row}"), ${rate.toFixed(2)} passes a frame (original ~6.2), all 3 fighters kept in view ${shown}/${frames} frames while steering away, no overrun`);
+  for (let f = 0; f < 30; f++) { m.setKey(1, 2, f < 10); m.runFrame(); }
+  const off = !K[s.TRUN] && !K[s.TON];
+  m.setKey(1, 2, true); for (let f = 0; f < 10; f++) m.runFrame(); m.setKey(1, 2, false);
+  K[s.SYSHP + 4] = 0; for (let f = 0; f < 10; f++) m.runFrame();
+  check(off && !K[s.TRUN] && !K[s.TRACK], 'tracking: A again stops it; a destroyed computer stops it');
+}
+
 // ---- the approach as it plays (standalone cockpit: a squadron of 9) ----
 {
   const { m, hooks, p } = boot('cockpit', 'trace');
