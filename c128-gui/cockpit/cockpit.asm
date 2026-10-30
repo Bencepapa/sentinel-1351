@@ -3273,8 +3273,8 @@ s7c:    STA $D02E
         LDA $D01C
         AND #$7F
         STA $D01C
-        LDA $D01B
-        AND #$7F
+        LDA $D01B       ; behind the bitmap, like the guns (the original's $D01B
+        ORA #$80        ; is $FD below the view)
         STA $D01B
         CPX #$02        ; ($11E2) place
         BNE s7f

@@ -21,7 +21,8 @@ $3800-$3FFF (c128-map/build.py):
          23-24, the cockpit art (rows 18-22), the colour matrix rows 3-22
   $2900  the map's second-display data (VDC characters, planet, row tables, texts),
          between the cockpit's first code chunk and its tables
-  $xx00  the map's code, then the glue: right after the cockpit's second chunk
+  $xx00  the map's code: right after the cockpit's second chunk
+  $5300  the glue (game.asm), CPU RAM the VIC-IIe cannot use
 """
 
 import os
@@ -43,6 +44,7 @@ ENTRY = 0x1D00
 CODE2 = 0x8C00
 MAPCODE = 0xA500         # provisional: assemble() puts the map right after the cockpit's code
 VDCDATA = 0x2900
+GLUE = 0x5300            # game.asm's code and data (after the master copy at $5000)
 OUT = os.path.join(HERE, 'sentinel-c128-game.prg')
 
 SHARED = {'SHLD', 'HITS', 'SHIPLOST', 'DIFF', 'SYSHP', 'PTSX', 'PTSXH', 'PTSY', 'PTON'}    # the cockpit's, used by the map
@@ -80,6 +82,14 @@ PATCHES_MAP = [
     # the second display (VDC) is off: its updates take more than a frame's
     # spare time while the cockpit runs (to be spread over frames later)
     ('VDCON:  .BYTE 1', 'VDCON:  .BYTE 0'),
+    # the cursor boxes are queued and drawn one a frame, faster (FBOX in game.asm):
+    # three boxes at once took most of a frame and broke the raster splits
+    # the cursor box follows CURX / CURY by itself (CFOL in game.asm), one box a
+    # frame: the map's own erase / draw / repair after a move is skipped
+    ('nr:     LDA OLDCX       ; erase the old box unless it is the selected sector\n',
+     'nr:     LDA #$18        ; (game) CFOL draws the boxes\n        STA DELAY\n        RTS\n        LDA OLDCX\n'),
+    ('BOX:    JSR VDCBOX      ; mirror the box on the second display\n',
+     'BOX:    JMP QBOX        ; (game) queued, drawn by FBOX\n        JSR VDCBOX\n'),
     # the mouse pointer: the cockpit shows it (sprite 0 while the map is open)
     ('PTSX:   .BYTE 0         ; its sprite position (shared with c128-game\'s cockpit)\nPTSXH:  .BYTE 0\nPTSY:   .BYTE 0\nPTON:   .BYTE 0\n', ''),
     ('PTRVIC: LDA PTSX ', 'PTRVIC: RTS\n        LDA PTSX '),
@@ -176,9 +186,9 @@ def assemble():
 
 def main():
     chunks, symbols = assemble()
-    if set(chunks) != {ENTRY, CODE2, MAPCODE}:
+    if set(chunks) != {ENTRY, CODE2, MAPCODE, GLUE}:
         raise SystemExit(f'unexpected assembly chunks: {[hex(c) for c in chunks]}')
-    for start, limit in ((ENTRY, VDCDATA), (CODE2, MAPCODE), (MAPCODE, 0xC000)):
+    for start, limit in ((ENTRY, VDCDATA), (CODE2, MAPCODE), (MAPCODE, 0xC000), (GLUE, 0x6000)):
         if start + len(chunks[start]) > limit:
             raise SystemExit(f'code from ${start:04X} ends at ${start + len(chunks[start]):04X}, past ${limit:04X}')
 
