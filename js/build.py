@@ -67,14 +67,14 @@ def c64_symbols():
 
 def export_c64_game():
     """The full patched C64 game: the one-file PRG starts with RUN (SYS in its stub)."""
-    with open(os.path.join(ROOT, 'Sentinel-1351_v9.prg'), 'rb') as f:
+    with open(os.path.join(ROOT, 'Sentinel-1351_v10.prg'), 'rb') as f:
         data = f.read()
     load = data[0] | data[1] << 8
     sys_at = data.index(0x9E, 2)                       # BASIC token SYS
     digits = bytes(b for b in data[sys_at + 1:sys_at + 8] if 0x30 <= b <= 0x39)
     return {
         'model': 'c64',
-        'file': 'Sentinel-1351_v9.prg',
+        'file': 'Sentinel-1351_v10.prg',
         'load': load,
         'entry': int(digits),
         'prg': base64.b64encode(data).decode('ascii'),

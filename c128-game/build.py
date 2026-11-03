@@ -53,6 +53,11 @@ OUT = os.path.join(HERE, 'sentinel-c128-game.prg')
 SHARED = {'SHLD', 'HITS', 'SHIPLOST', 'DIFF', 'SYSHP', 'PTSX', 'PTSXH', 'PTSY', 'PTON'}    # the cockpit's, used by the map
 
 PATCHES_MAP = [
+    # the planet's frames step in game.asm (GPLANET): the map's code is full
+    ("PLANET: INC PCNT\n        LDA PCNT\n        AND #$07\n        BNE plrt\n        LDX PFRM        ; $39-$3C, then the fifth frame, the original's unused $3D\n        CPX #PL5        ; (it fills the gap between $3C and $39)\n        BEQ plk0\n        INX\n        CPX #$3D\n        BCC plkok\n        LDX #PL5\n        BNE plkok\nplk0:   LDX #$39\nplkok:   STX PFRM\n        STX $47F9\n        JSR VDCPLDEF\nplrt:  RTS\n", 'PLANET: JMP GPLANET     ; (game)\n'),
+    # the planet's fifth frame: pointer $3D is the cockpit's barrels here, $FF is free
+    ('PL5     = $3D           ; sprite pointer of the planet\'s fifth frame (c128-game: $FF)\n',
+     'PL5     = $FF           ; (game) sprite pointer of the planet\'s fifth frame\n'),
     # the ship's variables are the cockpit's
     ('SYSHP   = $3D40         ; hit points of the eight ship systems (SHIP-STATUS.md)\n', ''),
     ('DIFF:   .BYTE 2\n', ''),
@@ -232,7 +237,7 @@ def main():
     body = bytearray(cockpit_build.basic_stub())
     p = lambda address, data: put(body, address, data)
     cockpit_build.place_assets(p)
-    map_build.place_assets(p, VDC=VDCDATA)
+    map_build.place_assets(p, VDC=VDCDATA, PL5=0x7FC0)   # (the planet's fifth frame: pointer $FF, behind the bottom strip)
     cockpit_build.place_assets(p)                   # the cockpit's picture wins where they meet
     for address, data in chunks.items():
         p(address, data)

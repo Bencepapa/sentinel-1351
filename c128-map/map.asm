@@ -53,6 +53,7 @@ VINADR  = $3BF0
 VLSADR  = $3BF6
 VKEYS3  = $3F88
 PANX    = 44            ; left edge of the ship status panel
+PL5     = $3D           ; sprite pointer of the planet's fifth frame (c128-game: $FF)
 VPLN    = $4000         ; planet frames as VDC characters (4 x 9 x 16 bytes)
 VPLCH   = $ED           ; first planet character
 VPLX    = 17            ; text column / row of the planet's 3x3 block
@@ -508,11 +509,15 @@ PLANET: INC PCNT
         LDA PCNT
         AND #$07
         BNE plrt
-        LDX PFRM
+        LDX PFRM        ; $39-$3C, then the fifth frame, the original's unused $3D
+        CPX #PL5        ; (it fills the gap between $3C and $39)
+        BEQ plk0
         INX
         CPX #$3D
         BCC plkok
-        LDX #$39
+        LDX #PL5
+        BNE plkok
+plk0:   LDX #$39
 plkok:   STX PFRM
         STX $47F9
         JSR VDCPLDEF
@@ -916,7 +921,10 @@ VDCPLDEF:
         LDA VDCON
         BEQ vpd0
         LDA PFRM
-        SEC
+        CMP #PL5        ; (the fifth frame: no room for its characters, the fourth's)
+        BNE vpd1
+        LDA #$3C
+vpd1:   SEC
         SBC #$39
         TAX
         LDA PLOFFL,X

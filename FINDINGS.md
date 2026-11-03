@@ -1,6 +1,6 @@
 # Findings: bugs and quirks in the original
 
-Things found in the C64 game (`Sentinel-1351_v9`, C64 addresses) while porting it
+Things found in the C64 game (`Sentinel-1351_v9`, the same addresses in v10, C64 addresses) while porting it
 to the C128 and checking the port against the original routine by routine
 (`js/test/run.js`). For each one: what the code does, what it causes in play,
 and what the C128 port does. "Kept" means the port does the same, so that the
@@ -92,6 +92,16 @@ black sky, but a white flash shows them, and stars vanish while crossing them.
   closed without a jump.
 - C64 1351 patch: **fixed** (`$FC9D JSR JUMPCLR`, the same clear). Port: **not
   affected** (closing wipes the view).
+
+### 8. The planet skips its fifth frame (`$109B`)
+
+The planet's pointer steps `$39-$3C` (`$109B CPY #$3D`), but shape `$3D` (`$4F40`) is
+a fifth frame between `$3C` and `$39`: the step `$3C` -> `$39` changes 130 pixels,
+the others 67-81; with `$3D` the steps are 69 and 81. No code uses the shape.
+
+- In play: the planet's turn jerks once a cycle.
+- C64 1351 patch: **fixed** (`CPY #$3E`). Port: **fixed** (`GPLANET`; in c128-game
+  the frame is at pointer `$FF`, `$3D` being the barrels).
 
 ## Quirks (behaviour that looks accidental but is part of the game)
 

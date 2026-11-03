@@ -1361,6 +1361,27 @@ g_rm1:  STA CRAD1
         STA SHACT
         RTS
 
+; The map's planet, a frame every 8th call (its PLANET): $39-$3C, then the fifth
+; frame, the original's unused $3D (pointer M_PL5 here), which fills the gap
+; between $3C and $39.
+GPLANET:INC M_PCNT
+        LDA M_PCNT
+        AND #$07
+        BNE g_gp9
+        LDX M_PFRM
+        CPX #M_PL5
+        BEQ g_gp1
+        INX
+        CPX #$3D
+        BCC g_gp2
+        LDX #M_PL5
+        BNE g_gp2
+g_gp1:  LDX #$39
+g_gp2:  STX M_PFRM
+        STX $47F9
+        JMP M_VDCPLDEF
+g_gp9:  RTS
+
 ; The radar's marks go: in hyperspace it shows no ships (the radar's pass is left
 ; out there, its last marks stood still).
 HRADCLR:LDY #$02

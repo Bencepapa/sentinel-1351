@@ -32,7 +32,7 @@ def put(body, address, data):
     body[offset:end] = data
 
 
-def place_assets(put, VDC=0x4000):
+def place_assets(put, VDC=0x4000, PL5=0x4F40):
     """Everything but the code. put(address, data). The second display's data
     ($4000-$43FF here) goes to VDC instead (c128-game/build.py moves it)."""
     yoff = [(y // 8) * 320 + (y & 7) for y in range(200)]
@@ -55,6 +55,8 @@ def place_assets(put, VDC=0x4000):
     with open(os.path.join(HERE, 'ref', 'planet-sprites.bin'), 'rb') as f:
         sprites = f.read()
     put(0x4E40, sprites)          # planet sprite frames, pointers $39-$3C
+    with open(os.path.join(HERE, 'ref', 'planet-sprite-3d.bin'), 'rb') as f:
+        put(PL5, f.read())        # the fifth, the original's unused $3D (pointer PL5)
     put(VDC, planetchars(sprites))   # the same frames as VDC characters
     for address, data in textdata() + shipdata():
         if 0x4000 <= address < 0x4400:

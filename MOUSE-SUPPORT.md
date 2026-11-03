@@ -4,9 +4,9 @@ This document describes how mouse support was added to *Sentinel* by Bryan
 Brandenburg (Synapse Software). The game is a first-person space shooter: the
 joystick moves a crosshair, and the ship turns toward it.
 
-- Patched disk: `Sentinel-1351_v9.d64` (built from the original `Sentinel.d64`, which is not in the repository)
+- Patched disk: `Sentinel-1351_v10.d64` (built from the original `Sentinel.d64`, which is not in the repository)
 - Source: `mouse/sentinel_mouse.asm`
-- Build: `python mouse/build.py Sentinel.d64 Sentinel-1351_v9.d64`
+- Build: `python mouse/build.py Sentinel.d64 Sentinel-1351_v10.d64`
 
 ## Controls with a mouse
 
@@ -122,6 +122,7 @@ bit is masked out of the joystick byte and handled separately.
 | `$129B` | `LDY $B8 / BEQ / LDA #0` | `JSR MPY` + `NOP`s (the crosshair routine's Y on the map) |
 | `$0D12` | `LDA #0 / STA $D001 / BEQ` | `JSR MPY0 / JMP $0D1C` (the line-59 split keeps the pointer's Y) |
 | `$FC9D` | `JSR $0D81` | `JSR JUMPCLR` (fix of the original: a jump also clears the map's boxes, see FINDINGS.md bug 7) |
+| `$109B` | `CPY #$3D` | `CPY #$3E` (fix of the original: the planet's fifth frame `$3D` is shown, see FINDINGS.md bug 8) |
 | `$53C0` | unused sprite shape `$4F`, all zero | the map pointer's shape, a + |
 | 12 writers of `$B333/$B340/$B349/$B38C` | `STA` into old operands | `STA` into the new variables `DDLY/YMAX/YMIN/YCEN` |
 
@@ -206,8 +207,8 @@ text ("THE 20TH C") appeared on the map.
 ## 4. Building and testing
 
 ```bash
-python mouse/build.py Sentinel.d64 Sentinel-1351_v9.d64
-"C:\dev\c64\GTK3VICE-3.9-win64\bin\x64sc.exe" -controlport2device 3 -autostart Sentinel-1351_v9.d64
+python mouse/build.py Sentinel.d64 Sentinel-1351_v10.d64
+"C:\dev\c64\GTK3VICE-3.9-win64\bin\x64sc.exe" -controlport2device 3 -autostart Sentinel-1351_v10.d64
 ```
 
 In VICE, `Alt+Q` grabs the mouse. `-controlport2device 1` gives you a joystick
@@ -231,8 +232,8 @@ It starts by itself.
 
 ## 5. One-file PRG
 
-`python mouse/onefile.py Sentinel-1351_v9.d64` turns the multi-file disk into
-a single self-unpacking `Sentinel-1351_v9.prg` (151 blocks). Load it with
+`python mouse/onefile.py Sentinel-1351_v10.d64` turns the multi-file disk into
+a single self-unpacking `Sentinel-1351_v10.prg` (151 blocks). Load it with
 `LOAD"SENTINEL-1351_V9",8` and type `RUN`, or drop it on VICE or an SD2IEC.
 
 How it works:

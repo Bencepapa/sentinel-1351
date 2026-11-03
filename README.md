@@ -39,8 +39,8 @@ Detailed reverse-engineering and control documentation is in
 Build from a locally supplied original disk image:
 
 ```text
-python mouse/build.py Sentinel.d64 Sentinel-1351_v9.d64
-python mouse/onefile.py Sentinel-1351_v9.d64 Sentinel-1351_v9.prg
+python mouse/build.py Sentinel.d64 Sentinel-1351_v10.d64
+python mouse/onefile.py Sentinel-1351_v10.d64 Sentinel-1351_v10.prg
 ```
 
 The original disk image is intentionally not included. The latest patched D64

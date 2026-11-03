@@ -121,6 +121,8 @@ def main():
     poke(0x0D12, bytes([0x20, lo(sym['MPY0']), hi(sym['MPY0']), 0x4C, 0x1C, 0x0D, 0xEA]), expect=bytes.fromhex('a9008d01d0f003'))
     # a jump from the map also clears the map's boxes (the original leaves them)
     poke(0xFC9D, bytes([0x20, lo(sym['JUMPCLR']), hi(sym['JUMPCLR'])]), expect=bytes.fromhex('20810d'))
+    # the planet turns through all five frames: its fifth, $3D ($4F40), was never shown
+    poke(0x109C, bytes([0x3E]), expect=bytes([0x3D]))
     for a in (0xFE30, 0xFE68, 0xFEA0):  # keyboard scans end with LDA #$7F / STA $DC00
         poke(a, bytes([0xA9, 0xBF]), expect=bytes.fromhex('a97f'))
     # relocate the self-modified operands of the old routine
