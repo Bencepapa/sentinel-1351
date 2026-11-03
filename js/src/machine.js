@@ -11,7 +11,9 @@
 //         patched game (Sentinel-1351_v9.prg)
 //
 // No ROMs: the programs bank them out or never call them. ROM areas read as RAM,
-// the character ROM is an original font (font.js).
+// except $C000-$CFFF on the C128 while the MMU shows the KERNAL there (it reads
+// $FF, so a program that forgets to bank it out jams); the character ROM is an
+// original font (font.js).
 //
 // Debugging lives here too, because it has to sit in the instruction loop:
 // PC breakpoints, write watchpoints, frozen addresses, instruction / frame
@@ -303,6 +305,7 @@ var C128 = (function () {
     }
     if (a >= 0xD000 && a < 0xE000 && this.ioVisible()) return this.ioRead(a);
     if (a >= 0xFF00 && a <= 0xFF04) return a === 0xFF00 ? this.mmuCR : 0;
+    if (a >= 0xC000 && a < 0xD000 && (this.mmuCR & 0x30) !== 0x30) return 0xFF;
     return this.ram[a];
   };
 

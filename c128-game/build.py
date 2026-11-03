@@ -23,6 +23,8 @@ $3800-$3FFF (c128-map/build.py):
          between the cockpit's first code chunk and its tables
   $xx00  the map's code: right after the cockpit's second chunk
   $5300  the glue (game.asm), CPU RAM the VIC-IIe cannot use
+  $C000  more of the glue, in the RAM under the KERNAL (MMU $3E: the game calls no
+         KERNAL routine; the NMI and IRQ vectors point to an RTI)
 """
 
 import os
@@ -45,6 +47,7 @@ CODE2 = 0x8500
 MAPCODE = 0xA500         # provisional: assemble() puts the map right after the cockpit's code
 VDCDATA = 0x2900
 GLUE = 0x5300            # game.asm's code and data (after the master copy at $5000)
+HIGH = 0xC000            # game.asm's code in the RAM under the KERNAL (MMU $3E)
 OUT = os.path.join(HERE, 'sentinel-c128-game.prg')
 
 SHARED = {'SHLD', 'HITS', 'SHIPLOST', 'DIFF', 'SYSHP', 'PTSX', 'PTSXH', 'PTSY', 'PTON'}    # the cockpit's, used by the map
@@ -121,6 +124,8 @@ PATCHES_COCKPIT = [
     ('KILLHK: RTS             ; (c128-game: the map\'s COUNT follows)\n', 'KILLHK: JMP SECKILL     ; (game)\n'),
     ('EMPTYHK:JMP SECSTART    ; standalone: the next squadron arrives (c128-game: none)\n', 'EMPTYHK:RTS             ; (game) the sector is empty now\n'),
     ('nov3:   LDA #168        ; the explosions', 'nov3:   JSR VIEWWORK    ; (game)\n        LDA #168        ; the explosions'),
+    # the RAM under the KERNAL is the game's: $C000-$CFFF holds code (HIGH)
+    ('        LDA #$0E        ; bank 0 RAM + I/O + KERNAL ROM\n', '        LDA #$3E        ; (game) bank 0 RAM + I/O, RAM under the KERNAL too\n'),
     # the hyperspace cursor test (H, game.asm HINPUT): input and the crosshair's colour
     ('iv1:    JMP INPUT\n', 'iv1:    JMP HINPUT      ; (game)\n'),
     ('        LDA NUMCOL      ; white, light green while the target is behind ($3934)\n',
@@ -205,9 +210,9 @@ def assemble():
 
 def main():
     chunks, symbols = assemble()
-    if set(chunks) != {ENTRY, CODE2, MAPCODE, GLUE}:
+    if set(chunks) != {ENTRY, CODE2, MAPCODE, GLUE, HIGH}:
         raise SystemExit(f'unexpected assembly chunks: {[hex(c) for c in chunks]}')
-    for start, limit in ((ENTRY, VDCDATA), (CODE2, MAPCODE), (MAPCODE, 0xC000), (GLUE, 0x6000)):
+    for start, limit in ((ENTRY, VDCDATA), (CODE2, MAPCODE), (MAPCODE, 0xC000), (GLUE, 0x6000), (HIGH, 0xD000)):
         if start + len(chunks[start]) > limit:
             raise SystemExit(f'code from ${start:04X} ends at ${start + len(chunks[start]):04X}, past ${limit:04X}')
 

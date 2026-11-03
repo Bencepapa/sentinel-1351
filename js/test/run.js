@@ -923,7 +923,8 @@ for (const name of Object.keys(Profiles)) {
   const { m, hooks, p } = boot('game', 'verify');
   const s = p.symbols, K = m.ram;
   const tg = () => String.fromCharCode(K[s.TARGETS - 1] - 0x40, K[s.TARGETS] - 0x40);
-  const callAt = (addr) => { const c = m.cpu, ret = 0xFFF4; c.push(((ret - 1) >> 8) & 255); c.push((ret - 1) & 255); c.pc = addr; const sp = c.p; c.p |= 4; for (let i = 0; i < 1e6 && c.pc !== ret; i++) c.step(); c.p = sp; };
+  // (the processor comes back where it was: the frames run on after the call)
+  const callAt = (addr) => { const c = m.cpu, ret = 0xFFF4, pc0 = c.pc, sp0 = c.sp, p0 = c.p; c.push(((ret - 1) >> 8) & 255); c.push((ret - 1) & 255); c.pc = addr; c.p |= 4; for (let i = 0; i < 1e6 && c.pc !== ret; i++) c.step(); c.pc = pc0; c.sp = sp0; c.p = p0; };
   run(m, hooks, 60);
   check(!m.stopped && K[s.APPR] === 0 && tg() === '00',
     `game: starts in the empty sector ${K[s.M_SELX] + 1}.${K[s.M_SELY] + 1}, TARGETS ${tg()}`);
