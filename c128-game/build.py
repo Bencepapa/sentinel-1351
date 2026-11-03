@@ -48,7 +48,7 @@ MAPCODE = 0xA500         # provisional: assemble() puts the map right after the 
 VDCDATA = 0x2900
 GLUE = 0x5300            # game.asm's code and data (after the master copy at $5000)
 HIGH2 = 0xE000           # more code, under the KERNAL too: loaded at HIGH2SRC (the view's bitmap)
-HIGH2SRC = 0x6400        # and moved by GAMEINIT (18 pages: code to $E5FF, then shapes and streams)
+HIGH2SRC = 0x63C0        # packed (lz_pack), unpacked by GAMEINIT: code to $E7FF, then data
 HIGH = 0xC000            # game.asm's code in the RAM under the KERNAL (MMU $3E)
 OUT = os.path.join(HERE, 'sentinel-c128-game.prg')
 
@@ -125,9 +125,10 @@ MAP_EXTRA = ""
 PATCHES_COCKPIT = [
     ('        JSR SECSTART    ; a squadron in the sector (c128-game: the map\'s start sector)\n',
      '        JSR GAMEINIT    ; (game) the world and the start sector\n'),
-    # SPACE leaves only on a new press; C= opens and closes the map
+    # SPACE is the proton torpedo (TSPACE, game.asm GTORP), RUN/STOP leaves (the same
+    # bytes as before: the code after keeps its addresses); C= opens and closes the map
     ('        LDA CIA1PB\n        AND #$10\n        BNE nospace\n        JMP EXIT\nnospace:LDA #$BF        ; port 2 pots for the next frame\n',
-     '        LDA CIA1PB\n        AND #$10\n        BNE nospace\n        LDA SPREV\n        BNE nosp2\n        JMP EXIT\n'
+     '        LDA CIA1PB\n        BMI nostop      ; (game) RUN/STOP leaves\n        JMP EXIT\nnostop: AND #$10        ; SPACE: the torpedo (GSPACE while held)\n        BNE nospace\n        JSR GSPACE\n'
      'nospace:LDA #$00\n        STA SPREV\nnosp2:  JSR MAPKEY      ; (game) C= or the right mouse button: the map opens / closes\n'
      '        BNE nomapk\n        LDA CPREV\n        BNE nomap\n        LDA #$01\n        STA CPREV\n        JSR MAPTOG\n'
      '        JMP nomap\nnomapk: LDA #$00\n        STA CPREV\n'
@@ -155,6 +156,10 @@ PATCHES_COCKPIT = [
     # no burst over the open map (MAPOPEN stops them; a shot reaching the ship started one)
     ('        LDA EXPL2       ; ($CA80) 12 points burst where it was\n        BNE efm9\n',
      '        LDA EXPL2       ; ($CA80) 12 points burst where it was\n        ORA MAPSHOWN    ; (game) not over the map\n        BNE efm9\n'),
+    # the tracking passes in the fight's slot stop earlier: a pass can take ~20 lines, and
+    # after a shot the fight starts late in the view (line 133), past 194 otherwise
+    ('        LDA #176        ; the fight\'s slot: until line 176\n',
+     '        LDA #160        ; (game) the fight\'s slot: until line 160\n'),
     # squadron types 2 and 3 (game.asm GTYPE, GESHP, GSTRX / GSTRY, GSHLOAD)
     ('NEWWAVE:LDA #$01        ; type 1\n', 'NEWWAVE:LDA SQTYPE      ; (game) the squadron\'s type ($A5)\n'),
     ('        LDA #$01\n        STA $D02D\n        LDA #$00\n',
@@ -253,11 +258,60 @@ def assemble():
     raise SystemExit('the map code address does not settle')
 
 
+def lz_pack(data):
+    """Tokens for GUNPACK: $00-$7F n + 1 literals; $80-$FF a copy of (n & $7F) + 3
+    bytes from distance d back (two bytes follow). Greedy, longest match."""
+    out, lits, i, where = bytearray(), bytearray(), 0, {}
+    def flush():
+        while lits:
+            n = min(len(lits), 128)
+            out.append(n - 1); out.extend(lits[:n]); del lits[:n]
+    while i < len(data):
+        best, bestd = 0, 0
+        for j in reversed(where.get(data[i:i + 3], [])[-64:]):
+            n = 0
+            while i + n < len(data) and n < 130 and data[j + n] == data[i + n]:
+                n += 1
+            if n > best:
+                best, bestd = n, i - j
+        if best >= 3:
+            flush()
+            out.append(0x80 | (best - 3)); out.append(bestd & 255); out.append(bestd >> 8)
+            for k in range(i, i + best):
+                where.setdefault(data[k:k + 3], []).append(k)
+            i += best
+        else:
+            where.setdefault(data[i:i + 3], []).append(i)
+            lits.append(data[i]); i += 1
+    flush()
+    return bytes(out)
+
+
+def torp_frames(raw):
+    """The torpedo's 32 frames of 128 bytes, each packed on its own (TORPA): $80 + n
+    zero bytes, or n literal bytes."""
+    out = bytearray()
+    for f in range(32):
+        b, i = raw[f * 128:f * 128 + 128], 0
+        while i < len(b):
+            if b[i] == 0:
+                n = 0
+                while i < len(b) and b[i] == 0 and n < 127:
+                    i += 1; n += 1
+                out.append(0x80 | n)
+            else:
+                j = i
+                while j < len(b) and b[j] != 0 and j - i < 127:
+                    j += 1
+                out.append(j - i); out.extend(b[i:j]); i = j
+    return bytes(out)
+
+
 def main():
     chunks, symbols = assemble()
     if set(chunks) != {ENTRY, CODE2, MAPCODE, GLUE, HIGH, HIGH2}:
         raise SystemExit(f'unexpected assembly chunks: {[hex(c) for c in chunks]}')
-    for start, limit in ((ENTRY, VDCDATA), (CODE2, MAPCODE), (MAPCODE, 0xC000), (GLUE, 0x6000), (HIGH, 0xD000), (HIGH2, 0xE600)):
+    for start, limit in ((ENTRY, VDCDATA), (CODE2, MAPCODE), (MAPCODE, 0xC000), (GLUE, 0x6000), (HIGH, 0xD000), (HIGH2, 0xEA00)):
         if start + len(chunks[start]) > limit:
             raise SystemExit(f'code from ${start:04X} ends at ${start + len(chunks[start]):04X}, past ${limit:04X}')
 
@@ -267,19 +321,31 @@ def main():
     map_build.place_assets(p, VDC=VDCDATA, PL5=0x7FC0)   # (the planet's fifth frame: pointer $FF, behind the bottom strip)
     cockpit_build.place_assets(p)                   # the cockpit's picture wins where they meet
     for address, data in chunks.items():
-        p(HIGH2SRC if address == HIGH2 else address, data)
-    # the fighters' shape masters by type and type 2's streams, at $E600+ (moved there)
+        if address != HIGH2:
+            p(address, data)
+    # the $E000 image: code, the fighters' shape masters by type (type 1's come from
+    # their slots at GAMEINIT), type 2's streams, the torpedo's frames; packed into the
+    # 3D view's bitmap, which GAMEINIT unpacks and clears
     ref = os.path.join(ROOT, 'c128-gui', 'ref')
     sprites = open(os.path.join(ref, 'sprites-4800.bin'), 'rb').read()
     order = [b + i for b in (0x20, 0x30, 0x40, 0x60, 0x70) for i in range(16)]
     shape = lambda s: sprites[order.index(s) * 64:order.index(s) * 64 + 64]
-    hi2 = lambda name: HIGH2SRC + symbols[name] - HIGH2
-    p(hi2('TSH1'), b''.join(shape(s) for s in range(0x20, 0x2F)))
-    p(hi2('TSH2'), b''.join(shape(s) for s in range(0x3E, 0x45)))
-    p(hi2('TSH3'), b''.join(shape(s) for s in range(0x31, 0x39)))
-    p(hi2('STR2X'), open(os.path.join(ref, 'streams2-0600.bin'), 'rb').read())
-    p(hi2('STR2Y'), open(os.path.join(ref, 'streams2-8100.bin'), 'rb').read())
-    assert hi2('STR2Y') + 512 <= 0x7680, 'the $E000 load overlaps the cockpit art'
+    image = bytearray(chunks[HIGH2])
+    def at(name, data):
+        off = symbols[name] - HIGH2
+        image.extend(bytes(max(0, off + len(data) - len(image))))
+        image[off:off + len(data)] = data
+    at('TSH2', b''.join(shape(s) for s in range(0x3E, 0x45)))
+    at('TSH3', b''.join(shape(s) for s in range(0x31, 0x39)))
+    at('STR2X', open(os.path.join(ref, 'streams2-0600.bin'), 'rb').read())
+    at('STR2Y', open(os.path.join(ref, 'streams2-8100.bin'), 'rb').read())
+    at('TORPA', torp_frames(open(os.path.join(ref, 'torpedo-a000.bin'), 'rb').read()))
+    at('TSHOT', shape(0x67) + shape(0x68))
+    end = HIGH2 + len(image)
+    assert end <= 0xFF00, f'the $E000 image ends at ${end:04X}'
+    packed = bytes((end & 255, end >> 8)) + lz_pack(bytes(image))
+    assert HIGH2SRC + len(packed) <= 0x7680, f'the packed $E000 image ({len(packed)} bytes) overlaps the cockpit art'
+    p(HIGH2SRC, packed)
     # master copy of the colour matrix's view rows for MAPCLOSE (game.asm)
     p(symbols['MMAT'], bytes(body[0x4478 - LOAD:0x4478 - LOAD + 600]))
 

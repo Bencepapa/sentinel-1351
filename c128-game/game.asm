@@ -36,24 +36,12 @@ STARLIM = 28            ; the stars start before line 256 + this
         * = $5300       ; the glue: CPU RAM the VIC-IIe cannot use (after MMAT)
 
 GAMEINIT:               ; once, from the cockpit's START
-        LDY #$00        ; the code and data for $E000 from where they were loaded,
-        LDX #$12        ; $6400 (18 pages), the source cleared again
-        LDA #$64
-        STA CSRC+1
-        LDA #$E0
-        STA CDST+1
-        STY CSRC
-        STY CDST
-g_gi1:  LDA (CSRC),Y
-        STA (CDST),Y
-        LDA #$00
-        STA (CSRC),Y
-        INY
-        BNE g_gi1
-        INC CSRC+1
-        INC CDST+1
-        DEX
-        BNE g_gi1
+        LDA $D012       ; (the world's seed: before the unpacking, whose time varies)
+        STA GSEED
+        JSR GINIT2      ; the $E000 code and data (at the glue's end: these 38 bytes
+        JMP g_gi9       ; keep the code after them where it was, as the fight's tight
+        .BYTE 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+g_gi9:                  ; timing was measured with it)
         LDA #<NMIRTI    ; NMI (RESTORE) and IRQ/BRK vectors in the RAM under the KERNAL
         STA $FFFA
         STA $FFFE
@@ -65,7 +53,7 @@ g_gi1:  LDA (CSRC),Y
         STA $D40F
         LDA #$80
         STA $D412
-        LDA $D012       ; the world: the map program's start layout ($20F1)
+        LDA GSEED       ; the world: the map program's start layout ($20F1)
         ORA #$01
         STA M_SEED
         JSR GENONCE
@@ -98,8 +86,9 @@ g_mk1:  LDA RCNT
         RTS
 g_mk2:  INC RCNT
         BNE g_mk8
-g_mk3:  LDA #$80
-        STA RCNT
+g_mk3:  JSR GBOTH       ; (RCNT $80; and a torpedo, $E000: the same bytes as before)
+        NOP
+        NOP
 g_mk8:  LDA #$01
 g_mk9:  RTS
 RCNT:   .BYTE 0
@@ -1148,6 +1137,114 @@ mt_pb2:  STA HMACT,X
         DEX
         BPL mt_pb2
         RTS
+
+GINIT2:
+        JSR GUNPACK     ; the code and data for $E000, packed in the 3D view's bitmap
+        LDX #$00        ; type 1's shapes: their masters from their sprite slots
+g_gi2:  LDA $6000,X     ; ($6000-$63BF to TSH1, $EA00)
+        STA $EA00,X
+        LDA $6100,X
+        STA $EB00,X
+        LDA $6200,X
+        STA $EC00,X
+        CPX #$C0
+        BCS g_gi1
+        LDA $6300,X
+        STA $ED00,X
+g_gi1:  INX
+        BNE g_gi2
+        LDA #$63        ; the view's bitmap cleared: $63C0-$767F (18 pages and 192)
+        STA CDST+1
+        LDA #$C0
+        STA CDST
+        LDY #$00
+        LDX #$12
+        TYA
+g_gi4:  STA (CDST),Y
+        INY
+        BNE g_gi4
+        INC CDST+1
+        DEX
+        BNE g_gi4
+        LDY #$BF
+g_gi5:  STA (CDST),Y
+        DEY
+        CPY #$FF
+        BNE g_gi5
+        RTS
+
+; The packed code and data for $E000 (build.py): two bytes, the end address; then
+; tokens: $00-$7F a run of n + 1 literal bytes, $80-$FF a copy of (n & $7F) + 3
+; bytes from an earlier place, its distance back in the next two bytes.
+GUNPACK:LDA #<PACKSRC
+        STA CSRC
+        LDA #>PACKSRC
+        STA CSRC+1
+        LDA #<HIGH2
+        STA CDST
+        LDA #>HIGH2
+        STA CDST+1
+        LDY #$00
+        LDA (CSRC),Y
+        STA UPEND
+        JSR g_up8
+        LDA (CSRC),Y
+        STA UPEND+1
+        JSR g_up8
+g_up1:  LDA CDST        ; the end?
+        CMP UPEND
+        BNE g_up2
+        LDA CDST+1
+        CMP UPEND+1
+        BNE g_up2
+        RTS
+g_up2:  LDA (CSRC),Y
+        JSR g_up8
+        TAX
+        BMI g_up4
+        INX             ; literals
+g_up3:  LDA (CSRC),Y
+        STA (CDST),Y
+        JSR g_up8
+        JSR g_up9
+        DEX
+        BNE g_up3
+        BEQ g_up1
+g_up4:  TXA             ; a copy
+        AND #$7F
+        CLC
+        ADC #$03
+        TAX
+        SEC
+        LDA CDST
+        SBC (CSRC),Y
+        STA g_up5+1
+        JSR g_up8
+        LDA CDST+1
+        SBC (CSRC),Y
+        STA g_up5+2
+        JSR g_up8
+g_up5:  LDA $FFFF
+        STA (CDST),Y
+        INC g_up5+1
+        BNE g_up6
+        INC g_up5+2
+g_up6:  JSR g_up9
+        DEX
+        BNE g_up5
+        BEQ g_up1
+g_up8:  INC CSRC
+        BNE g_up7
+        INC CSRC+1
+g_up7:  RTS
+g_up9:  INC CDST
+        BNE g_up7
+        INC CDST+1
+        RTS
+UPEND:  .BYTE 0,0
+GSEED:  .BYTE 0
+HIGH2   = $E000
+PACKSRC = $63C0
 
         * = $C000
 
@@ -3019,11 +3116,532 @@ HDH:    .BYTE 0
 ; Loaded with the program at $6400 (the 3D view's bitmap, wiped before it shows)
 ; and moved here by GAMEINIT: a program cannot load across $D000-$DFFF (I/O).
         * = $E000
-TSH1    = $E600         ; masters: type 1 $20-$2E (15), type 2 $3E-$44 (7), type 3
-TSH2    = $E9C0         ; $31-$38 (8); type 2's x and y streams (the original's $0600,
-TSH3    = $EB80         ; $8100); build.py puts them here, GAMEINIT moves them along
-STR2X   = $EE00
-STR2Y   = $F000
+TSH1    = $EA00         ; masters: type 1 $20-$2E (15, copied from their slots by
+TSH2    = $EDC0         ; GAMEINIT), type 2 $3E-$44 (7), type 3 $31-$38 (8); type 2's
+TSH3    = $EF80         ; x and y streams (the original's $0600, $8100); the proton
+STR2X   = $F200         ; torpedo's 32 frames ($A000-$AFFF), packed a frame at a time
+STR2Y   = $F400         ; (build.py: TORPA)
+TORPA   = $F600
+TSHOT   = $FE80         ; masters of the shot's shapes $67 / $68 (the torpedo borrows
+                        ; their slots, $F3 / $F4)
+
+; ---------------- the proton torpedo ($BAD4-$BC86) ----------------
+; SPACE (or both mouse buttons) asks for it ($FDE5 -> $BACE). With none left a click
+; ($BC6F); else one less on the HUD ($849E), the launch's noise ($BBB2), and for 32
+; steps (one every 16 passes: 0.79 a frame) the pre-drawn rotating torpedo flies up
+; the view on sprites 1 and 2, twice as wide, white ($BB1B): each step unpacks the
+; next 128 bytes of its animation ($A000-$AFFF, TORPA) into their shapes. Meanwhile
+; no phasor. At the end ($BB70) the blast ($BBE4): every fighter in view goes down
+; ($BC88), the view turns orange ($BA99 $08) and rings grow from its middle (x $50,
+; y $64, radius +6 up to $28), plotted, then erased.
+; SPACE held (the cockpit's key scan) or both mouse buttons (MAPKEY): a new press asks
+; for a torpedo; GTORP runs from then on (torpj).
+GSPACE: LDA TSPP
+        BNE g_gs3
+        INC TREQ
+g_gs3:  LDA #$02        ; (held: counted down by GTORP)
+        STA TSPP
+        BNE g_gb2
+GBOTH:  LDA #$80        ; (MAPKEY's own: both buttons)
+        STA RCNT
+        LDA TMBP
+        BNE g_gb1
+        INC TREQ
+g_gb1:  LDA #$02
+        STA TMBP
+g_gb2:  LDA #$20        ; GTORP every frame
+        STA torpj
+        RTS
+
+GTORP:  LDA TSPP        ; the keys' holds run out two frames after release
+        BEQ g_tp1
+        DEC TSPP
+g_tp1:  LDA TMBP
+        BEQ g_tp2
+        DEC TMBP
+g_tp2:  LDA TPF         ; nothing left to do: off again
+        ORA TREQ
+        ORA TSPP
+        ORA TMBP
+        BNE g_tp4
+        LDA #$2C
+        STA torpj
+        RTS
+g_tp4:  LDA MAPSHOWN    ; (not over the map, nor in hyperspace)
+        ORA WIPE
+        ORA HYPON
+        ORA HPEND
+        BEQ g_tp5
+        LDA #$00
+        STA TREQ
+        RTS
+g_tp5:  LDA TPF         ; (each part works while there is time, and goes on in the
+        BEQ g_tp6       ; next frame: a fight leaves the vertical blank little)
+        CMP #$01
+        BEQ g_tp7
+        CMP #$02
+        BEQ g_tpk
+        CMP #$04
+        BEQ g_tpb
+        JMP TCOL        ; 3, 5: the view's colours
+g_tp7:  JMP TFLY
+g_tpk:  JMP TKILL
+g_tpb:  JMP TBLAST
+g_tp6:  LDA TREQ
+        BNE g_tp8
+        RTS
+g_tp8:  LDA #$00
+        STA TREQ
+        LDA $485B       ; protons left (the HUD's digits, $545A / $545B)
+        CMP #$70
+        BNE g_tp9
+        LDA $485A
+        CMP #$70
+        BNE g_tp9
+        LDA #$00        ; none: a click ($BC6F)
+        STA $D404
+        STA $D406
+        LDA #$14
+        STA $D401
+        LDA #$3A
+        STA $D405
+        LDA #$21
+        STA $D404
+        RTS
+g_tp9:  DEC $485B       ; one less ($8450, $849E)
+        LDA $485B
+        CMP #$6F
+        BNE g_tpa
+        LDA #$79
+        STA $485B
+        DEC $485A
+g_tpa:  LDA #$0A        ; the launch ($BBB2): noise on voices 1 and 2
+        STA $D401
+        LDA #$80
+        STA $D404
+        STA $D40B
+        LDA #$04
+        STA $D408
+        LDA #$0F
+        STA $D418
+        LDA #$89
+        STA $D405
+        LDA #$6B
+        STA $D40C
+        LDA #$00
+        STA $D406
+        STA $D40D
+        LDA #$81
+        STA $D404
+        STA $D40B
+        LDA #$01        ; the flight
+        STA TPF
+        LDA #32
+        STA TPN
+        LDA #<TORPA
+        STA TPSRC
+        LDA #>TORPA
+        STA TPSRC+1
+        LDA #$C8
+        STA TPY1
+        LDA #$DD
+        STA TPY2
+        LDA #$00
+        STA TPACC
+        STA TPSP
+        STA TPO
+        STA SHOTVIS     ; (the phasor shot goes, $1428)
+        STA SHOTON
+        STA SHOTARM
+        STA FIREFLAG
+        LDA #<HTSPR     ; the torpedo's sprites after the crosshair's
+        STA sprcj+1
+        LDA #>HTSPR
+        STA sprcj+2
+        INC TPSP        ; (its first frame now)
+        RTS
+
+TFLY:   LDA #$00        ; no phasor while it flies
+        STA FIREFLAG
+        STA SHOTARM
+        CLC             ; a step every 16 passes: 0.79 a frame
+        LDA TPACC
+        ADC #$CA
+        STA TPACC
+        BCC g_tf1
+        INC TPSP
+g_tf1:  LDA TPO         ; a frame being unpacked, or one due
+        BNE g_tf2
+        LDA TPSP
+        BEQ g_tf9
+g_tf2:  JSR TDEC
+        BCC g_tf9       ; (not all of it yet)
+        LDA #$00        ; the frame complete: it shows, a step up
+        STA TPO
+        DEC TPSP
+        BPL g_tf3
+        STA TPSP
+g_tf3:  DEC TPY1
+        DEC TPY1
+        DEC TPY2
+        DEC TPY2
+        DEC TPN
+        BEQ TEND
+g_tf9:  RTS
+
+; The next of its animation's frames into $F3 / $F4 ($7CC0-$7D3F; tokens: $80 + n
+; zeros, or n literals), a token at a time while there is time; C set when done.
+TDEC:   LDA TPSRC
+        STA CSRC
+        LDA TPSRC+1
+        STA CSRC+1
+g_td1:  LDX TPO
+        CPX #128
+        BCS g_td8
+        BIT $D011       ; (time: a token takes under a line, until line 256 + 44)
+        BPL g_td2
+        LDA $D012
+        CMP #44
+        BCS g_td9
+g_td2:
+        LDY #$00
+        LDA (CSRC),Y
+        STA TPB
+        INY
+        LDA TPB
+        BMI g_td4
+g_td3:  LDA (CSRC),Y    ; literals
+        STA $7CC0,X
+        INY
+        INX
+        DEC TPB
+        BNE g_td3
+        BEQ g_td6
+g_td4:  AND #$7F        ; zeros
+        STA TPB
+        LDA #$00
+g_td5:  STA $7CC0,X
+        INX
+        DEC TPB
+        BNE g_td5
+g_td6:  STX TPO
+        TYA             ; the source on
+        CLC
+        ADC CSRC
+        STA CSRC
+        BCC g_td1
+        INC CSRC+1
+        BCS g_td1
+g_td8:  JSR g_td9
+        SEC
+        RTS
+g_td9:  LDA CSRC
+        STA TPSRC
+        LDA CSRC+1
+        STA TPSRC+1
+        CLC
+        RTS
+
+; The end of the flight ($BB70): its sprites go, the shot's shapes back, silence,
+; the blast's noise ($C3D0); then the kills, the colour, the rings.
+TEND:   LDA #<SPRCROSS
+        STA sprcj+1
+        LDA #>SPRCROSS
+        STA sprcj+2
+        LDX #127
+g_te1:  LDA TSHOT,X
+        STA $7CC0,X
+        DEX
+        BPL g_te1
+        LDA #$00
+        STA $D404
+        STA $D40B
+        LDA #$0F        ; ($C3D0) the blast's noise on voice 2
+        STA $D418
+        LDA #$00
+        STA $D407
+        STA $D40B
+        STA $D40D
+        LDA #$04
+        STA $D408
+        LDA #$7B
+        STA $D40C
+        LDA #$81
+        STA $D40B
+        LDA #$02
+        STA TPF
+        LDA #$03        ; the fighters to look at
+        STA TPKX
+        RTS
+
+; ($BC88) every fighter in view goes down: one at a time, while there is time.
+TKILL:  LDA #28
+        JSR TLATE
+        BCS g_tk9
+        DEC TPKX
+        BMI g_tk8
+        LDX TPKX
+        LDA ALIVE,X
+        BEQ TKILL
+        LDA EVIS
+        AND ENBIT,X
+        BEQ TKILL
+        TXA
+        ASL A
+        TAY
+        LDA EXPL        ; (one explosion at a time: the first one's)
+        BNE g_tk2
+        JSR hk1
+        JMP TKILL
+g_tk2:  LDA #$00
+        STA ALIVE,X
+        LDA #$01        ; far away in every direction
+        STA ENX+1,Y
+        STA ENY+1,Y
+        STA ENZ+1,Y
+        JSR KILL
+        LDX TPKX
+        LDA EVIS
+        AND ENMASK,X
+        STA EVIS
+        JMP TKILL
+g_tk8:  LDA #$03        ; the view orange ($BA99 $08)
+        STA TPF
+        LDA #$08
+        STA HCOLV
+        JMP TCOL0
+g_tk9:  RTS
+
+; The view's colour RAM, rows 4-16, to HCOLV, a row at a time while there is time; then
+; the rings (TPF 3) or the end (TPF 5).
+TCOL0:  LDA #$00
+        STA TPCR
+        LDA #$A0
+        STA TPCP
+        LDA #$D8
+        STA TPCP+1
+        RTS
+TCOL:   LDA #34
+        JSR TLATE
+        BCS g_tc9
+        LDA TPCR
+        CMP #13
+        BCS g_tc5
+        LDA TPCP
+        STA CDST
+        LDA TPCP+1
+        STA CDST+1
+        LDA HCOLV
+        LDY #39
+g_tc1:  STA (CDST),Y
+        DEY
+        BPL g_tc1
+        CLC
+        LDA TPCP
+        ADC #40
+        STA TPCP
+        BCC g_tc2
+        INC TPCP+1
+g_tc2:  INC TPCR
+        JMP TCOL
+g_tc5:  LDA TPF         ; done
+        CMP #$03
+        BNE g_tc6
+        LDA #$04        ; the rings
+        STA TPF
+        LDA #4
+        STA TPR
+        LDA #$01
+        STA TPPASS
+        JMP TRING0
+g_tc6:  LDA #$00        ; over
+        STA TPF
+g_tc9:  RTS
+
+; The blast's rings ($3635 / $364C): radius TPR, centre x $50, y $64; 6 steps of the
+; circle a frame, all eight octants (value 3, brown kept; the second pass erases).
+TBLAST: LDA #$0C
+        STA TPK
+g_tb1:  LDA #40         ; (the time: a step at a time)
+        JSR TLATE
+        BCC g_tb0
+        RTS
+g_tb0:  LDA TRY         ; y > x: the ring is done
+        CMP TRX
+        BEQ g_tb2
+        BCS TRNEXT
+g_tb2:  LDA TRY         ; (every other step plotted: half the time, the ring still
+        LSR A           ; whole to the eye)
+        BCS g_tb2a
+        JSR TPLOT8
+g_tb2a: INC TRY         ; the midpoint step
+        LDA TRD
+        BMI g_tb3
+        DEC TRX
+        LDA TRY         ; d += 2 (y - x) + 1
+        SEC
+        SBC TRX
+        ASL A
+        SEC
+        ADC TRD
+        STA TRD
+        JMP g_tb4
+g_tb3:  LDA TRY         ; d += 2 y + 1
+        ASL A
+        SEC
+        ADC TRD
+        STA TRD
+g_tb4:  DEC TPK
+        BNE g_tb1
+        RTS
+; C set: past line 256 + A, or wrapped: no time left in this vertical blank.
+TLATE:  STA TPLIM
+        BIT $D011
+        BMI g_tl1
+        LDA $D012
+        CMP #243
+        BCS g_tl8
+        SEC
+        RTS
+g_tl1:  LDA $D012
+        CMP TPLIM
+        RTS
+g_tl8:  CLC
+        RTS
+TRNEXT: CLC             ; the next ring: 6 more
+        LDA TPR
+        ADC #$06
+        STA TPR
+        CMP #$29
+        BCC TRING0
+        LDA TPPASS      ; the second pass erases them
+        CMP #$01
+        BNE g_tn1
+        INC TPPASS
+        LDA #4
+        STA TPR
+        JMP TRING0
+g_tn1:  LDA #$05        ; over: the view's colours back (TCOL)
+        STA TPF
+        LDA #$01
+        STA HCOLV
+        JMP TCOL0
+TRING0: LDA TPR         ; x = r, y = 0, d = 1 - r
+        STA TRX
+        LDA #$00
+        STA TRY
+        SEC
+        LDA #$01
+        SBC TPR
+        STA TRD
+        RTS
+TPLOT8: LDA TRX         ; (x, y) and (y, x) in the four quadrants
+        LDY TRY
+        JSR TPLOT4
+        LDA TRY
+        LDY TRX
+TPLOT4: STA TPDX
+        STY TPDY
+        CLC
+        LDA #$50
+        ADC TPDX
+        STA POSX
+        CLC
+        LDA #$64
+        ADC TPDY
+        STA POSY
+        JSR TPLOT1
+        SEC
+        LDA #$50
+        SBC TPDX
+        STA POSX
+        JSR TPLOT1
+        SEC
+        LDA #$64
+        SBC TPDY
+        STA POSY
+        JSR TPLOT1
+        CLC
+        LDA #$50
+        ADC TPDX
+        STA POSX
+TPLOT1: JSR PIXADDR
+        LDA (PTR),Y
+        AND MASK3,X
+        CMP M_MASK2,X
+        BEQ g_pl9
+        LDA (PTR),Y
+        AND CLEARM,X
+        LDY TPPASS
+        CPY #$02
+        BEQ g_pl8
+        ORA MASK3,X
+g_pl8:  LDY #$00
+        STA (PTR),Y
+g_pl9:  RTS
+
+; The torpedo on sprites 1 and 2 (after SPRCROSS, while it flies; sprcj): x $A0,
+; white, twice as wide, single colour, in front.
+HTSPR:  JSR SPRCROSS
+        LDA #SHOTPTR
+        STA SPRPTR+1
+        LDA #SHOTPTR+1
+        STA SPRPTR+2
+        LDA #$A0
+        STA $D002
+        STA $D004
+        LDA TPY1
+        STA $D003
+        LDA TPY2
+        STA $D005
+        LDA #$01
+        STA $D028
+        STA $D029
+        LDA $D010
+        AND #$F9
+        STA $D010
+        LDA $D01C
+        AND #$F9
+        STA $D01C
+        LDA $D017
+        AND #$F9
+        STA $D017
+        LDA $D01B
+        AND #$F9
+        STA $D01B
+        LDA $D01D
+        ORA #$06
+        STA $D01D
+        LDA VICENA
+        ORA #$06
+        STA VICENA
+        RTS
+
+TSPACE: .BYTE $10       ; SPACE's bit (0 while held), from the cockpit's key scan
+TSPP:   .BYTE 0
+TMBP:   .BYTE 0
+TREQ:   .BYTE 0
+TPF:    .BYTE 0         ; 1 flying, 2 the kills, 3 the colour, 4 the rings, 5 the colour back
+TPN:    .BYTE 0
+TPSRC:  .BYTE 0,0
+TPY1:   .BYTE 0
+TPY2:   .BYTE 0
+TPACC:  .BYTE 0
+TPK:    .BYTE 0
+TPB:    .BYTE 0
+TPO:    .BYTE 0
+TPR:    .BYTE 0
+TPPASS: .BYTE 0
+TRX:    .BYTE 0
+TRY:    .BYTE 0
+TRD:    .BYTE 0
+TPDX:   .BYTE 0
+TPDY:   .BYTE 0
+TPLIM:  .BYTE 0
+TPKX:   .BYTE 0
+TPCR:   .BYTE 0
+TPCP:   .BYTE 0,0
+TPSP:   .BYTE 0
 
 ; ---------------- squadron types 2 and 3 ($FFAF, $2E86 / $2EBE / $2F18) ----------------
 ; The squadron's type (SQTYPE, from the map's STATE: 1 the twin-pod fighters, 2 the
@@ -3126,7 +3744,10 @@ PLSH2:  .BYTE $20,<GESHP,>GESHP,$EA,$EA,$EA
 
 ; Types 2 and 3: each fighter's colour steps every frame, white once it can take only
 ; one more hit ($2EC4, every placement in the original).
-GCOLCYC:LDA APPR        ; approaching: sprite 4 is the scanner's blip, single colour
+GCOLCYC:
+torpj:  BIT GTORP       ; the proton torpedo (JSR while asked for or under way: a BIT
+                        ; costs the tight frames only 4 cycles)
+        LDA APPR        ; approaching: sprite 4 is the scanner's blip, single colour
         BEQ g_cc0       ; and narrow whatever fought last (NEWWAVE's GTYPE sets the
         LDA #$29        ; next type's looks)
         STA sprmc
