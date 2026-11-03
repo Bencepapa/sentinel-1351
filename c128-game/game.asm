@@ -36,6 +36,24 @@ STARLIM = 28            ; the stars start before line 256 + this
         * = $5300       ; the glue: CPU RAM the VIC-IIe cannot use (after MMAT)
 
 GAMEINIT:               ; once, from the cockpit's START
+        LDY #$00        ; the code for $E000 from where it was loaded, $6400 (6 pages),
+        LDX #$06        ; its source cleared again
+        LDA #$64
+        STA CSRC+1
+        LDA #$E0
+        STA CDST+1
+        STY CSRC
+        STY CDST
+g_gi1:  LDA (CSRC),Y
+        STA (CDST),Y
+        LDA #$00
+        STA (CSRC),Y
+        INY
+        BNE g_gi1
+        INC CSRC+1
+        INC CDST+1
+        DEX
+        BNE g_gi1
         LDA #<NMIRTI    ; NMI (RESTORE) and IRQ/BRK vectors in the RAM under the KERNAL
         STA $FFFA
         STA $FFFE
@@ -274,13 +292,22 @@ g_vh2:  LDA #$00
         CMP #243
         BCC g_vs9
         BCS g_vs2
-g_vs1:  LDA APPR        ; (approaching, a rush's star steps do not fit after the wrap)
-        BNE g_vs9
+g_vs1:  JSR MVSRAD      ; (approaching, a rush's star steps; the radar's frame: after
+        BNE g_vs9       ; the wrap the radar needs the time)
         LDA $D012
         CMP #STARLIM
         BCS g_vs9
 g_vs2:  JMP STARS
 g_vs9:  RTS
+
+MVSRAD: LDA APPR        ; A <> 0: approaching, or the radar runs in this blank
+        BNE g_mr9
+        LDA RADPEND
+        BNE g_mr9
+        LDA EFRM
+        AND #$01
+        EOR #$01
+g_mr9:  RTS
 
 MAPVB1: LDA WIPE
         BEQ g_mv0
@@ -751,6 +778,9 @@ WTCNT:  .BYTE 44
 ; of the squadrons' move, if one is going on, and of a squadron coming in.
 VIEWWORK:LDA WTPEND
         BEQ g_vw1
+        LDA $D012       ; (the tick takes ~40 lines: late, the next frame)
+        CMP #126
+        BCS g_vw1
         LDA #$00
         STA WTPEND
         JSR M_TICK
@@ -764,7 +794,10 @@ MVSTEP: LDA MVON
         BEQ g_mvs9
         LDA #6
         STA MVN
-g_mvs1: JSR M_MOVECELL
+g_mvs1: LDA $D012       ; (late in the view: the rest next frame)
+        CMP #170
+        BCS g_mvs9
+        JSR M_MOVECELL
         DEC M_PCOL
         BPL g_mvs2
         LDA #9
@@ -1040,6 +1073,93 @@ DSK:    .BYTE 0
 ; game calls no KERNAL routine and runs with interrupts off; NMIRTI keeps RESTORE
 ; harmless while the KERNAL's vectors are not visible.
 
+; The map's beeps (its SNDTOG, $B2BC; BLIP, $223D): voices 1 and 2 set up whole every
+; time, not just gated: a fight goes on with the map open, and its sounds change them.
+GSNDTOG:DEC M_SNDCNT
+        BNE g_gt9
+        LDA #$02
+        STA M_SNDCNT
+        LDA #$00        ; (the map's SNDINIT, $B26D, without its gates)
+        STA $D400
+        STA $D407
+        STA $D402
+        STA $D409
+        STA $D405
+        STA $D40C
+        LDA #$2B
+        STA $D401
+        LDA #$12
+        STA $D408
+        LDA #$01
+        STA $D403
+        LDA #$0A
+        STA $D40A
+        LDA #$80
+        STA $D406
+        LDA #$20
+        STA $D40D
+        LDA #$0F
+        STA $D418
+        LDA #$41
+        STA $D40B
+        LDA M_SNDVAL
+        EOR #$01
+        STA M_SNDVAL
+        STA $D404
+g_gt9:  RTS
+; The fight's voice-2 sounds (EFSND, MSGBEEP, HITSND2) are left out while the map is
+; open (the map's beeps hold voices 1 and 2) or its pixels still show: out of the
+; routine. Else the instruction they replaced.
+GV2CHK: LDA MAPSHOWN
+        ORA HMAP
+        BNE g_v2x
+        LDA #$00
+        STA $D40B
+        RTS
+GV2CHK7:LDA MAPSHOWN
+        ORA HMAP
+        BNE g_v2x
+        LDA #$00
+        STA $D407
+        RTS
+g_v2x:  PLA
+        PLA
+        RTS
+GBLIP:  LDA #$00
+        STA $D404
+        STA $D406
+        STA $D402
+        STA $D400
+        LDA #$08
+        STA $D403
+        LDA #$01
+        STA $D405
+        LDA #$8F
+        STA $D401
+        LDA #$0F
+        STA $D418
+        LDA #$41
+        STA $D404
+        RTS
+
+; (the arrival: the planet's frame back, the crosshair alone)
+HPL5BACK:
+        LDA #<SPRCROSS  ; the crosshair alone again
+        STA sprcj+1
+        LDA #>SPRCROSS
+        STA sprcj+2
+        LDX #62
+mt_pb1:  LDA HSHPL5,X
+        STA $7FC0,X
+        DEX
+        BPL mt_pb1
+        LDX #HMN-1      ; (the meteors gone)
+        LDA #$00
+mt_pb2:  STA HMACT,X
+        DEX
+        BPL mt_pb2
+        RTS
+
         * = $C000
 
 NMIRTI: RTI
@@ -1178,7 +1298,8 @@ g_ic2:  STA (CSRC),Y
 ; vertical blank), then put level with the ship ($1D/$1F/$21 = $88; at the easy
 ; levels the first group straight ahead, $17 = $88, $23 = $94) and the blip starts
 ; ($3736). An empty destination shows readings of 0.
-HSCANGO:LDA HTGTY       ; the destination's sector
+HSCANGO:JSR HMINIT
+        LDA HTGTY       ; the destination's sector
         ASL A
         ASL A
         CLC
@@ -1381,6 +1502,374 @@ g_gp2:  STX M_PFRM
         STX $47F9
         JMP M_VDCPLDEF
 g_gp9:  RTS
+
+; ---------------- meteors, dodging, the deflector ($288F, $B8D9, $270D) ----------------
+; Five meteors on sprites 1, 2, 4, 5, 6 ($2850): each waits a random delay, then
+; appears near the middle and grows through shapes $66-$71 while it drifts outward,
+; faster the farther it is from the middle ($2A79, $2AB8). At full size it hits the
+; ship ($2947): the flash, a system hit unless the deflector is on ($84D7), the
+; rattle ($0912), the burst ($C3F3) and the second explosion where it was. The
+; original calls $288F 3 times a pass, about 8.4 times a frame. The stick (or the
+; hyperspace cursor) pushes them away, more the bigger they are ($B8D9, every 16
+; passes: every 6th frame, the directions of those frames). Fire holds the
+; deflector ($270D): the view's colour RAM green, which shows the shield's lines
+; (plotted in colour 3, black otherwise), no hits, 15 energy a call (10 a frame).
+HMINIT: LDX #HMN-1
+mt_mi1:  JSR RANDOM
+        STA HMDLY,X
+        LDA #$00
+        STA HMACT,X
+        DEX
+        BPL mt_mi1
+        STA HDEF
+        STA HMACC
+        LDA #$FF
+        STA HDJ
+        LDA #$06
+        STA HDJC
+        LDX #62         ; shape $66 into pointer $FF (the planet's fifth frame there
+        LDA #$00        ; until now; HPL5BACK puts it back): two pixels, $04 / $08
+mt_mi2:  STA $7FC0,X
+        DEX
+        BPL mt_mi2
+        LDA #$04
+        STA $7FC1
+        LDA #$08
+        STA $7FC4
+        LDA #<HSPRC     ; the meteors' sprites from now on
+        STA sprcj+1
+        LDA #>HSPRC
+        STA sprcj+2
+        RTS
+HMFRAME:CLC             ; 8.4 calls of $288F a frame, counted off at once (late in
+        LDA HMACC       ; the view: added to the next frame's)
+        ADC #$66
+        STA HMACC
+        LDA HMK
+        ADC #$08
+        CMP #16
+        BCC mt_mf0
+        LDA #16
+mt_mf0:  STA HMK
+        LDA $D012
+        CMP #156
+        BCS mt_mf0a
+        JSR HMALL
+        LDA #$00
+        STA HMK
+mt_mf0a:
+        LDA JOY         ; dodging: the directions of 6 frames
+        AND HDJ
+        STA HDJ
+        DEC HDJC
+        BNE mt_mf2
+        LDA $D012       ; (no time: the next frame)
+        CMP #160
+        BCC mt_mf1b
+        INC HDJC
+        BNE mt_mf2
+mt_mf1b: LDA #$06
+        STA HDJC
+        JSR HDODGE
+        LDA #$FF
+        STA HDJ
+mt_mf2:  LDA HYPON       ; the deflector: in the jump only
+        CMP #$02
+        BNE mt_mf9
+        JMP HDEFL
+mt_mf9:  RTS
+
+; HMK calls of $288F for every meteor: a waiting one counts its delay down by HMK,
+; a flying one takes a step each time its pace counter would reach 0.
+HMALL:  LDX #HMN-1
+mt_mc1:  LDA HMK
+        STA HMR
+        LDA HMACT,X
+        BNE mt_mc5
+        LDA HMDLY,X     ; waiting
+        CMP HMR
+        BEQ mt_mc0
+        BCC mt_mc0
+        SEC
+        SBC HMR
+        STA HMDLY,X
+        JMP mt_mc9
+mt_mc0:  LDA #$01        ; it appears
+        STA HMDLY,X
+        STA HMACT,X
+        STA HMALT,X
+        JSR RANDOM
+        AND #$3F
+        ADC #$7B
+        STA HMX,X
+        JSR RANDOM
+        AND #$3F
+        ADC #$61
+        STA HMY,X
+        LDA #$00
+        STA HMXH,X
+        LDA #$66
+        STA HMSHP,X
+        LDA #$0B
+        STA HMGC,X
+        STA HMGR,X
+        LDY DIFF
+        LDA HMSPD,Y
+        STA HMSD,X
+        STA HMSR,X
+        JMP mt_mc9
+mt_mc5:  LDA HMSD,X      ; its pace: a step when the count reaches 0
+        CMP HMR
+        BEQ mt_mc6
+        BCC mt_mc6
+        SEC
+        SBC HMR
+        STA HMSD,X
+        LDA HC26        ; (the multicolour shimmers: $290B DEC $D026)
+        SEC
+        SBC HMR
+        STA HC26
+        JMP mt_mc9
+mt_mc6:  LDA HMR
+        SEC
+        SBC HMSD,X
+        STA HMR
+        DEC HMALT,X     ; (the original speeds up once: its $2844 never reaches 0
+        BEQ mt_mc7       ; again)
+        LDA #$02
+        STA HMALT,X
+        LDA HMSR,X
+        JMP mt_mc8
+mt_mc7:  LDA HMSR,X
+        SEC
+        SBC #$01
+        CMP #$04
+        BCS mt_mc8
+        LDA #$04
+mt_mc8:  STA HMSR,X
+        STA HMSD,X
+        DEC HMGC,X      ; it grows
+        BNE mt_mc3
+        LDA HMGR,X
+        STA HMGC,X
+        INC HMSHP,X
+        DEC HMGR,X
+        BNE mt_mc3
+        JSR HMHIT       ; full size: it hits the ship
+        JMP mt_mcx
+mt_mc3:  JSR HMMOVE
+        JMP mt_mc5      ; (more calls left this frame?)
+mt_mc9:  DEX
+        BMI mt_mcr
+        JMP mt_mc1
+mt_mcr: RTS
+mt_mcx:  LDA #$FE        ; ($2A54) gone, a long wait
+        STA HMDLY,X
+        LDA #$00
+        STA HMACT,X
+        JMP mt_mc9
+
+; A step outward ($29B6-$2A52): x by its place (the table at $2A79, while x < 256),
+; y by its place ($2AB8); out of the view: gone.
+HMMOVE: LDA HMXH,X
+        BNE mt_mm2
+        LDA HMX,X
+        LDY #$00
+mt_mm1:  CMP HMXL,Y
+        BCC mt_mm1a
+        INY
+        CPY #$06
+        BNE mt_mm1
+mt_mm1a: LDA HMXV,Y
+        STA HMVX,X
+mt_mm2:  LDA HMVX,X
+        BMI mt_mm4
+        CLC
+        ADC HMX,X
+        STA HMX,X
+        BCS mt_mm3
+        LDA HMXH,X
+        BEQ mt_mm5
+        LDA HMX,X
+        CMP #$30
+        BCC mt_mm5
+        JMP mt_mmx
+mt_mm3:  LDA #$01
+        STA HMXH,X
+        JMP mt_mm5
+mt_mm4:  AND #$7F
+        STA HT
+        SEC
+        LDA HMX,X
+        SBC HT
+        STA HMX,X
+        BCC mt_mm4a
+        CMP #$23
+        BCS mt_mm5
+        JMP mt_mmx
+mt_mm4a: LDA HMXH,X
+        BNE mt_mm4b
+        JMP mt_mmx
+mt_mm4b: LDA #$00
+        STA HMXH,X
+mt_mm5:  LDA HMY,X       ; y
+        LDY #$00
+mt_mm6:  CMP HMYL,Y
+        BCC mt_mm7
+        INY
+        CPY #$06
+        BNE mt_mm6
+mt_mm7:  LDA HMYV,Y
+        STA HMVY,X
+        BMI mt_mm8
+        CLC
+        ADC HMY,X
+        STA HMY,X
+        CMP #$DF
+        BCS mt_mmx
+        RTS
+mt_mm8:  AND #$7F
+        STA HT
+        SEC
+        LDA HMY,X
+        SBC HT
+        STA HMY,X
+        CMP #$24
+        BCC mt_mmx
+        RTS
+mt_mmx:  PLA             ; out of the view: gone (from HMCALL's slot)
+        PLA
+        JMP mt_mcx
+
+; Full size ($2947): the ship is hit unless the deflector is on; the rattle, the
+; burst, the second explosion where the meteor was.
+HMHIT:  STX HMXS
+        LDA HDEF        ; deflected: no flash, no sound, no damage, only the burst
+        BNE mt_mh2a     ; of points (the deflector's tone stays on voice 1)
+        LDA HMBIT,X
+        STA HITFL       ; ($DD) the flash
+        INC HSHIPP      ; ($84D7, in the vertical blank)
+        LDA #$01        ; ($0912) the rattle: 3 sweeps up from $0Bxx
+        STA SNDDIR
+        LDA #$0B
+        STA SNDHI0
+        LDA #$40
+        LDX #$03
+        LDY #$1E
+        JSR SNDGO
+        LDA #$0F        ; ($C3F3) the burst, voice 2
+        STA $D418
+        LDA #$00
+        STA $D407
+        STA $D40B
+        STA $D40D
+        LDA #$12
+        STA $D408
+        LDA #$1A
+        STA $D40C
+        LDA #$81
+        STA $D40B
+mt_mh2a: LDX HMXS
+        LDA EXPL2       ; the second explosion, unless one runs ($2960)
+        BNE mt_mh9
+        STA EXPB2
+        LDA HMVX,X
+        ASL A
+        STA EVX02
+        LDA HMVY,X
+        ASL A
+        STA EVY02
+        LDA #$01
+        STA EXPL2
+        LDA HMXH,X      ; x / 2 - 6, y - $1E, inside the view
+        LSR A
+        LDA HMX,X
+        ROR A
+        SEC
+        SBC #$06
+        STA EXPX2
+        CMP #$05
+        BCC mt_mh8
+        CMP #$91
+        BCS mt_mh8
+        LDA HMY,X
+        SEC
+        SBC #$1E
+        STA EXPY2
+        CMP #$05
+        BCC mt_mh8
+        CMP #$C3
+        BCC mt_mh9
+mt_mh8:  LDA #$00
+        STA EXPL2
+mt_mh9:  RTS
+
+; The deflector ($270D): fire switches it on (the view green: the shield's lines show,
+; a tone on voice 1); held, it costs 10 energy a frame and the tone wavers; released,
+; it goes.
+HDEFL:  LDA JOY
+        AND #$10
+        ORA HSHL        ; (only with the shield's lines complete: a short jump
+        BNE HDEFOFF     ; finishes them in its first frames)
+        LDA HDEF
+        BNE mt_df1
+        LDA #$01        ; on
+        STA HDEF
+        LDA #$0D
+        STA HCOLV
+        LDA #$01
+        STA HCOLJ
+        LDA #$00
+        STA HDPW
+        STA SNDON       ; (a rattle still sweeping voice 1 stops)
+        LDA #$08
+        STA HDPWH
+mt_df1:  JSR HDTONE      ; ($2722 JSR $274C: every call, so no other sound keeps voice 1)
+mt_df2:  LDX #10         ; held: the energy
+mt_df3:  TXA
+        PHA
+        LDA #$01
+        JSR HENERGY
+        PLA
+        TAX
+        DEX
+        BNE mt_df3
+        INC HDPW        ; ($2770) the pulse width moves, the pitch wavers
+        LDA HDPW
+        STA $D402
+        AND #$0F
+        BNE mt_df4
+        INC HDPWH
+        LDA HDPWH
+        STA $D403
+mt_df4:  JSR RANDOM
+        AND #$03
+        CLC
+        ADC #$04
+        STA $D401
+        RTS
+HDTONE: LDA #$00        ; ($274C) the tone: pulse, $08xx (pulse width and pitch moved
+        STA $D405       ; by HDEFL)
+        LDA HDPW
+        STA $D402
+        LDA HDPWH
+        STA $D403
+        LDA #$F0
+        STA $D406
+        LDA #$41
+        STA $D404
+        LDA #$0F
+        STA $D418
+        RTS
+HDEFOFF:LDA HDEF
+        BEQ mt_do9
+        LDA #$00        ; off: the tone stops, the view black again
+        STA HDEF
+        STA $D404
+        STA HCOLV
+        LDA #$01
+        STA HCOLJ
+mt_do9:  RTS
 
 ; The radar's marks go: in hyperspace it shows no ships (the radar's pass is left
 ; out there, its last marks stood still).
@@ -1596,6 +2085,8 @@ g_ms32: STA POSY
         STA HMAP
         LDA #15
         STA WIPE
+        LDA #$01        ; then the deflector's lines (HSHIELD)
+        STA HSHPEND
         RTS
 HME:    JSR PIXADDR
         LDA (PTR),Y
@@ -1724,7 +2215,8 @@ HYPVB:  LDA HYPON
         BNE g_hv01
         JMP HACCEL
 g_hv01: RTS
-g_hv0:  JSR HENGINE
+g_hv0:  JSR HDGSTEP     ; (a digit of the countdown)
+        JSR HENGINE
         JSR HBORD
         LDA HYPON
         CMP #$02
@@ -1753,6 +2245,7 @@ g_hv11: LDA #10         ; energy: a unit every 10 frames
         JSR SNDRUSH
         JMP HSCANGO
 g_hv20: JSR HSCANF      ; 2: the jump: the scanner, positioning
+        JSR HMFRAME     ; the meteors, dodging, the deflector
         LDA #$01        ; a unit a frame
         JSR HENERGY
         CLC             ; a step every 13.5 frames
@@ -1769,12 +2262,14 @@ g_hv21: JSR HCLRDIG     ; over: decelerating, 120 frames
         STA HYPON
         LDA #120
         STA HTIME
+        JSR HDEFOFF     ; (the deflector only in the jump)
+        JSR HPL5BACK    ; the meteors gone ($B6D6: sprites 0, 3, 7 only)
         LDA #$04        ; the engine falls ($B6CF)
         STA HESTP
         LDA #$00
         STA HEDIR
         JMP g_hvst
-g_hv30: LDA HTIME       ; 3: decelerating
+g_hv30: LDA HTIME       ; 3: decelerating (no meteors: $B6CF does not call $288F)
         AND #$07
         BNE g_hv31
         LDA HSPD
@@ -1786,6 +2281,7 @@ g_hv31: LDA #10
         DEC HTIME
         BNE g_hvst
         JSR HZERO       ; (the cursor's digits 000)
+        JSR HPL5BACK
         LDA #$00        ; arrived: the view wiped clean (its colours back), the sector
         STA HYPON
         STA $D412       ; the hyperspace engine off, the flight's back
@@ -1836,7 +2332,11 @@ g_hv9:  RTS
 ; Hyperspace's stars, in the vertical blank (MAPVB, 2 MHz: at 1 MHz in the view they
 ; ran into the gun split): HSPD quarter pixels a frame. A dot is erased and plotted
 ; once a frame, only a line needs every pixel.
-HYPMVB: LDA HMAP        ; the planet turns while the map is there
+HYPMVB: LDA HSHIPP      ; a meteor's hit on the ship (too long for the view's time)
+        BEQ g_hmh
+        DEC HSHIPP
+        JMP SHIPHIT
+g_hmh:  LDA HMAP        ; the planet turns while the map is there
         BEQ g_hm9
         JSR M_PLANET
 g_hm9:  LDA HVBJ        ; a job of the scanner's: the radar's mode, the blip
@@ -1848,7 +2348,20 @@ g_hm9:  LDA HVBJ        ; a job of the scanner's: the radar's mode, the blip
         JSR HRADCLR     ; (the marks go with the long range)
         JMP HRMODE
 g_hm7:  RTS
-g_hm8:  LDA CRUN        ; the radar's circle being drawn (about 100 lines): no
+g_hm8:  LDA HSHPEND     ; the wipe done: the view's colour RAM 0, the shield's lines
+        BEQ g_hm5
+        LDA #$00
+        STA HSHPEND
+        STA HCOLV
+        LDA #$01
+        STA HCOLJ
+        STA HSHL
+g_hm5:  LDA HCOLJ       ; the view's colour RAM (the deflector's green, or 0)
+        BEQ g_hm4
+        LDA #$00
+        STA HCOLJ
+        JMP HCOLFILL
+g_hm4:  LDA CRUN        ; the radar's circle being drawn (about 100 lines): no
         ORA CPEND       ; time for the stars
         BEQ g_hm6
         RTS
@@ -1868,8 +2381,16 @@ g_hm2:  LDA LYACT       ; the destination's groups laid out: a group a frame,
         JMP LYSTEP
 g_hm3:  LDA HYPON
         CMP #$04
-        BNE HSTARS
+        BNE g_hm3b
         RTS
+g_hm3b: LDA HSHL        ; the shield's lines, a few pixels a frame in the acceleration;
+        BEQ g_hm3c      ; after it the rest instead of the stars
+        LDA HYPON
+        CMP #$01
+        BEQ g_hm3d
+        JMP HSHSTEP
+g_hm3d: JSR HSHSTEP
+g_hm3c: JMP HSTARS
 HSTARS: CLC
         LDA HSACC
         ADC HSPD
@@ -1881,7 +2402,9 @@ HSTARS: CLC
         AND #$03
         STA HSACC
         LDA HSN
-        BEQ g_hv9
+        BNE g_hsn1
+        RTS
+g_hsn1:
         LDA #HNS        ; (from where the last frame stopped)
         STA HSCNT
         LDX HSROT
@@ -1895,19 +2418,17 @@ g_hss2: DEC HSCNT
         BNE g_hss1
 g_hssx: STX HSROT
         RTS
-; C set: no more time for the stars. When the radar runs in this vertical blank
-; (the scanner's marks: about 50 lines from the wrap) they stop at line 296; the
-; rest go on in the next frame.
-HSTLATE:LDA HNORAD
-        BNE g_hl8
-        LDA EFRM
-        AND #$01
-        BEQ g_hl1
-        LDA RADPEND
-        BEQ g_hl8
-g_hl1:  BIT $D011
-        BPL g_hl8
+; C set: no more time for the stars: past line 296 (the radar and the rest of the
+; vertical blank need up to 50 lines from the wrap); the rest go on in the next
+; frame.
+HSTLATE:BIT $D011       ; (always: the radar and the rest of the vertical blank
+        BMI g_hl1       ; need up to 50 lines from the wrap)
         LDA $D012
+        CMP #243
+        BCS g_hl8
+        SEC             ; wrapped: no time
+        RTS
+g_hl1:  LDA $D012
         CMP #40
         RTS
 g_hl8:  CLC
@@ -2084,12 +2605,7 @@ HPLOT:  STX SAVEX
         LDA HSY,X
         STA POSY
         JSR PIXADDR
-        LDA HMAP
-        BNE g_hp1
-        LDA (PTR),Y
-        ORA MASK3,X
-        JMP g_hp2
-g_hp1:  LDA (PTR),Y     ; over the map: value 1, on an empty pixel only
+g_hp1:  LDA (PTR),Y     ; value 1, on an empty pixel only (the map, the shield)
         AND MASK3,X
         BNE g_hp3
         LDA (PTR),Y
@@ -2103,13 +2619,11 @@ HERASE: STX SAVEX
         LDA HSY,X
         STA POSY
         JSR PIXADDR
-        LDA HMAP
-        BEQ g_hq1
-        LDA (PTR),Y     ; over the map: only a star's own value 1
+        LDA (PTR),Y     ; only a star's own value 1
         AND MASK3,X
         CMP MASK1,X
         BNE g_hq2
-g_hq1:  LDA (PTR),Y
+        LDA (PTR),Y
         AND CLEARM,X
         STA (PTR),Y
 g_hq2:  LDX SAVEX
@@ -2135,30 +2649,51 @@ g_hd2:  INX
         ADC #10
         STA HD1
         STX HD10
+        LDA #$00
+        STA HDCLR
+        LDA #$03        ; drawn a digit a frame (HDGSTEP: with the meteors' sprites
+        STA HDGP        ; all three at once ran past line 194)
+        RTS
+HCLRDIG:LDA #$01
+        STA HDCLR
+        LDA #$03
+        STA HDGP
+        RTS
+HDGSTEP:LDA HDGP
+        BEQ g_dg9
+        LDA $D012
+        CMP #170
+        BCS g_dg9
+        DEC HDGP
+        LDX HDGP
+        LDA #$20
+        LDY HDCLR
+        BNE g_dg3
+        CPX #$02
+        BNE g_dg1
         LDA HD100       ; 0 or 1: '1' or a blank
-        BEQ g_hd3
+        BEQ g_dg0
         LDA #$71
-        BNE g_hd4
-g_hd3:  LDA #$20
-g_hd4:  LDX #16
-        JSR HBIG
+        BNE g_dg3
+g_dg0:  LDA #$20
+        BNE g_dg3
+g_dg1:  CPX #$01
+        BNE g_dg2
         LDA HD10
         ORA #$70
-        LDX #18
-        JSR HBIG
-        LDA HD1
+        BNE g_dg3
+g_dg2:  LDA HD1
         ORA #$70
-        LDX #20
+g_dg3:  STA HDGCH
+        LDA HDGCOL,X
+        TAX
+        LDA HDGCH
         JMP HBIG
-HCLRDIG:LDA #$20
-        LDX #16
-        JSR HBIG
-        LDA #$20
-        LDX #18
-        JSR HBIG
-        LDA #$20
-        LDX #20
-        JMP HBIG
+g_dg9:  RTS
+HDGCOL: .BYTE 20,18,16
+HDGP:   .BYTE 0
+HDCLR:  .BYTE 0
+HDGCH:  .BYTE 0
 ; Character A of the font ($4000) into text row 17, columns X and X+1, each bit two
 ; pixels wide (value 3, light blue in colour RAM).
 HBIG:   STX HBX
@@ -2220,23 +2755,6 @@ HCRY:   LDX HCHIDE      ; the crosshair hidden in hyperspace, as in the original
         BEQ g_cr1       ; with a mouse it is the hyperspace cursor there (HYPVIEW)
         LDA #$00
 g_cr1:  STA $D001
-        RTS
-; A <> 0: the hyperspace cursor is on: a mouse, and the jump under way once the
-; map has gone (the acceleration, the jump, the deceleration) or the H test.
-HCURON: LDA HYPON
-        BEQ g_cu1
-        CMP #$04        ; (the path on the map: not yet)
-        BEQ g_cu1
-        LDA HMAP        ; (nor while the map, the planet or the wipe are still there)
-        ORA WIPE
-        BNE g_cu2
-        LDA #$01
-        AND MPRES
-        RTS
-g_cu2:  LDA #$00
-        RTS
-g_cu1:  LDA HTEST
-        AND MPRES
         RTS
 
 HNS     = 10            ; stars ($F0B4: 10)
@@ -2506,3 +3024,360 @@ HCOLOR: .BYTE 1
 HCHIDE: .BYTE 0
 HDL:    .BYTE 0
 HDH:    .BYTE 0
+
+; ---------------- more code: the RAM under the KERNAL at $E000 ----------------
+; Loaded with the program at $6400 (the 3D view's bitmap, wiped before it shows)
+; and moved here by GAMEINIT: a program cannot load across $D000-$DFFF (I/O).
+        * = $E000
+; (meteors, continued)
+; Dodging ($B8D9): each meteor pushed away from the stick's directions by twice
+; its growth; out of the view: gone.
+HDODGE: LDA HDJ
+        AND #$0F
+        CMP #$0F
+        BNE mt_dd0
+        RTS
+mt_dd0:  LDX #HMN-1
+mt_dd1:  LDA HMACT,X
+        BEQ mt_dd9
+        LDA HMSHP,X
+        SEC
+        SBC #$66
+        ASL A
+        STA HT
+        LDA HDJ
+        STA HJT
+        LSR HJT         ; up: the meteors up
+        BCS mt_dd2
+        SEC
+        LDA HMY,X
+        SBC HT
+        STA HMY,X
+        CMP #$4A
+        BCC mt_ddx
+mt_dd2:  LSR HJT         ; down
+        BCS mt_dd3
+        CLC
+        LDA HMY,X
+        ADC HT
+        STA HMY,X
+        CMP #$BE
+        BCS mt_ddx
+mt_dd3:  LSR HJT         ; left: the meteors right
+        BCS mt_dd4
+        CLC
+        LDA HMX,X
+        ADC HT
+        STA HMX,X
+        BCC mt_dd4
+        LDA HMXH,X
+        BNE mt_ddx
+        LDA #$01
+        STA HMXH,X
+mt_dd4:  LSR HJT         ; right: the meteors left
+        BCS mt_dd9
+        SEC
+        LDA HMX,X
+        SBC HT
+        STA HMX,X
+        BCS mt_dd9
+        LDA HMXH,X
+        BEQ mt_ddx
+        LDA #$00
+        STA HMXH,X
+        JMP mt_dd9
+mt_ddx:  LDA #$FE
+        STA HMDLY,X
+        LDA #$00
+        STA HMACT,X
+mt_dd9:  DEX
+        BMI mt_ddr
+        JMP mt_dd1
+mt_ddr: RTS
+
+; The view's colour RAM, rows 4-16 ($2794): HCOLV (0, or the deflector's $0D).
+HCOLFILL:
+        LDA HCOLV
+        LDY #39
+mt_cf1a: STA $D8A0,Y
+        STA $D8C8,Y
+        STA $D8F0,Y
+        STA $D918,Y
+        STA $D940,Y
+        STA $D968,Y
+        STA $D990,Y
+        STA $D9B8,Y
+        STA $D9E0,Y
+        STA $DA08,Y
+        STA $DA30,Y
+        STA $DA58,Y
+        STA $DA80,Y
+        DEY
+        BPL mt_cf1a
+        RTS
+
+; The shield's seven lines ($26D0, $3580): colour 3, brown kept ($EF6B), drawn a few
+; pixels a frame: HSHL = the line (1-7), then 0.
+HSHSTEP:LDA HSHLEFT     ; a line under way?
+        BNE mt_sh2
+        LDX HSHL        ; the next line's ends
+        DEX
+        CPX #$07
+        BCC mt_sh0
+        LDA #$00
+        STA HSHL
+        RTS
+mt_sh0:  LDA HSHX0,X
+        STA HSX0P
+        LDA HSHY0,X
+        STA HSY0P
+        LDA HSHX1,X
+        SEC
+        SBC HSX0P
+        STA HSDXP       ; (x always rises)
+        LDY #$01
+        LDA HSHY1,X
+        SEC
+        SBC HSY0P
+        BCS mt_sh1
+        EOR #$FF
+        ADC #$01
+        LDY #$FF
+mt_sh1:  STA HSDYP
+        STY HSSYP
+        CMP HSDXP       ; pixels: the longer side + 1
+        BCS mt_sh1a
+        LDA HSDXP
+mt_sh1a: STA HSHLEFT
+        INC HSHLEFT
+        LSR A
+        STA HSERRP
+mt_sh2:  LDA #32         ; up to 32 pixels a frame while accelerating (the stars are
+        LDX HYPON       ; dots), else 64 instead of the stars: complete when the jump
+        CPX #$01        ; begins, as the original's at $B5C6 (while there is time)
+        BEQ mt_sh2a
+        LDA #64
+mt_sh2a: STA HSK2
+mt_sh3:  BIT $D011       ; (lines 243-285 only: past the wrap, no time)
+        BMI mt_sh3b
+        LDA $D012
+        CMP #243
+        BCS mt_sh3a
+        RTS
+mt_sh3b: LDA $D012
+        CMP #30
+        BCC mt_sh3a
+        RTS
+mt_sh3a: LDA HSX0P
+        STA POSX
+        LDA HSY0P
+        STA POSY
+        JSR PIXADDR
+        LDA (PTR),Y
+        AND MASK3,X
+        CMP M_MASK2,X
+        BEQ mt_sh4
+        LDA (PTR),Y
+        ORA MASK3,X
+        STA (PTR),Y
+mt_sh4:  DEC HSHLEFT
+        BEQ mt_sh8
+        LDA HSDXP       ; a step
+        CMP HSDYP
+        BCC mt_sh6
+        INC HSX0P       ; x the longer side
+        CLC
+        LDA HSERRP
+        ADC HSDYP
+        BCS mt_sh5
+        CMP HSDXP
+        BCC mt_sh5a
+mt_sh5:  SBC HSDXP
+        STA HSERRP
+        CLC
+        LDA HSY0P
+        ADC HSSYP
+        STA HSY0P
+        JMP mt_sh7
+mt_sh5a: STA HSERRP
+        JMP mt_sh7
+mt_sh6:  CLC             ; y the longer side
+        LDA HSY0P
+        ADC HSSYP
+        STA HSY0P
+        CLC
+        LDA HSERRP
+        ADC HSDXP
+        BCS mt_sh6a
+        CMP HSDYP
+        BCC mt_sh6b
+mt_sh6a: SBC HSDYP
+        STA HSERRP
+        INC HSX0P
+        JMP mt_sh7
+mt_sh6b: STA HSERRP
+mt_sh7:  DEC HSK2
+        BEQ mt_shr
+        JMP mt_sh3
+mt_shr: RTS
+mt_sh8:  INC HSHL        ; the line done: the next one next frame
+        RTS
+HSHX0:  .BYTE $00,$4F,$00,$4F,$00,$00,$00
+HSHY0:  .BYTE $28,$87,$87,$28,$28,$57,$87
+HSHX1:  .BYTE $4F,$9F,$4F,$9F,$9F,$9F,$9F
+HSHY1:  .BYTE $87,$28,$28,$87,$28,$57,$87
+
+; The meteors on their sprites (after SPRCROSS, line 78): positions, shapes ($66 at
+; pointer $FF, $67-$70 at $F3-$FC), red, multicolour ($0B / shimmering), twice the
+; size; behind the bitmap when low ($2B02) or while the deflector is on ($2AB8).
+HSPRC:  JSR SPRCROSS    ; (called instead of it in the jump and the deceleration:
+                        ; HMINIT / HPL5BACK set the JSR at sprcj)
+        LDA #$00
+        STA HSEN
+        STA HSMSB
+        STA HSPRI
+        LDX #HMN-1
+mt_sp1:  LDA HMACT,X
+        BEQ mt_sp5
+        LDY HMREG,X     ; position
+        LDA HMX,X
+        STA $D000,Y
+        LDA HMY,X
+        STA $D001,Y
+        LDA HSEN
+        ORA HMBIT,X
+        STA HSEN
+        LDA HMXH,X
+        BEQ mt_sp2
+        LDA HSMSB
+        ORA HMBIT,X
+        STA HSMSB
+mt_sp2:  LDA HDEF        ; behind: the deflector, or low on the screen
+        BNE mt_sp3
+        LDA HMY,X
+        CMP #$A8
+        BCC mt_sp4
+mt_sp3:  LDA HSPRI
+        ORA HMBIT,X
+        STA HSPRI
+mt_sp4:  LDA HMSHP,X     ; the shape
+        LDY #$FF
+        CMP #$67
+        BCC mt_sp4a
+        CMP #$71
+        BCC mt_sp4b
+        LDA #$70
+mt_sp4b: CLC
+        ADC #$8C        ; (SHOTPTR - $67)
+        TAY
+mt_sp4a: TYA
+        LDY HMSPN,X
+        STA SPRPTR,Y
+mt_sp5:  DEX
+        BMI mt_sp6
+        JMP mt_sp1
+mt_sp6:
+        LDA VICENA
+        AND #$89
+        ORA HSEN
+        STA VICENA
+        LDA $D010
+        AND #$89
+        ORA HSMSB
+        STA $D010
+        LDA $D01B
+        AND #$89
+        ORA HSPRI
+        STA $D01B
+        LDA $D01C
+        ORA #$76
+        STA $D01C
+        LDA $D017
+        ORA #$76
+        STA $D017
+        LDA $D01D
+        ORA #$76
+        STA $D01D
+        LDA #$02
+        STA $D028
+        STA $D029
+        STA $D02B
+        STA $D02C
+        STA $D02D
+        LDA #$0B
+        STA $D025
+        LDA HC26
+        STA $D026
+mt_sp9:  RTS
+
+HMN     = 5
+HMREG:  .BYTE $02,$04,$08,$0A,$0C   ; sprites 1, 2, 4, 5, 6: register offsets
+HMSPN:  .BYTE 1,2,4,5,6
+HMBIT:  .BYTE $02,$04,$10,$20,$40
+HMSPD:  .BYTE $0A,$08,$07,$07,$06   ; ($284B) the pace by difficulty
+HMXL:   .BYTE $60,$7C,$98,$B8,$D0,$E8
+HMXV:   .BYTE $82,$81,$81,$00,$01,$01,$02
+HMYL:   .BYTE $58,$61,$71,$91,$A1,$A8
+HMYV:   .BYTE $83,$82,$81,$00,$01,$02,$03
+HMACT:  .BYTE 0,0,0,0,0
+HMDLY:  .BYTE 0,0,0,0,0
+HMX:    .BYTE 0,0,0,0,0
+HMXH:   .BYTE 0,0,0,0,0
+HMY:    .BYTE 0,0,0,0,0
+HMSHP:  .BYTE 0,0,0,0,0
+HMGC:   .BYTE 0,0,0,0,0
+HMGR:   .BYTE 0,0,0,0,0
+HMSD:   .BYTE 0,0,0,0,0
+HMSR:   .BYTE 0,0,0,0,0
+HMALT:  .BYTE 0,0,0,0,0
+HMVX:   .BYTE 0,0,0,0,0
+HMVY:   .BYTE 0,0,0,0,0
+HMACC:  .BYTE 0
+HMK:    .BYTE 0
+HSHIPP: .BYTE 0
+HMR:    .BYTE 0
+HMXS:   .BYTE 0
+HC26:   .BYTE 6
+HDEF:   .BYTE 0
+HDPW:   .BYTE 0
+HDPWH:  .BYTE 0
+HDJ:    .BYTE $FF
+HDJC:   .BYTE 6
+HCOLV:  .BYTE 0
+HCOLJ:  .BYTE 0
+HSHPEND:.BYTE 0
+HSHL:   .BYTE 0
+HSHLEFT:.BYTE 0
+HSX0P:  .BYTE 0
+HSY0P:  .BYTE 0
+HSDXP:  .BYTE 0
+HSDYP:  .BYTE 0
+HSSYP:  .BYTE 0
+HSERRP: .BYTE 0
+HSK2:   .BYTE 0
+HSEN:   .BYTE 0
+HSMSB:  .BYTE 0
+HSPRI:  .BYTE 0
+HSHPL5:
+        .BYTE $00,$00,$00,$00,$18,$00,$01,$FF,$80,$06,$7B,$60,$18,$D9,$98,$31,$8C,$CC,$7F,$8C,$FE
+        .BYTE $63,$FF,$C6,$C6,$0C,$63,$C6,$0C,$63,$FE,$0C,$7F,$C7,$FF,$E3,$C6,$0C,$63,$63,$0C,$66
+        .BYTE $7F,$0C,$FE,$31,$FF,$8C,$18,$D9,$98,$07,$FF,$60,$01,$FF,$80,$00,$18,$00,$00,$00,$00
+
+; A <> 0: the hyperspace cursor is on: a mouse, and the jump under way once the
+; map has gone (the acceleration, the jump, the deceleration) or the H test.
+HCURON: LDA HYPON
+        BEQ g_cu1
+        CMP #$04        ; (the path on the map: not yet)
+        BEQ g_cu1
+        LDA HMAP        ; (nor while the map, the planet or the wipe are still there)
+        ORA WIPE
+        BNE g_cu2
+        LDA #$01
+        AND MPRES
+        RTS
+g_cu2:  LDA #$00
+        RTS
+g_cu1:  LDA HTEST
+        AND MPRES
+        RTS
+H2END:

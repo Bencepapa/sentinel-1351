@@ -47,12 +47,22 @@ CODE2 = 0x8500
 MAPCODE = 0xA500         # provisional: assemble() puts the map right after the cockpit's code
 VDCDATA = 0x2900
 GLUE = 0x5300            # game.asm's code and data (after the master copy at $5000)
+HIGH2 = 0xE000           # more code, under the KERNAL too: loaded at HIGH2SRC (the view's bitmap)
+HIGH2SRC = 0x6400        # and moved by GAMEINIT (6 pages)
 HIGH = 0xC000            # game.asm's code in the RAM under the KERNAL (MMU $3E)
 OUT = os.path.join(HERE, 'sentinel-c128-game.prg')
 
 SHARED = {'SHLD', 'HITS', 'SHIPLOST', 'DIFF', 'SYSHP', 'PTSX', 'PTSXH', 'PTSY', 'PTON'}    # the cockpit's, used by the map
 
 PATCHES_MAP = [
+    # the map's beeps set voices 1 and 2 up whole (game.asm GSNDTOG, GBLIP): a fight's
+    # sounds change them while the map is open
+    ('SNDTOG: DEC SNDCNT\n        BNE sndret\n        LDA #2\n        STA SNDCNT\n        LDA SNDVAL\n'
+     '        EOR #$01\n        STA SNDVAL\n        STA $D404\nsndret: RTS\n',
+     'SNDTOG: JMP GSNDTOG     ; (game)\n'),
+    ('BLIP:   LDA #0\n        STA $D404\n        STA $D406\n        STA $D402\n        LDA #8\n        STA $D403\n'
+     '        LDA #1\n        STA $D405\n        LDA #$8F\n        STA $D401\n        LDA #$41\n        STA $D404\n        RTS\n',
+     'BLIP:   JMP GBLIP       ; (game)\n'),
     # the planet's frames step in game.asm (GPLANET): the map's code is full
     ("PLANET: INC PCNT\n        LDA PCNT\n        AND #$07\n        BNE plrt\n        LDX PFRM        ; $39-$3C, then the fifth frame, the original's unused $3D\n        CPX #PL5        ; (it fills the gap between $3C and $39)\n        BEQ plk0\n        INX\n        CPX #$3D\n        BCC plkok\n        LDX #PL5\n        BNE plkok\nplk0:   LDX #$39\nplkok:   STX PFRM\n        STX $47F9\n        JSR VDCPLDEF\nplrt:  RTS\n", 'PLANET: JMP GPLANET     ; (game)\n'),
     # the planet's fifth frame: pointer $3D is the cockpit's barrels here, $FF is free
@@ -140,6 +150,18 @@ PATCHES_COCKPIT = [
     ('        LDA MAPSHOWN\n        BNE scm\n', '        LDA MAPSPR      ; (game)\n        BNE scm\n'),
     ('        LDA MAPSHOWN    ; the map open: the pointer (if a mouse), the planet\n        BEQ scv\n',
      '        LDA MAPSPR      ; (game) the map open: the pointer (if a mouse), the planet\n        BEQ scv\n'),
+    # in hyperspace the meteors' sprites after the crosshair's (HSPRC)
+    ('        JSR SPRCROSS    ; the crosshair\n', 'sprcj:  JSR SPRCROSS    ; (game) the crosshair (HSPRC, the meteors, in hyperspace)\n'),
+    # no burst over the open map (MAPOPEN stops them; a shot reaching the ship started one)
+    ('        LDA EXPL2       ; ($CA80) 12 points burst where it was\n        BNE efm9\n',
+     '        LDA EXPL2       ; ($CA80) 12 points burst where it was\n        ORA MAPSHOWN    ; (game) not over the map\n        BNE efm9\n'),
+    # voice 2 is the map's while it is open: the fight's sounds there wait (GV2CHK)
+    ('EFSND:  LDA #$00        ; ($C413) voice 2: the enemy shot\n        STA $D40B\n',
+     'EFSND:  JSR GV2CHK      ; (game) not while the map is open\n        NOP\n        NOP\n'),
+    ('MSGBEEP:LDA #$00        ; ($9D4A) voice 2\n        STA $D40B\n',
+     'MSGBEEP:JSR GV2CHK      ; (game) not while the map is open\n        NOP\n        NOP\n'),
+    ('HITSND2:LDA #$00        ; ($C3A8) the second noise of a hit\n        STA $D407\n',
+     'HITSND2:JSR GV2CHK7     ; (game) not while the map is open\n        NOP\n        NOP\n'),
     # in hyperspace no steering, enemy fire or approach in the vertical blank (HVBR)
     ('vbr:    LDA APPR\n        BEQ vbdog\n', 'vbr:    JSR HVBR        ; (game)\n        BEQ vbdog\n'),
     # in hyperspace the border pulses (HBORD), the sweeps leave it alone
@@ -228,9 +250,9 @@ def assemble():
 
 def main():
     chunks, symbols = assemble()
-    if set(chunks) != {ENTRY, CODE2, MAPCODE, GLUE, HIGH}:
+    if set(chunks) != {ENTRY, CODE2, MAPCODE, GLUE, HIGH, HIGH2}:
         raise SystemExit(f'unexpected assembly chunks: {[hex(c) for c in chunks]}')
-    for start, limit in ((ENTRY, VDCDATA), (CODE2, MAPCODE), (MAPCODE, 0xC000), (GLUE, 0x6000), (HIGH, 0xD000)):
+    for start, limit in ((ENTRY, VDCDATA), (CODE2, MAPCODE), (MAPCODE, 0xC000), (GLUE, 0x6000), (HIGH, 0xD000), (HIGH2, HIGH2 + 0x600)):
         if start + len(chunks[start]) > limit:
             raise SystemExit(f'code from ${start:04X} ends at ${start + len(chunks[start]):04X}, past ${limit:04X}')
 
@@ -240,7 +262,7 @@ def main():
     map_build.place_assets(p, VDC=VDCDATA, PL5=0x7FC0)   # (the planet's fifth frame: pointer $FF, behind the bottom strip)
     cockpit_build.place_assets(p)                   # the cockpit's picture wins where they meet
     for address, data in chunks.items():
-        p(address, data)
+        p(HIGH2SRC if address == HIGH2 else address, data)
     # master copy of the colour matrix's view rows for MAPCLOSE (game.asm)
     p(symbols['MMAT'], bytes(body[0x4478 - LOAD:0x4478 - LOAD + 600]))
 
