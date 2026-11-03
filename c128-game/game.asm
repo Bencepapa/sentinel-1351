@@ -1324,7 +1324,16 @@ g_hz5:  LDA HSLOT+18,X
         BPL g_hz5
         LDA #$00
         STA RELAYOUT
-g_hz6:  LDA #$00
+        LDA #$01        ; the radar stays long range with its marks (ARRIVE sets 0;
+        STA LRMODE      ; the approach's scanner switches to it again, APFRAME)
+        BNE g_hz7
+g_hz6:  LDA HSCAN       ; no approach: the radar back to close range, its marks gone
+        BEQ g_hz7
+        LDA #$00
+        STA LRMODE
+        JSR HRADCLR
+        JSR HRMODE
+g_hz7:  LDA #$00
         STA HSCAN
         RTS
 
@@ -1743,12 +1752,7 @@ g_hv21: JSR HCLRDIG     ; over: decelerating, 120 frames
         STA HESTP
         LDA #$00
         STA HEDIR
-        LDX HSCAN       ; the radar back to close range (vertical blank)
-        BEQ g_hv22
-        STA LRMODE
-        LDA #$01
-        STA HVBJ
-g_hv22: JMP g_hvst
+        JMP g_hvst
 g_hv30: LDA HTIME       ; 3: decelerating
         AND #$07
         BNE g_hv31
@@ -1760,6 +1764,7 @@ g_hv31: LDA #10
         JSR HENERGY
         DEC HTIME
         BNE g_hvst
+        JSR HZERO       ; (the cursor's digits 000)
         LDA #$00        ; arrived: the view wiped clean (its colours back), the sector
         STA HYPON
         STA $D412       ; the hyperspace engine off, the flight's back
@@ -1779,19 +1784,23 @@ g_hvst: RTS
 
 ; Hyperspace's phase, in the 3D view's free time (VIEWWORK, every frame): the start,
 ; the speed, the energy, the countdown, the arrival.
-HYPVIEW:LDA MAPSHOWN    ; sprite 1 the map's planet (the cockpit's SPRCROSS)
+HYPVIEW:LDX #$00        ; the crosshair hidden (HCRY: decided here, its slot is timed)
+        LDA HYPON
+        BEQ g_hc1
+        JSR HCURON
+        BNE g_hc1
+        INX
+g_hc1:  STX HCHIDE
+        LDA MAPSHOWN    ; sprite 1 the map's planet (the cockpit's SPRCROSS)
         ORA HMAP
         STA MAPSPR
         LDA #$00        ; the radar's pass: not in hyperspace until the scanner
         LDX HYPON       ; runs (VBWORK)
         BEQ g_hw1
-        LDX HSCAN       ; (in the jump only: decelerating, its marks are gone)
+        LDX HSCAN
         CPX #$03
-        BNE g_hw2
-        LDX HYPON
-        CPX #$02
         BEQ g_hw1
-g_hw2:  LDA #$01
+        LDA #$01
 g_hw1:  STA HNORAD
         LDA HPEND
         BEQ g_hvp
@@ -2186,10 +2195,27 @@ g_hb1:  LDA (CSRC),Y
         RTS
 HEXP:   .BYTE $00,$03,$0C,$0F,$30,$33,$3C,$3F,$C0,$C3,$CC,$CF,$F0,$F3,$FC,$FF
 
-HCRY:   LDX HYPON       ; the crosshair hidden in hyperspace, as in the original
-        BEQ g_cr1
+HCRY:   LDX HCHIDE      ; the crosshair hidden in hyperspace, as in the original;
+        BEQ g_cr1       ; with a mouse it is the hyperspace cursor there (HYPVIEW)
         LDA #$00
 g_cr1:  STA $D001
+        RTS
+; A <> 0: the hyperspace cursor is on: a mouse, and the jump under way once the
+; map has gone (the acceleration, the jump, the deceleration) or the H test.
+HCURON: LDA HYPON
+        BEQ g_cu1
+        CMP #$04        ; (the path on the map: not yet)
+        BEQ g_cu1
+        LDA HMAP        ; (nor while the map, the planet or the wipe are still there)
+        ORA WIPE
+        BNE g_cu2
+        LDA #$01
+        AND MPRES
+        RTS
+g_cu2:  LDA #$00
+        RTS
+g_cu1:  LDA HTEST
+        AND MPRES
         RTS
 
 HNS     = 10            ; stars ($F0B4: 10)
@@ -2287,8 +2313,7 @@ g_hk2:  LDA #$BF        ; port 2 again: its pots are read next
         LDA #$00
         STA FIREFLAG
 g_hk3:
-        LDA HTEST
-        AND MPRES
+        JSR HCURON
         BNE g_hi0a
         JMP g_hi9
 g_hi0a: LDA JRAW        ; the motion as directions, this frame only
@@ -2329,8 +2354,7 @@ g_hi6:  RTS
 
 ; The test cursor's looks, in the 3D view's free time (VIEWWORK): at 1 MHz in the
 ; input's slot they pushed the vertical blank past its end.
-HVIEW:  LDA HTEST
-        AND MPRES
+HVIEW:  JSR HCURON
         BNE g_hv1
         LDA NUMCOL
         STA HCOLOR
@@ -2343,7 +2367,11 @@ g_hv1:  INC HFRM        ; the colour, a step every 4th frame
         TAX
         LDA HCOLS,X
         STA HCOLOR
-        LDA #$02        ; the digits spin
+        LDA HYPON       ; decelerating: the digits count down 999 -> 000
+        CMP #$03
+        BNE g_hi6a
+        JMP HDOWN
+g_hi6a: LDA #$02        ; the digits spin
         STA HDIG
 g_hi7:  JSR RANDOM
         AND #$0F
@@ -2358,6 +2386,66 @@ g_hi8:  TAY
         RTS
 g_hi9:
         RTS
+; The cursor's digits while decelerating: HTIME (120 .. 1) x 8.33, so 999 at the
+; start, 000 at the arrival.
+HDOWN:  LDA HTIME
+        STA HDL
+        LDA #$00
+        STA HDH
+        ASL HDL         ; x 8
+        ROL HDH
+        ASL HDL
+        ROL HDH
+        ASL HDL
+        ROL HDH
+        LDA HTIME       ; + / 3
+        LDX #$FF
+        SEC
+g_dn1:  INX
+        SBC #$03
+        BCS g_dn1
+        TXA
+        CLC
+        ADC HDL
+        STA HDL
+        BCC g_dn2
+        INC HDH
+g_dn2:  LDX #$FF        ; hundreds
+g_dn3:  INX
+        SEC
+        LDA HDL
+        SBC #100
+        TAY
+        LDA HDH
+        SBC #$00
+        BCC g_dn4
+        STA HDH
+        STY HDL
+        BCS g_dn3
+g_dn4:  CPX #10         ; (at most 999)
+        BCC g_dn5
+        LDX #9
+        LDA #99
+        STA HDL
+g_dn5:  TXA
+        TAY
+        LDX #$00
+        JSR DIGIT
+        LDA HDL
+HZDIG:  JSR BCD         ; A (0-99): tens, ones
+        LDY BCDT
+        LDX #$01
+        JSR DIGIT
+        LDY BCDO
+        LDX #$02
+        JMP DIGIT
+; 000 under the cursor (the arrival)
+HZERO:  LDY #$00
+        LDX #$00
+        JSR DIGIT
+        LDA #$00
+        JMP HZDIG
+
 ; A = position, X = centre: A moved a quarter of the way (at least 1) to the centre.
 HSPRING:STA HPOS
         STX HCEN
@@ -2394,3 +2482,6 @@ HCEN:   .BYTE 0
 HPOS:   .BYTE 0
 HT:     .BYTE 0
 HCOLOR: .BYTE 1
+HCHIDE: .BYTE 0
+HDL:    .BYTE 0
+HDH:    .BYTE 0
