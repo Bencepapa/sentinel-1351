@@ -315,7 +315,7 @@ function report(hooks, label) {
     const nb = sel + (K[s.M_SELX] < 9 ? 1 : -1);
     K[s.M_STATE + nb] = 1; K[s.M_COUNT + nb] = 2;
     const o0 = K[s.OVRUN];
-    K[s.M_TICKC] = 1 + 0x10; K[s.M_TICKFR] = 255;             // the next tick is a move
+    K[s.M_TICKC] = 1 + 0x10; K[s.WTCNT] = 1;                  // the next tick is a move
     let pts = 0, moved = -1, fx = -1, on = -1;
     for (let f = 0; f < 200 && on < 0; f++) {
       m.runFrame();
@@ -966,7 +966,14 @@ for (const name of Object.keys(Profiles)) {
   run(m, hooks, 2);
   check(K[s.PTON] === 1 && K[s.M_CURX] === idx % 10 && K[s.M_CURY] === Math.floor(idx / 10) && (K[0xD015 - 0xD000 + 0] !== undefined),
     `game: the map's mouse pointer (a +) moves over the grid, the box follows it to sector ${idx % 10},${Math.floor(idx / 10)}`);
-  run(m, hooks, 4, i => { m.mouse.left = i < 2; }); run(m, hooks, 20);
+  // a jump goes through hyperspace: accelerating, a step per point of the path, decelerating
+  let hyperFight = 0;     // (no squadron comes in, no fight, during the jump; the world's clock
+                          // held, so the destination's squadron is still there on arrival)
+  const throughHyper = () => { const f0 = m.frame; for (let n = 0; n < 4000 && (K[s.HYPON] || K[s.WIPE]); n++) { K[s.WTCNT] = 100; run(m, hooks, 1); if (K[s.HYPON] && (K[s.ARRFX] || K[s.ALIVE] || K[s.ALIVE + 1] || K[s.ALIVE + 2] || K[s.RBON] || K[s.RBON + 1] || K[s.RBON + 2])) hyperFight++; } const n = m.frame - f0; run(m, hooks, 20); return n; };
+  run(m, hooks, 4, i => { m.mouse.left = i < 2; }); run(m, hooks, 2);
+  const hyp = K[s.HYPON], steps = K[s.HSTEPS], hypFrames = throughHyper();
+  check(hyp >= 1 && steps > 0 && hypFrames > 300 + steps * 12 && hypFrames < 400 + steps * 15 && hyperFight === 0 && K[s.QN] === 0,
+    `game: the jump goes through hyperspace: ${steps} steps, ${hypFrames} frames, ${hyperFight} frames with fighters or radar marks, ${K[s.QN]} boxes left queued for the map`);
   check(!m.stopped && K[s.MAPSHOWN] === 0 && K[s.M_SELY] * 10 + K[s.M_SELX] === idx && K[s.APPR] === 1 && K[s.SQCOUNT] === n0 && +tg() === n0,
     `game: fire on a squadron's sector closes the map and jumps there: the approach of ${n0} ships begins, TARGETS ${tg()}`);
   check(K[s.M_SELX] + 1 === K[s.HUDSEC + 1] - 0x70 && K[s.M_SELY] + 1 === K[s.HUDSEC + 4] - 0x70, 'game: the HUD shows the new sector');
@@ -975,7 +982,7 @@ for (const name of Object.keys(Profiles)) {
     const e = [...K.subarray(s.M_STATE, s.M_STATE + 60)].findIndex((v, i) => v === 0 && i !== cur);
     run(m, hooks, 3, () => m.setKey(7, 5, true)); m.setKey(7, 5, false); run(m, hooks, 350);
     K[s.M_MPX] = 17 + 12 * (e % 10) + 6; K[s.M_MPY] = 35 + 16 * Math.floor(e / 10) + 8; run(m, hooks, 3);
-    run(m, hooks, 4, i => { m.mouse.left = i < 2; }); run(m, hooks, 30);
+    run(m, hooks, 4, i => { m.mouse.left = i < 2; }); run(m, hooks, 2); throughHyper();
     const apprAfter = K[s.APPR];
     let shot = 0; run(m, hooks, 16, i => { m.mouse.left = i < 2; if (K[s.SHOTON]) shot = 1; });
     check(K[s.M_SELY] * 10 + K[s.M_SELX] === e && apprAfter === 0 && shot, `game: from an approach into the empty sector ${e % 10},${Math.floor(e / 10)}: no approach, the phasor fires`);
@@ -990,7 +997,7 @@ for (const name of Object.keys(Profiles)) {
   run(m, hooks, 100);
   run(m, hooks, 3, () => m.setKey(7, 5, true)); m.setKey(7, 5, false);
   run(m, hooks, 20);
-  check(!m.stopped && K[s.MAPSHOWN] === 0 && K[s.M_SELY] * 10 + K[s.M_SELX] === idx && K[s.OVRUN] === 0, 'game: C= again closes the map without a jump');
+  check(!m.stopped && K[s.MAPSHOWN] === 0 && K[s.M_SELY] * 10 + K[s.M_SELX] === idx && K[s.OVRUN] === 0, `game: C= again closes the map without a jump (map ${K[s.MAPSHOWN]}, sector ${K[s.M_SELY] * 10 + K[s.M_SELX]} / ${idx}, overruns ${K[s.OVRUN]}, breakpoints ${Object.keys(m.bpAt || {}).filter(a => m.bpAt[a]).length})`);
   report(hooks, 'game');
 }
 

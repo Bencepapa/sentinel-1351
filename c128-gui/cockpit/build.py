@@ -104,9 +104,9 @@ def place_assets(put):
     art = open(os.path.join(REF, 'cockpit-art.bin'), 'rb').read()
     screen, color, matrix, bitmap_rows = art[:1000], bytearray(art[1000:2000]), art[2000:3000], art[3000:4600]
     bitmap_rows = clean_radar(bitmap_rows)
-    for r in range(3, 18):                         # the 3D view: stars in light gray
-        for c in range(40):
-            color[r * 40 + c] = 0x0F
+    for r in range(3, 18):                         # the 3D view: stars in white (the original's
+        for c in range(40):                        # value 1 under matrix $10, colour RAM 1)
+            color[r * 40 + c] = 0x01
 
     yoff = [(y // 8) * 320 + (y & 7) for y in range(200)]
     put(YLO, bytes(v & 255 for v in yoff))

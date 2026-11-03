@@ -13,7 +13,7 @@ view, a squadron coming into the ship's sector.
 
 Left, in a suggested order:
 
-1. **Hyperspace** (see below), now an instant jump.
+1. **Hyperspace** (see below): the phases, streaking stars, energy, countdown, the path plotted on the map, the map's erase, the border's pulse and the engine sound are in (`HYPSTART`, `HYPVB`, `HYPVIEW` in `c128-game/game.asm`, code at `$C000`); meteors, the deflector, positioning and the abort are next.
 2. **Proton torpedoes** (`FINDINGS.md`) and thrust (W, `$FEA7`).
 3. **Squadron types 2 and 3** (all fight as type 1).
 4. **Mothership and base sequences**, mines, docking.
@@ -373,7 +373,7 @@ In hyperspace, per main-loop pass:
 - **Port:** the crosshair stays on in hyperspace with a mouse; the cockpit's steering mask gives `JOY`.
 - **C64 patch:** needs a hook in the hyperspace loop and about 60 more bytes, and the patch has none left. Candidate: sprite shape `$3D` (`$4F40-$4F7F`), a fifth globe frame that the planet's cycle (`$39-$3C`) never shows and no code addresses; to confirm with a fill test in play.
 
-Port order: (1) memory: room for about 2-3 KB (bank 1 or the RAM under the KERNAL, see the Status's note); (2) the hyperspace loop with stars, energy, countdown, deceleration and the arrival (no meteors); (3) meteors, dodging, deflector, hits; (4) positioning and the scanner; (5) the plotted path and acceleration on the map; (6) abort and a destroyed coordinator; (7) the mouse pointer, then the same in the C64 patch.
+Port order: (1) memory: room for about 2-3 KB (bank 1 or the RAM under the KERNAL, see the Status's note); (2) the hyperspace loop with stars, energy, countdown, deceleration and the arrival (no meteors); (3) meteors, dodging, deflector, hits; (4) positioning and the scanner; (5) the plotted path and acceleration on the map (done: the path, a 2 x 2 brown point a frame, `$2B14`; the map's lines erased as by `$B0F2` with `$B077` set, brown pixels kept, about 230 frames; the border's pulse, `$09B7`; the engine, `$10DF` / `$1123` on voice 3; the rush, `$094E`, at the jump); (6) abort and a destroyed coordinator; (7) the mouse pointer, then the same in the C64 patch.
 
 ### Hyperspace: earlier notes
 

@@ -88,11 +88,19 @@ RCNT:   .BYTE 0
 MAPDLY  = 5
 
 ; C= in the cockpit (a new press): the map opens or closes.
-MAPTOG: LDA MAPSHOWN
+MAPTOG: LDA HYPON       ; (not in hyperspace)
+        ORA HPEND
+        BNE g_mt9
+        LDA MAPSHOWN
         BEQ MAPOPEN
         JMP MAPCLOSE
+g_mt9:  RTS
 
-MAPOPEN:LDA #$01
+MAPOPEN:LDA M_SELX      ; where a jump would start
+        STA HFROMX
+        LDA M_SELY
+        STA HFROMY
+        LDA #$01
         STA MAPSHOWN    ; (the view's background stays black, as in the original)
         LDA #$70        ; the fighters behind the map's lines
         STA MAPPRIO
@@ -244,7 +252,12 @@ g_wr9:  RTS
 ; The map's share of the vertical blank (2 MHz) while it is open or wiping. The
 ; star field goes on in the same bitmap (GPLOT, GERASE keep the map's pixels), after
 ; the map's work: a busy frame leaves it out, the stars move on in the next one.
-MAPVB:  LDA #$00
+MAPVB:  LDA WIPE
+        BNE g_vh1
+        LDA HYPON       ; hyperspace: the path, the map's erase and the stars here,
+        BEQ g_vh1       ; the rest in the view's time
+        JMP HYPMVB
+g_vh1:  LDA #$00
         STA MBUSY
         JSR MAPVB1
         LDA MBUSY       ; a box or icons drawn: no time for the stars
@@ -631,8 +644,14 @@ g_mj9:  STA JOYG
         CMP #$02        ; the ship's own sector: the map closes, no jump
         BEQ g_mi8
         JSR MAPCLOSE
-        JSR SHOWSEC
-        JMP SECTORIN
+        LDA #$00        ; the map stays on the screen: its path is plotted, its lines
+        STA WIPE        ; erased while the ship accelerates (no wipe)
+        LDA #$01        ; hyperspace, then the sector (started in the 3D view's time:
+        STA HPEND       ; here, at 1 MHz under the strip, it made the frame late)
+        STA HMAP
+        LDA #$04        ; (the path's phase: no star field over the map)
+        STA HYPON
+        RTS
 g_mi8:  JMP MAPCLOSE
 g_mi9:  RTS
 
@@ -686,11 +705,49 @@ GENDONE:.BYTE 0
 
 
 ; The world's clock, every frame (the map's TICKER: a tick every 256 frames).
-WORLD:  JMP M_TICKER
+; The world's clock ($BE29). The original calls it from its main loops, which are not
+; tied to the frame, so its rate depends on what the ship does; measured on a real
+; machine's timing (JS machine with m.dma): a tick every 33 frames with the map open,
+; 44 in flight (and in hyperspace), 54 in a fight, 200 while the tracking computer
+; flies. (The map program ticks every 256 frames, about five times slower.)
+WORLD:  LDA GENDONE     ; (the world exists)
+        BEQ g_wd9
+        LDA HYPON       ; no tick while the path is plotted and the ship accelerates
+        CMP #$01        ; (the original's $B3F6 loop does not call $BE29)
+        BEQ g_wd9
+        CMP #$04
+        BEQ g_wd9
+        DEC WTCNT
+        BNE g_wd9
+        LDA #33
+        LDX MAPSHOWN
+        BNE g_wd1
+        LDA #200
+        LDX TRUN
+        BNE g_wd1
+        LDA #54
+        LDX ALIVE
+        BNE g_wd1
+        LDX ALIVE+1
+        BNE g_wd1
+        LDX ALIVE+2
+        BNE g_wd1
+        LDA #44
+g_wd1:  STA WTCNT
+        INC WTPEND      ; the tick itself in the 3D view's free time (VIEWWORK): in the
+g_wd9:  RTS             ; vertical blank it made fights' frames late
+WTPEND: .BYTE 0
+WTCNT:  .BYTE 44
 
 ; In the 3D view's free time (at 1 MHz: the vertical blank is full in a fight): a step
 ; of the squadrons' move, if one is going on, and of a squadron coming in.
-VIEWWORK:JSR HVIEW
+VIEWWORK:LDA WTPEND
+        BEQ g_vw1
+        LDA #$00
+        STA WTPEND
+        JSR M_TICK
+g_vw1:  JSR HVIEW
+        JSR HYPVIEW
         JSR MVSTEP
         JMP ARRSTEP
 
@@ -718,6 +775,8 @@ MVN:    .BYTE 0
 ; The squadrons' move has ended ($BEDF): one in the ship's sector, and no fight or
 ; approach going on, comes in.
 SQINCHK: LDA ARRFX
+        ORA HYPON       ; (not in hyperspace: the original's $BA)
+        ORA HPEND
         ORA APPR
         ORA ALIVE
         ORA ALIVE+1
@@ -977,6 +1036,965 @@ DSK:    .BYTE 0
 
 NMIRTI: RTI
 
+; ---------------- hyperspace ($B3E0-$B78A) ----------------
+; Three phases, as the original's: accelerating (the stars speed up, $B3F6), the jump
+; ($B55D: the stars draw lines, the energy runs out ten times as fast, the countdown
+; of the steps left over the radar) and decelerating ($B6CF). The jump has one step per
+; point of the flight path the map plots ($2B14 / $3580: the longer of 12 x columns
+; and 16 x rows); a step takes 38 passes of the original's loop, 13.5 frames on a real
+; machine. The meteors, the deflector, the plotted path, positioning and the abort come
+; in later steps. Runs in the vertical blank (VIEWVB -> MAPVB -> HYPVB, 2 MHz).
+HYPSTART:
+        LDA #$00        ; the old sector's fight ends
+        STA SQCOUNT
+        JSR ARRIVE
+        JSR TRKEND
+        LDA HFROMX      ; the steps: max(12 x |columns|, 16 x |rows|)
+        SEC
+        SBC M_SELX
+        BCS g_hy1
+        EOR #$FF
+        ADC #$01
+g_hy1:  STA HT
+        ASL A           ; x 12
+        ADC HT
+        ASL A
+        ASL A
+        STA HSTEPS
+        LDA HFROMY
+        SEC
+        SBC M_SELY
+        BCS g_hy2
+        EOR #$FF
+        ADC #$01
+g_hy2:  ASL A           ; x 16
+        ASL A
+        ASL A
+        ASL A
+        CMP HSTEPS
+        BCC g_hy3
+        STA HSTEPS
+g_hy3:  LDA M_SELX      ; the destination waits for the arrival ($FCB8 / $FCD0 set
+        STA HTGTX       ; $92 / $93 only then): during the jump the ship is still in
+        LDA M_SELY      ; its old sector, which the hunters chase, which does not move
+        STA HTGTY
+        JSR HPATHINIT
+        JSR HRADCLR
+        LDA #$08        ; the icons go first, a row a frame from the bottom, then
+        STA HICR        ; the two boxes are drawn whole
+        LDA HFROMX
+        STA M_SELX
+        LDA HFROMY
+        STA M_SELY
+        LDA #$01        ; the map's lines erased from both sides ($B094 with $B077 set)
+        STA HMW
+        STA HMCI
+        LDA #$11
+        STA HMFX
+        LDA #$8A
+        STA HMFR
+        JMP M_SNDINIT   ; the path's beeps ($B26D)
+
+; A row of the map's icons erased (row HICR): their two cells' pixels cleared, their
+; colours the map's ($19: white stars, brown boxes), as the original clears them
+; before it plots the path.
+HICONS: LDX HICR
+        CPX #$02
+        BCS g_ic9
+        LDA #$01        ; the boxes, a frame each: the ship's sector, then the
+        STA M_BV        ; destination's (under the planet too: black there until the
+        LDA HFROMX      ; path is complete)
+        LDY HFROMY
+        CPX #$01
+        BEQ g_ic8
+        LDA HTGTX
+        LDY HTGTY
+g_ic8:  STA M_BC
+        STY M_BR
+        JMP FBOX        ; (at once: M_BOX queues it for the open map)
+g_ic9:  DEX
+        DEX
+        LDA #$00        ; the row's offset: CELLY x 40
+        STA HOFH
+        LDA M_CELLY,X
+        ASL A
+        ASL A
+        ASL A
+        STA HT8
+        ASL A
+        ROL HOFH
+        ASL A
+        ROL HOFH
+        CLC
+        ADC HT8
+        STA HOFL
+        BCC g_ic0
+        INC HOFH
+g_ic0:  LDX #9
+g_ic1:  CLC             ; the cell's offset
+        LDA HOFL
+        ADC M_CELLX,X
+        STA CDST
+        STA CSRC
+        LDA HOFH
+        ADC #$00
+        STA CSRC+1
+        ADC #$44        ; the colour matrix ($4400)
+        STA CDST+1
+        LDY #$01
+        LDA #$19
+        STA (CDST),Y
+        DEY
+        STA (CDST),Y
+        ASL CSRC        ; the bitmap ($6000 + offset x 8)
+        ROL CSRC+1
+        ASL CSRC
+        ROL CSRC+1
+        ASL CSRC
+        ROL CSRC+1
+        CLC
+        LDA CSRC+1
+        ADC #$60
+        STA CSRC+1
+        LDA #$00
+        LDY #15
+g_ic2:  STA (CSRC),Y
+        DEY
+        BPL g_ic2
+        DEX
+        BPL g_ic1
+        RTS
+
+; The radar's marks go: in hyperspace it shows no ships (the radar's pass is left
+; out there, its last marks stood still).
+HRADCLR:LDY #$02
+g_rc1:  LDA RBON,Y
+        BEQ g_rc2
+        LDA #$00
+        STA RBON,Y
+        LDA RBX,Y
+        STA POSX
+        LDA RBY,Y
+        STA POSY
+        JSR MERASE
+g_rc2:  DEY
+        BPL g_rc1
+        RTS
+
+; The path on the map ($2B14, $3580): from the ship's sector to the destination, a
+; brown 2 x 2 point a frame, max(12 x columns, 16 x rows) + 1 of them.
+HPATHINIT:
+        LDA HFROMX      ; x = 12 x column + 24, y = 16 x row + 44 ($2075, $207F)
+        JSR HPCX
+        STA HPX
+        LDA HTGTX
+        JSR HPCX
+        LDX #$01
+        SEC
+        SBC HPX
+        BCS g_pi1
+        EOR #$FF
+        ADC #$01
+        LDX #$FF
+g_pi1:  STA HPDX
+        STX HPSX
+        LDA HFROMY
+        JSR HPCY
+        STA HPY
+        LDA HTGTY
+        JSR HPCY
+        LDX #$01
+        SEC
+        SBC HPY
+        BCS g_pi2
+        EOR #$FF
+        ADC #$01
+        LDX #$FF
+g_pi2:  STA HPDY
+        STX HPSY
+        CMP HPDX        ; points: the longer axis + 1
+        BCS g_pi3
+        LDA HPDX
+g_pi3:  STA HPN
+        INC HPN
+        LSR A
+        STA HPERR
+        LDA #$01
+        STA HPATH
+        RTS
+HPCX:   STA HT
+        ASL A
+        ADC HT
+        ASL A
+        ASL A
+        ADC #24
+        RTS
+HPCY:   ASL A
+        ASL A
+        ASL A
+        ASL A
+        ADC #44
+        RTS
+
+; A point of the path (vertical blank): value 2 (brown, $EF45), then a step along
+; the line; voice 1's gate toggles every other frame ($2BAA).
+HPSTEP: LDA HPX
+        STA POSX
+        LDA HPY
+        STA POSY
+        JSR HP2
+        INC POSX
+        JSR HP2
+        INC POSY
+        JSR HP2
+        DEC POSX
+        JSR HP2
+        JSR M_SNDTOG
+        DEC HPN
+        BNE g_ps1
+        LDA #$00        ; done
+        STA HPATH
+        RTS
+g_ps1:  LDA HPDX
+        CMP HPDY
+        BCC g_ps3
+        CLC             ; x the longer axis
+        LDA HPX
+        ADC HPSX
+        STA HPX
+        CLC
+        LDA HPERR
+        ADC HPDY
+        BCS g_ps2
+        CMP HPDX
+        BCC g_ps6
+g_ps2:  SBC HPDX
+        STA HPERR
+        CLC
+        LDA HPY
+        ADC HPSY
+        STA HPY
+        RTS
+g_ps3:  CLC             ; y the longer axis
+        LDA HPY
+        ADC HPSY
+        STA HPY
+        CLC
+        LDA HPERR
+        ADC HPDX
+        BCS g_ps4
+        CMP HPDY
+        BCC g_ps6
+g_ps4:  SBC HPDY
+        STA HPERR
+        CLC
+        LDA HPX
+        ADC HPSX
+        STA HPX
+        RTS
+g_ps6:  STA HPERR
+        RTS
+HP2:    JSR PIXADDR
+        LDA (PTR),Y
+        AND CLEARM,X
+        ORA M_MASK2,X
+        STA (PTR),Y
+        RTS
+
+; A frame of the map's erase ($B0F2 with $B077 set): the horizontal lines from both
+; ends inward, a pixel column a frame, stepping over the vertical lines; 32 frames'
+; pause; the vertical lines from top and bottom. Brown pixels (the path, the boxes)
+; stay ($EEE6). Then the view is wiped clean.
+HMSTEP: LDA HMW
+        CMP #$02
+        BEQ g_ms20
+        BCS g_ms30
+        LDX #6          ; 1: even rows from the left front, odd from the right
+g_ms11: STX SAVEX
+        TXA
+        LSR A
+        LDA HMFX
+        BCC g_ms12
+        LDA HMFR
+g_ms12: STA POSX
+        LDA M_YS,X
+        STA POSY
+        JSR HME
+        INC POSY
+        JSR HME
+        LDX SAVEX
+        DEX
+        BPL g_ms11
+        LDY HMFX
+        INY
+        DEC HMFR
+        LDX HMCI
+        TYA
+        CMP M_VX,X
+        BNE g_ms13
+        INY
+        INY
+        DEC HMFR
+        DEC HMFR
+        INC HMCI
+g_ms13: STY HMFX
+        CPY #$8B
+        BCC g_ms9
+        LDA #$02
+        STA HMW
+        LDA #$20
+        STA HMPC
+g_ms9:  RTS
+g_ms20: DEC HMPC        ; 2: the pause
+        BNE g_ms9
+        LDA #$03
+        STA HMW
+        LDA #$23
+        STA HMFT
+        LDA #$84
+        STA HMFB
+g_ms30: LDX #10         ; 3: even columns from the top front, odd from the bottom
+g_ms31: STX SAVEX
+        LDA M_VX,X
+        STA POSX
+        TXA
+        LSR A
+        LDA HMFT
+        BCC g_ms32
+        LDA HMFB
+g_ms32: STA POSY
+        JSR HME
+        INC POSX
+        JSR HME
+        LDX SAVEX
+        DEX
+        BPL g_ms31
+        DEC HMFB
+        INC HMFT
+        LDA HMFT
+        CMP #$85
+        BCC g_ms9
+        LDA #$00        ; over: the rest (the path, the boxes, the icons) wiped
+        STA HMW
+        STA HMAP
+        LDA #15
+        STA WIPE
+        RTS
+HME:    JSR PIXADDR
+        LDA (PTR),Y
+        AND MASK3,X
+        CMP M_MASK2,X
+        BEQ g_me9
+        LDA (PTR),Y
+        AND CLEARM,X
+        STA (PTR),Y
+g_me9:  RTS
+
+; The acceleration begins when the path is complete (the original: $B3F6 when $2B11
+; ends): the stars start as dots, voices 1 and 2 stop, the engine sound ($10DF).
+HACCEL: LDA #$19        ; the path is complete: under the planet its brown shows
+        STA PLMAT       ; too (the planet's cells take the map's colours)
+        STA PLMAT+1
+        STA PLMAT+2
+        LDX #HNS-1
+g_ha1:  JSR HNEW
+        JSR HPLOT
+        DEX
+        BPL g_ha1
+        LDA #$01
+        STA HYPON
+        LDA #233        ; accelerating ($B3F6: 233 frames on a real machine)
+        STA HTIME
+        LDA #$02        ; 0.5 pixels a frame
+        STA HSPD
+        LDA #$00
+        STA HSACC
+        STA HACC
+        STA HENC
+        STA ENGON       ; the flight's engine bursts stop ($10DF: $C376)
+        STA $D404
+        STA $D40B
+        STA $D412
+        STA $D410
+        STA HPWL
+        STA HEFL
+        LDA #$02
+        STA HEFH
+        STA $D40F
+        LDA #$00
+        STA $D40E
+        LDA #$05
+        STA $D411
+        LDA #$F0
+        STA $D414
+        LDA #$60
+        STA $D413
+        LDA #$0F
+        STA $D418
+        LDA #$81
+        STA $D412
+        LDA #$04        ; rising ($B413)
+        STA HESTP
+        STA HEDIR
+        LDA #$03
+        STA HPWS
+        RTS
+
+; The engine in hyperspace ($1123, a frame): voice 3's noise rises or falls by HESTP,
+; its pulse width moves by 3, turning at each page of the pitch.
+HENGINE:LDA HEDIR
+        BNE g_en2
+        SEC
+        LDA HEFL
+        SBC HESTP
+        STA HEFL
+        BCS g_en3
+        DEC HEFH
+        JMP g_en1
+g_en2:  CLC
+        LDA HEFL
+        ADC HESTP
+        STA HEFL
+        BCC g_en3
+        INC HEFH
+g_en1:  LDA HPWS
+        EOR #$FF
+        CLC
+        ADC #$01
+        STA HPWS
+g_en3:  LDA HEFH
+        STA $D40F
+        LDA HEFL
+        STA $D40E
+        CLC
+        LDA HPWL
+        ADC HPWS
+        STA HPWL
+        STA $D410
+        RTS
+
+; The upper HUD's border pulses through the grays in hyperspace ($09B7: $F8 or $BA);
+; a sweep that plays pulses it itself (SNDTICK).
+HBRDSET:LDX HYPON       ; (SNDTICK's light blue: not in hyperspace)
+        BNE g_bd9
+        STA HUDBRD
+        RTS
+HBORD:  LDA SNDON
+        BNE g_bd9
+        LDX SNDPI
+        LDA PULSE,X
+        STA HUDBRD
+        DEC SNDPI
+        BPL g_bd9
+        LDA #$22
+        STA SNDPI
+g_bd9:  RTS
+
+HYPVB:  LDA HYPON
+        CMP #$04
+        BNE g_hv0
+        LDA HPATH       ; 4: the path on the map
+        BNE g_hv01
+        JMP HACCEL
+g_hv01: RTS
+g_hv0:  JSR HENGINE
+        JSR HBORD
+        LDA HYPON
+        CMP #$02
+        BEQ g_hv20
+        BCS g_hv30
+        LDA HTIME       ; 1: accelerating: a quarter pixel faster every 20 frames,
+        CMP #20         ; up to 3 pixels a frame ($F209 $41 -> $03)
+        BCC g_hv11
+        AND #$0F
+        BNE g_hv11
+        LDA HSPD
+        CMP #12
+        BCS g_hv11
+        INC HSPD
+g_hv11: LDA #10         ; energy: a unit every 10 frames
+        JSR HENERGY
+        DEC HTIME
+        BNE g_hv01
+        LDA #$02        ; the jump
+        STA HYPON
+        LDA HSTEPS
+        STA HCNT
+        JSR HDIGITS
+        LDA #$00        ; the engine's pitch holds ($B567); the rush ($1349)
+        STA HESTP
+        JSR SNDRUSH
+        JMP g_hvst
+g_hv20: LDA #$01        ; 2: the jump, a unit a frame
+        JSR HENERGY
+        CLC             ; a step every 13.5 frames
+        LDA HACC
+        ADC #19
+        STA HACC
+        BCC g_hv01
+        DEC HCNT
+        BEQ g_hv21
+        JSR HDIGITS
+        JMP g_hvst
+g_hv21: JSR HCLRDIG     ; over: decelerating, 120 frames
+        LDA #$03
+        STA HYPON
+        LDA #120
+        STA HTIME
+        LDA #$04        ; the engine falls ($B6CF)
+        STA HESTP
+        LDA #$00
+        STA HEDIR
+        JMP g_hvst
+g_hv30: LDA HTIME       ; 3: decelerating
+        AND #$07
+        BNE g_hv31
+        LDA HSPD
+        CMP #$03
+        BCC g_hv31
+        DEC HSPD
+g_hv31: LDA #10
+        JSR HENERGY
+        DEC HTIME
+        BNE g_hvst
+        LDA #$00        ; arrived: the view wiped clean (its colours back), the sector
+        STA HYPON
+        STA $D412       ; the hyperspace engine off, the flight's back
+        LDA #$01
+        STA ENGON
+        LDA #$0E
+        STA HUDBRD
+        LDA #15
+        STA WIPE
+        LDA HTGTX       ; now the ship is in the new sector
+        STA M_SELX
+        LDA HTGTY
+        STA M_SELY
+        JSR SHOWSEC
+        JMP SECTORIN
+g_hvst: RTS
+
+; Hyperspace's phase, in the 3D view's free time (VIEWWORK, every frame): the start,
+; the speed, the energy, the countdown, the arrival.
+HYPVIEW:LDA MAPSHOWN    ; sprite 1 the map's planet (the cockpit's SPRCROSS)
+        ORA HMAP
+        STA MAPSPR
+        LDA HPEND
+        BEQ g_hvp
+        LDA #$00
+        STA HPEND
+        JMP HYPSTART
+g_hvp:  LDA HYPON
+        BEQ g_hv9
+        JMP HYPVB
+g_hv9:  RTS
+
+; Hyperspace's stars, in the vertical blank (MAPVB, 2 MHz: at 1 MHz in the view they
+; ran into the gun split): HSPD quarter pixels a frame. A dot is erased and plotted
+; once a frame, only a line needs every pixel.
+HYPMVB: LDA HMAP        ; the planet turns while the map is there
+        BEQ g_hm9
+        JSR M_PLANET
+g_hm9:  LDA HICR
+        BEQ g_hm0
+        DEC HICR
+        JSR HICONS
+        JMP g_hm1
+g_hm0:  LDA HPATH
+        BEQ g_hm1
+        JSR HPSTEP
+g_hm1:  LDA HMW
+        BEQ g_hm2
+        JSR HMSTEP
+g_hm2:  LDA HYPON
+        CMP #$04
+        BNE HSTARS
+        RTS
+HSTARS: CLC
+        LDA HSACC
+        ADC HSPD
+        STA HSACC
+        LSR A
+        LSR A
+        STA HSN
+        LDA HSACC
+        AND #$03
+        STA HSACC
+        LDA HSN
+        BEQ g_hv9
+        LDX #HNS-1
+g_hss1: JSR HSTAR
+        DEX
+        BPL g_hss1
+        RTS
+
+; A = frames per energy unit
+HENERGY:INC HENC
+        CMP HENC
+        BEQ g_he1
+        BCS g_he9
+g_he1:  LDA #$00
+        STA HENC
+        LDY HUDE+3      ; the ones digit, borrowing into ENERGY10 ($F8A1)
+        DEY
+        CPY #$6F
+        BEQ g_he2
+        STY HUDE+3
+g_he9:  RTS
+g_he2:  LDA HUDE        ; (0000 stays)
+        ORA HUDE+1
+        ORA HUDE+2
+        CMP #$70
+        BEQ g_he9
+        LDY #$79
+        STY HUDE+3
+        JMP ENERGY10
+
+; A new star X ($F1D1): anywhere in a 128 x 128 square around the vanishing point; in
+; the jump it draws its line on the way out (no erase) and erases it on a second run.
+HNEW:   JSR RANDOM
+        AND #$7F
+        CLC
+        ADC #16
+        STA HSX,X
+        STA HSX0,X
+g_hn1:  JSR RANDOM
+        AND #$7F
+        CLC
+        ADC #36
+        CMP #142
+        BCS g_hn1
+        STA HSY,X
+        STA HSY0,X
+        LDA #$00
+        STA HSE,X
+        STA HSD,X
+        LDA HSX,X       ; direction away from (79, 99)
+        SEC
+        SBC #79
+        BCS g_hn2
+        EOR #$FF
+        ADC #$01
+        INC HSD,X       ; bit 0: x goes left
+g_hn2:  STA HSAX,X
+        LDA HSY,X
+        SEC
+        SBC #99
+        BCS g_hn3
+        EOR #$FF
+        ADC #$01
+        PHA
+        LDA HSD,X
+        ORA #$02        ; bit 1: y goes up
+        STA HSD,X
+        PLA
+g_hn3:  STA HSAY,X
+        ORA HSAX,X
+        BNE g_hn4
+        INC HSAX,X      ; (the centre itself: to the right)
+g_hn4:  LDA #$00
+        LDY HYPON
+        CPY #$02
+        BNE g_hn5
+        LDA #$01
+g_hn5:  STA HSTR,X
+        RTS
+
+; Star X for a frame (HSN pixels; $F16D-$F2CD). HSTR: 0 a dot (erased and plotted
+; once), 1 drawing its line (every pixel plotted), 2 erasing it again from its start
+; (every pixel erased; $F233: the original's second run).
+HSTAR:  LDA HSN
+        STA HSK
+        LDA HSTR,X
+        BEQ g_sa0
+        CMP #$01
+        BEQ g_sa1
+g_sa2:  JSR HERASE      ; 2: erasing the line
+        JSR HBRES
+        BCS g_sanew
+        DEC HSK
+        BNE g_sa2
+        RTS
+g_sa1:  JSR HBRES       ; 1: drawing the line
+        BCS g_saend
+        JSR HPLOT
+        DEC HSK
+        BNE g_sa1
+        RTS
+g_saend:LDA #$02        ; at the edge: back to its start, erasing
+        STA HSTR,X
+        LDA #$00
+        STA HSE,X
+        LDA HSX0,X
+        STA HSX,X
+        LDA HSY0,X
+        STA HSY,X
+        RTS
+g_sa0:  JSR HERASE      ; 0: a dot
+g_sa3:  JSR HBRES
+        BCS g_sanew
+        DEC HSK
+        BNE g_sa3
+        JMP HPLOT
+g_sanew:JSR HNEW
+        JMP HPLOT
+; One Bresenham step of star X; C set: out of the view.
+HBRES:  LDA HSAX,X      ; the longer axis every time, the other by slope
+        CMP HSAY,X
+        BCC g_hb5
+        JSR HSTX
+        CLC
+        LDA HSE,X
+        ADC HSAY,X
+        BCS g_hb2
+        CMP HSAX,X
+        BCC g_hb3
+g_hb2:  SBC HSAX,X
+        STA HSE,X
+        JSR HSTY
+        JMP g_hb6
+g_hb3:  STA HSE,X
+        JMP g_hb6
+g_hb5:  JSR HSTY
+        CLC
+        LDA HSE,X
+        ADC HSAX,X
+        BCS g_hb7
+        CMP HSAY,X
+        BCC g_hb8
+g_hb7:  SBC HSAY,X
+        STA HSE,X
+        JSR HSTX
+        JMP g_hb6
+g_hb8:  STA HSE,X
+g_hb6:  LDA HSX,X       ; in the view: x 2-157, y 26-141
+        CMP #2
+        BCC g_hbo
+        CMP #158
+        BCS g_hbo
+        LDA HSY,X
+        CMP #26
+        BCC g_hbo
+        CMP #142
+        RTS
+g_hbo:  SEC
+        RTS
+HSTX:   LDA HSD,X
+        LSR A
+        BCS g_hx1
+        INC HSX,X
+        RTS
+g_hx1:  DEC HSX,X
+        RTS
+HSTY:   LDA HSD,X
+        AND #$02
+        BNE g_hy5
+        INC HSY,X
+        RTS
+g_hy5:  DEC HSY,X
+        RTS
+HPLOT:  STX SAVEX
+        LDA HSX,X
+        STA POSX
+        LDA HSY,X
+        STA POSY
+        JSR PIXADDR
+        LDA HMAP
+        BNE g_hp1
+        LDA (PTR),Y
+        ORA MASK3,X
+        JMP g_hp2
+g_hp1:  LDA (PTR),Y     ; over the map: value 1, on an empty pixel only
+        AND MASK3,X
+        BNE g_hp3
+        LDA (PTR),Y
+        ORA MASK1,X
+g_hp2:  STA (PTR),Y
+g_hp3:  LDX SAVEX
+        RTS
+HERASE: STX SAVEX
+        LDA HSX,X
+        STA POSX
+        LDA HSY,X
+        STA POSY
+        JSR PIXADDR
+        LDA HMAP
+        BEQ g_hq1
+        LDA (PTR),Y     ; over the map: only a star's own value 1
+        AND MASK3,X
+        CMP MASK1,X
+        BNE g_hq2
+g_hq1:  LDA (PTR),Y
+        AND CLEARM,X
+        STA (PTR),Y
+g_hq2:  LDX SAVEX
+        RTS
+
+; The countdown over the radar ($B635): the steps left - 1, two digits twice as wide
+; at text row 17, columns 18-21, and a 1 at 16-17 from 100 on ($0813, $0816).
+HDIGITS:LDA HCNT
+        SEC
+        SBC #$01
+        LDX #$FF        ; hundreds
+        SEC
+g_hd1:  INX
+        SBC #100
+        BCS g_hd1
+        ADC #100
+        STX HD100
+        LDX #$FF
+        SEC
+g_hd2:  INX
+        SBC #10
+        BCS g_hd2
+        ADC #10
+        STA HD1
+        STX HD10
+        LDA HD100       ; 0 or 1: '1' or a blank
+        BEQ g_hd3
+        LDA #$71
+        BNE g_hd4
+g_hd3:  LDA #$20
+g_hd4:  LDX #16
+        JSR HBIG
+        LDA HD10
+        ORA #$70
+        LDX #18
+        JSR HBIG
+        LDA HD1
+        ORA #$70
+        LDX #20
+        JMP HBIG
+HCLRDIG:LDA #$20
+        LDX #16
+        JSR HBIG
+        LDA #$20
+        LDX #18
+        JSR HBIG
+        LDA #$20
+        LDX #20
+        JMP HBIG
+; Character A of the font ($4000) into text row 17, columns X and X+1, each bit two
+; pixels wide (value 3, light blue in colour RAM).
+HBIG:   STX HBX
+        LDY #$00        ; the glyph: $4000 + A x 8
+        STY CSRC+1
+        ASL A
+        ROL CSRC+1
+        ASL A
+        ROL CSRC+1
+        ASL A
+        ROL CSRC+1
+        STA CSRC
+        LDA CSRC+1
+        CLC
+        ADC #$40
+        STA CSRC+1
+        LDA HBX         ; the bitmap: $7540 + X x 8
+        ASL A
+        ASL A
+        ASL A
+        CLC
+        ADC #$40
+        STA CDST
+        LDA #$75
+        ADC #$00
+        STA CDST+1
+        LDY #$07
+g_hb1:  LDA (CSRC),Y
+        LSR A
+        LSR A
+        LSR A
+        LSR A
+        TAX
+        LDA HEXP,X
+        STA (CDST),Y
+        LDA (CSRC),Y
+        AND #$0F
+        TAX
+        LDA HEXP,X
+        STY HT
+        PHA
+        TYA
+        CLC
+        ADC #$08
+        TAY
+        PLA
+        STA (CDST),Y
+        LDY HT
+        DEY
+        BPL g_hb1
+        LDX HBX
+        LDA #$0E
+        STA $DAA8,X     ; (colour RAM, row 17)
+        STA $DAA9,X
+        RTS
+HEXP:   .BYTE $00,$03,$0C,$0F,$30,$33,$3C,$3F,$C0,$C3,$CC,$CF,$F0,$F3,$FC,$FF
+
+HCRY:   LDX HYPON       ; the crosshair hidden in hyperspace, as in the original
+        BEQ g_cr1
+        LDA #$00
+g_cr1:  STA $D001
+        RTS
+
+HNS     = 10            ; stars ($F0B4: 10)
+HYPON:  .BYTE 0         ; 1 accelerating, 2 the jump, 3 decelerating
+HPEND:  .BYTE 0         ; a jump chosen on the map, to start
+MAPSPR: .BYTE 0         ; MAPSHOWN or HMAP: sprite 1 is the planet
+HICR:   .BYTE 0         ; icon rows left to erase
+HOFL:   .BYTE 0
+HOFH:   .BYTE 0
+HT8:    .BYTE 0
+HMAP:   .BYTE 0         ; the map's pixels still on the screen (the stars keep them)
+HPATH:  .BYTE 0         ; the path being plotted
+HPX:    .BYTE 0
+HPY:    .BYTE 0
+HPDX:   .BYTE 0
+HPDY:   .BYTE 0
+HPSX:   .BYTE 0
+HPSY:   .BYTE 0
+HPERR:  .BYTE 0
+HPN:    .BYTE 0
+HMW:    .BYTE 0         ; the map's erase: 1 horizontal lines, 2 pause, 3 vertical
+HMFX:   .BYTE 0
+HMFR:   .BYTE 0
+HMCI:   .BYTE 0
+HMFT:   .BYTE 0
+HMFB:   .BYTE 0
+HMPC:   .BYTE 0
+HEFL:   .BYTE 0         ; the engine: voice 3's pitch, step, direction, pulse width
+HEFH:   .BYTE 0
+HESTP:  .BYTE 0
+HEDIR:  .BYTE 0
+HPWL:   .BYTE 0
+HPWS:   .BYTE 0
+HFROMX: .BYTE 4
+HFROMY: .BYTE 2
+HTGTX:  .BYTE 0
+HTGTY:  .BYTE 0
+HSTEPS: .BYTE 0
+HCNT:   .BYTE 0
+HTIME:  .BYTE 0
+HSPD:   .BYTE 0
+HSACC:  .BYTE 0
+HSN:    .BYTE 0
+HSK:    .BYTE 0
+HACC:   .BYTE 0
+HENC:   .BYTE 0
+HBX:    .BYTE 0
+HD100:  .BYTE 0
+HD10:   .BYTE 0
+HD1:    .BYTE 0
+HSX:    .BYTE 0,0,0,0,0,0,0,0,0,0
+HSY:    .BYTE 0,0,0,0,0,0,0,0,0,0
+HSX0:   .BYTE 0,0,0,0,0,0,0,0,0,0
+HSY0:   .BYTE 0,0,0,0,0,0,0,0,0,0
+HSAX:   .BYTE 0,0,0,0,0,0,0,0,0,0
+HSAY:   .BYTE 0,0,0,0,0,0,0,0,0,0
+HSE:    .BYTE 0,0,0,0,0,0,0,0,0,0
+HSD:    .BYTE 0,0,0,0,0,0,0,0,0,0
+HSTR:   .BYTE 0,0,0,0,0,0,0,0,0,0
+
 ; A test of a mouse cursor for hyperspace (H switches it on and off in flight).
 ; As the 1351 patch does off the cockpit, the mouse's motion is the joystick for
 ; this frame only (MSYN); the crosshair moves with the mouse and, as soon as the
@@ -1000,6 +2018,11 @@ g_hk1:  LDA #$00
 g_hk2:  LDA #$BF        ; port 2 again: its pots are read next
         STA CIA1PA
         JSR INPUT
+        LDA HYPON       ; hyperspace: no phasor (fire is the deflector there, later)
+        BEQ g_hk3
+        LDA #$00
+        STA FIREFLAG
+g_hk3:
         LDA HTEST
         AND MPRES
         BNE g_hi0a

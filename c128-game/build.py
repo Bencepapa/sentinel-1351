@@ -128,6 +128,17 @@ PATCHES_COCKPIT = [
     ('        LDA #$0E        ; bank 0 RAM + I/O + KERNAL ROM\n', '        LDA #$3E        ; (game) bank 0 RAM + I/O, RAM under the KERNAL too\n'),
     # the hyperspace cursor test (H, game.asm HINPUT): input and the crosshair's colour
     ('iv1:    JMP INPUT\n', 'iv1:    JMP HINPUT      ; (game)\n'),
+    # hyperspace (game.asm HYPVB): the view's frame work, the crosshair hidden
+    ('VIEWVB: LDA MAPSHOWN\n        ORA WIPE\n', 'VIEWVB: LDA MAPSHOWN\n        ORA WIPE\n        ORA HYPON       ; (game)\n'),
+    ('sc3:    STA $D001\n', 'sc3:    JSR HCRY        ; (game) hidden in hyperspace\n'),
+    # sprite 1 stays the map's planet while the map's pixels are on the screen (HMAP)
+    ('        LDA MAPSHOWN\n        BNE scm\n', '        LDA MAPSPR      ; (game)\n        BNE scm\n'),
+    ('        LDA MAPSHOWN    ; the map open: the pointer (if a mouse), the planet\n        BEQ scv\n',
+     '        LDA MAPSPR      ; (game) the map open: the pointer (if a mouse), the planet\n        BEQ scv\n'),
+    # in hyperspace the border pulses (HBORD), the sweeps leave it alone
+    ('        BNE sd0\n        LDA #$0E\n        STA HUDBRD\nsd0:    RTS\n',
+     '        BNE sd0\n        LDA #$0E\n        JSR HBRDSET     ; (game)\nsd0:    RTS\n'),
+    ('vbr0:   LDA RADPEND\n        BEQ vbr\n','vbr0:   LDA RADPEND\n        BEQ vbr\n        LDX HYPON       ; (game) no radar marks in hyperspace (the slots hold nothing)\n        BNE vbr\n'),
     ('        LDA NUMCOL      ; white, light green while the target is behind ($3934)\n',
      '        LDA HCOLOR      ; (game) NUMCOL, or the colours of the hyperspace test\n'),
     # a squadron coming into the ship's sector starts the dogfight (ARREND in game.asm)

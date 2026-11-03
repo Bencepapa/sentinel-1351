@@ -4,8 +4,12 @@ Findings from disassembling `Sentinel-1351_v9` (the C64 game). All addresses are
 C64 memory addresses. The rules were read from the code and then checked by
 running the original game's routines in VICE 3.7 next to the C128 port (see
 "Verification"). The type names hunter / guard / drifter are my own labels.
-The timing (about 5.1 s per tick) is from the code and matches the C128 port
-running at PAL speed; it has not been timed in a long original play session.
+The tick's timing depends on what the ship does, because the original's main loops
+call it and are not tied to the frame. Measured with the VIC's stolen cycles (`m.dma`
+in the JS machine): a tick every 33 frames with the map open, 44 in flight and in
+hyperspace, 54 in a fight, 200 while the tracking computer flies (0.7-4 s). The map
+program (`c128-map`) ticks every 256 frames; the game (`c128-game`, `WORLD`) uses the
+measured rates.
 
 ## The map
 
@@ -42,9 +46,10 @@ XOR SID voice 3 oscillator `$D41B`.
 
 ## The tick
 
-`$BE29` is called when the frame counter `$89` low byte is 0 in most map and
-space loops (every 256 frames, about 5.1 s PAL), and every 128 frames in one
-loop (`$B660`). Each tick:
+`$BE29` is called when the pass counter `$89` low byte is 0 in most map and
+space loops (every 256 passes), and every 128 passes in one loop (`$B660`). The
+loops are not tied to the frame, so in frames this is every 33 (map open) to 200
+(tracking computer) frames, about 0.7-4 s (see above). Each tick:
 
 0. `$3E7E` checks the attack rings around the blue motherships and the planet (below).
 1. `$BDAF` (starts at 30) is decremented.
@@ -73,8 +78,9 @@ Rules shared by all types (`$BF79`):
 - Because the sectors are processed from the bottom-right, a squadron can move
   into a cell that was just vacated earlier in the same pass.
 
-With the standard tick (5.1 s) a hunter moves about every 82 s, a guard every
-164 s and a drifter every 328 s.
+In flight (a tick every 44 frames, 0.9 s) a hunter moves about every 14 s, a guard
+every 28 s and a drifter every 56 s; with the map open a little faster, while the
+tracking computer flies about four times slower.
 
 ## Mothership events (`$9F9A`, difficulty 2 or higher only)
 
