@@ -344,7 +344,38 @@ is the same shrinking sequence as the player's shot. Known entry points:
 
 Each is disabled when its system counter reaches 0.
 
-### Hyperspace
+### Hyperspace (traced 2026-11-03, JS machine with `m.dma`)
+
+A jump from the map (`$FC9A JSR $B3E0`) runs three loops, `$BA` = 1 throughout:
+
+| Phase | Code | Frames (one jump) | What happens |
+|---|---|---|---|
+| Plot and accelerate | `$B3F6-$B550` | ~230 | the map stays; the flight path is plotted (`$2B14`); the speed `$F209` falls `$41` to `$03`, so the stars stream; the map is cleared at the end (`$B4D7-$B53A`) |
+| Hyperspace | `$B55D-$B6CE` | ~480 (this jump; it depends on the distance) | `$DA`=3, `$E5`=3; the destination's groups are set up (`$3D79`); meteors, deflector, energy, scanner, countdown |
+| Decelerate | `$B6CF-$B755` | ~120 | `$F209` back up to `$41`; `$B755-$B78A` restores the cockpit, `$B8`=0 |
+
+In hyperspace, per main-loop pass:
+
+- **Meteors** (`$288F`, 3 calls a pass): up to 7 slots (`$2813` active, `$280C` delay), sprites 1, 2, 4, 5, 6 (via `$98`), shapes from `$66` growing (the enemy-fire shapes), start at x `$7B-$BA`, y `$61-$A0`. A meteor that reaches full size hits the ship (`$84D7`) unless the deflector is on.
+- **Dodging** (`$B8D9`, every 16 passes): the joystick moves every meteor away, more for bigger ones, in all four directions (`$96` bits 0-3).
+- **Positioning** (`$9A95`, every 2 passes): the joystick moves the destination's slots: left/right x by `$40` (`$2BEF`), up/down depth by `$40` (`$2C27`). So the ship can arrive nearer to a target (the manual's tip for mothership minefields).
+- **Deflector** (`$270D`, every 4 passes): fire (`$97`) sets `$FD` = `$0D` (the hit routine `$84D7` does nothing while `$FD` is set), recolours the view (`$BA99` into colour RAM) and plays a tone; while held it costs 15 energy a call (`$F8B2` + 5 x `$F8A1`). Measured: about 300 energy in 30 frames.
+- **Energy** (`$F8A1`, every 8 passes): about 1 unit a frame, ten times the normal rate.
+- **Length of the jump**: the hyperspace phase counts `$B3DA` down from `$2B13`, the number of points of the flight path that `$2B14` plots on the map (`$3580`, stored at `$2B6D`); a step takes 38 passes (`$B3DB` = `$26`). So a jump to the far corner of the map takes longer. The acceleration phase is fixed (`$3A` steps).
+- Stars `$F0B4` at speed `$03` (the long streaks), the scanner's readings and blip (`$3736`, `$3776`), the countdown `$B3DA` drawn in text row 17-20 (`$0813`), the drift `$33B6` and the map's tick `$BE29` every 128 passes, enemy-fire-style explosions `$9DAA` / `$16B3`.
+- **Abort**: Crsr (`$FDED`) in the first two phases ends the jump at once (`$B442`, `$B5DD`), random destination column 1-8 and row 1-4 (`$B5E2-$B5F9`).
+- **Hyperspace coordinator destroyed** (`$3E`): the destination column is off by up to one (`$FCBD-$FCD0`).
+
+**Sprites in hyperspace:** 1, 2, 4, 5, 6 are meteors, 0 and 3 the guns in the lower split, 7 the barrels; sprite 0 in the upper area (the crosshair) is hidden (y 0). So the crosshair sprite is free for a mouse pointer, in the C64 game and in the port.
+
+**Mouse in hyperspace:** with a mouse, the 1351 patch turns motion into joystick directions (`MSYN`, `$B8` is not 0 in hyperspace), so a direction lasts one frame per movement: meteors move only a little, and there is no feedback. With the crosshair shown at the pointer and its offset from the centre held as a direction (the cockpit's rule, `DS`), steering in hyperspace works like flight.
+
+- **Port:** the crosshair stays on in hyperspace with a mouse; the cockpit's steering mask gives `JOY`.
+- **C64 patch:** needs a hook in the hyperspace loop and about 60 more bytes, and the patch has none left. Candidate: sprite shape `$3D` (`$4F40-$4F7F`), a fifth globe frame that the planet's cycle (`$39-$3C`) never shows and no code addresses; to confirm with a fill test in play.
+
+Port order: (1) memory: room for about 2-3 KB (bank 1 or the RAM under the KERNAL, see the Status's note); (2) the hyperspace loop with stars, energy, countdown, deceleration and the arrival (no meteors); (3) meteors, dodging, deflector, hits; (4) positioning and the scanner; (5) the plotted path and acceleration on the map; (6) abort and a destroyed coordinator; (7) the mouse pointer, then the same in the C64 patch.
+
+### Hyperspace: earlier notes
 
 From the map, fire picks a sector; `$B700` counts the jump (`$B3DA` up to
 `$3A`, `$B3DB` every 6), the star field changes, `$B764` returns to the cockpit

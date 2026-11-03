@@ -370,6 +370,30 @@ function report(hooks, label) {
       run(m, hooks, 10, () => { m.mouse.right = true; m.mouse.left = true; }); m.mouse.right = false; m.mouse.left = false; run(m, hooks, 4);
       check(K[s.MAPSHOWN] === map0, 'game: both buttons do not open the map');
     }
+    {   // the hyperspace cursor test: H on, the mouse's motion steers for one frame, the
+        // crosshair springs back to the centre when the mouse rests, its colour cycles
+      K[s.APPR] = 0; K[s.APRUN] = 0; K[s.MAPSHOWN] = 0;
+      run(m, hooks, 3, () => m.setKey(3, 5, true)); m.setKey(3, 5, false); run(m, hooks, 2);
+      const on = K[s.HTEST];
+      let pulses = 0;
+      for (let i = 0; i < 20; i++) { m.moveMouse(4, 0); run(m, hooks, 1); if ((K[s.JOY] & 0x08) === 0) pulses++; }
+      const away = K[s.CURX] - K[s.CEN];
+      run(m, hooks, 25);
+      const back = Math.abs(K[s.CURX] - K[s.CEN]), held = (K[s.JOY] & 0x0F) === 0x0F;
+      const cols = new Set();   // the crosshair's colour, written in the upper part (line 78)
+      let nosplit = 0;          // and no frame loses its top split (the wait for line 251 once wrapped)
+      for (let i = 0; i < 40; i++) {
+        m.moveMouse(i % 4 === 0 ? 3 : 0, 0); run(m, hooks, 1);
+        const vl = m.vicLog; let top = false;
+        for (let j = 0; j < vl.length; j += 4) { if (vl[j + 2] === 0x21 && vl[j] >= 54 && vl[j] <= 58) top = true; }
+        for (let j = 0; j < vl.length; j += 4) if (vl[j + 2] === 0x27 && vl[j] < 150) { cols.add(vl[j + 3]); break; }
+        if (!top) nosplit++;
+      }
+      check(nosplit === 0, `game: with the cursor test on every frame has its top split (${nosplit} missed)`);
+      run(m, hooks, 3, () => m.setKey(3, 5, true)); m.setKey(3, 5, false); run(m, hooks, 2);
+      check(on === 1 && pulses >= 15 && away > 20 && back <= 1 && held && cols.size >= 3 && K[s.HTEST] === 0,
+        `game: hyperspace cursor test (H): ${pulses} steering frames while moving, ${away} pixels out, ${back} from the centre after 25 resting frames, ${cols.size} colours, H again ends it`);
+    }
     {   // the next group's approach ends tracking, whatever its pass counter says
       K[s.APPR] = 1; K[s.APRUN] = 1; K[s.LRMODE] = 1; K[s.TRUN] = 1; K[s.TRACK] = 1; K[s.TON] = 1; K[s.TACC] = 0; K[s.TACC + 1] = 0; K[s.TPC] = 1;
       run(m, hooks, 3);

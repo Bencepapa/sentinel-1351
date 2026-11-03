@@ -121,6 +121,10 @@ PATCHES_COCKPIT = [
     ('KILLHK: RTS             ; (c128-game: the map\'s COUNT follows)\n', 'KILLHK: JMP SECKILL     ; (game)\n'),
     ('EMPTYHK:JMP SECSTART    ; standalone: the next squadron arrives (c128-game: none)\n', 'EMPTYHK:RTS             ; (game) the sector is empty now\n'),
     ('nov3:   LDA #168        ; the explosions', 'nov3:   JSR VIEWWORK    ; (game)\n        LDA #168        ; the explosions'),
+    # the hyperspace cursor test (H, game.asm HINPUT): input and the crosshair's colour
+    ('iv1:    JMP INPUT\n', 'iv1:    JMP HINPUT      ; (game)\n'),
+    ('        LDA NUMCOL      ; white, light green while the target is behind ($3934)\n',
+     '        LDA HCOLOR      ; (game) NUMCOL, or the colours of the hyperspace test\n'),
     # a squadron coming into the ship's sector starts the dogfight (ARREND in game.asm)
     ('        LDA #$00        ; ($C7DC) the dogfight\n', 'DOGSTART:LDA #$00       ; ($C7DC) the dogfight\n'),
     # the stars keep the map's pixels while it is open (GPLOT, GERASE in game.asm)

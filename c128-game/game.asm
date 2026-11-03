@@ -678,12 +678,144 @@ GENONCE:LDA GENDONE     ; the start layout only once
 g_gon1: RTS
 GENDONE:.BYTE 0
 
+; A test of a mouse cursor for hyperspace (H switches it on and off in flight).
+; As the 1351 patch does off the cockpit, the mouse's motion is the joystick for
+; this frame only (MSYN); the crosshair moves with the mouse and, as soon as the
+; mouse rests, springs back toward the centre, as if hyperspace pulled the
+; controls back. It changes colour, and its three digits spin. With a joystick
+; nothing changes.
+HINPUT: LDA #$F7        ; H: column 3, row 5 (a new press)
+        STA CIA1PA
+        LDA CIA1PB
+        AND #$20
+        BNE g_hk1
+        LDA HKPREV
+        BNE g_hk2
+        INC HKPREV
+        LDA HTEST
+        EOR #$01
+        STA HTEST
+        JMP g_hk2
+g_hk1:  LDA #$00
+        STA HKPREV
+g_hk2:  LDA #$BF        ; port 2 again: its pots are read next
+        STA CIA1PA
+        JSR INPUT
+        LDA HTEST
+        AND MPRES
+        BNE g_hi0a
+        JMP g_hi9
+g_hi0a: LDA JRAW        ; the motion as directions, this frame only
+        ORA #$01        ; (the right button is wired to UP)
+        LDX MDY
+        BEQ g_hi1
+        BMI g_hi0
+        AND #$FD
+        BNE g_hi1
+g_hi0:  AND #$FE
+g_hi1:  LDX MDX
+        BEQ g_hi3
+        BMI g_hi2
+        AND #$F7
+        BNE g_hi3
+g_hi2:  AND #$FB
+g_hi3:  STA JOY
+        STA JOYG
+        LDA MDX         ; resting: back toward the centre, a quarter a frame
+        ORA MDY
+        BNE g_hi6
+        LDA CURX
+        LDX CEN
+        JSR HSPRING
+        STA CURX
+        LDA CURY
+        LDX YCEN
+        JSR HSPRING
+        STA CURY
+        LDA CURX
+        CLC
+        ADC #$2D
+        STA XPOS
+        LDA #$00
+        ROL A
+        STA XMSB
+g_hi6:  RTS
+
+; The test cursor's looks, in the 3D view's free time (VIEWWORK): at 1 MHz in the
+; input's slot they pushed the vertical blank past its end.
+HVIEW:  LDA HTEST
+        AND MPRES
+        BNE g_hv1
+        LDA NUMCOL
+        STA HCOLOR
+        RTS
+g_hv1:  INC HFRM        ; the colour, a step every 4th frame
+        LDA HFRM
+        LSR A
+        LSR A
+        AND #$07
+        TAX
+        LDA HCOLS,X
+        STA HCOLOR
+        LDA #$02        ; the digits spin
+        STA HDIG
+g_hi7:  JSR RANDOM
+        AND #$0F
+        CMP #10
+        BCC g_hi8
+        SBC #6
+g_hi8:  TAY
+        LDX HDIG
+        JSR DIGIT
+        DEC HDIG
+        BPL g_hi7
+        RTS
+g_hi9:
+        RTS
+; A = position, X = centre: A moved a quarter of the way (at least 1) to the centre.
+HSPRING:STA HPOS
+        STX HCEN
+        SEC
+        SBC HCEN
+        BEQ g_hs9
+        BCC g_hs1
+        LSR A           ; above: position - (d / 4 + 1)
+        LSR A
+        CLC
+        ADC #$01
+        STA HT
+        LDA HPOS
+        SEC
+        SBC HT
+        RTS
+g_hs1:  EOR #$FF        ; below: position + ((centre - position) / 4 + 1)
+        ADC #$01
+        LSR A
+        LSR A
+        CLC
+        ADC #$01
+        CLC
+        ADC HPOS
+        RTS
+g_hs9:  LDA HPOS
+        RTS
+HCOLS:  .BYTE $0E,$0E,$03,$01,$03,$0E,$06,$06
+HTEST:  .BYTE 0
+HKPREV: .BYTE 0
+HFRM:   .BYTE 0
+HDIG:   .BYTE 0
+HCEN:   .BYTE 0
+HPOS:   .BYTE 0
+HT:     .BYTE 0
+HCOLOR: .BYTE 1
+
 ; The world's clock, every frame (the map's TICKER: a tick every 256 frames).
 WORLD:  JMP M_TICKER
 
 ; In the 3D view's free time (at 1 MHz: the vertical blank is full in a fight): a step
 ; of the squadrons' move, if one is going on, and of a squadron coming in.
-VIEWWORK:JSR MVSTEP
+VIEWWORK:JSR HVIEW
+        JSR MVSTEP
         JMP ARRSTEP
 
 ; Six sectors a frame of the squadrons' move (the map's MOVEPASS, in steps).

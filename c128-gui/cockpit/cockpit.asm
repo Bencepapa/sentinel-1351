@@ -249,8 +249,12 @@ w242:   LDA #$00
         STA $D016
 
         JSR INPUTV      ; vertical blank: mouse, cursor, guns (at 1 MHz: lines 243-250
-        LDA #251        ; show the row with the lower screws)
-        JSR WAITLN
+w251:   BIT $D011       ; show the row with the lower screws). Line 251, or past it:
+        BMI w251ok      ; WAITLN would read lines 256 on as 0 and wait a whole frame
+        LDA $D012
+        CMP #251
+        BCC w251
+w251ok:
         LDA FAST        ; 2 MHz in the border, lines 251-47: the VIC-IIe fetches nothing
         ORA #$01        ; there (sprites off, no bad lines): twice the time (I/O
         STA FAST        ; accesses stay 1 MHz)
