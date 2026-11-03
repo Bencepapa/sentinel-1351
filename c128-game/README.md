@@ -80,5 +80,5 @@ jump into a squadron's sector (the approach begins, TARGETS), the HUD's sector,
 the view's colours back, kills emptying the sector, C= closing the map, the right
 button, fire on the ship's own sector, a squadron coming in, the splits' timing.
 
-Not yet: hyperspace's abort, proton torpedoes, thrust (W), types 2 and 3, motherships and
+Not yet: hyperspace's abort, proton torpedoes, thrust (W), motherships and
 bases, the second display while flying, game over, and the destroyed-system messages.

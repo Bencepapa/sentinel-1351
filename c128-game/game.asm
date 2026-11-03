@@ -36,8 +36,8 @@ STARLIM = 28            ; the stars start before line 256 + this
         * = $5300       ; the glue: CPU RAM the VIC-IIe cannot use (after MMAT)
 
 GAMEINIT:               ; once, from the cockpit's START
-        LDY #$00        ; the code for $E000 from where it was loaded, $6400 (6 pages),
-        LDX #$06        ; its source cleared again
+        LDY #$00        ; the code and data for $E000 from where they were loaded,
+        LDX #$12        ; $6400 (18 pages), the source cleared again
         LDA #$64
         STA CSRC+1
         LDA #$E0
@@ -745,7 +745,8 @@ GENDONE:.BYTE 0
 ; machine's timing (JS machine with m.dma): a tick every 33 frames with the map open,
 ; 44 in flight (and in hyperspace), 54 in a fight, 200 while the tracking computer
 ; flies. (The map program ticks every 256 frames, about five times slower.)
-WORLD:  LDA GENDONE     ; (the world exists)
+WORLD:  JSR GCOLCYC     ; types 2 and 3: the colours
+        LDA GENDONE     ; (the world exists)
         BEQ g_wd9
         LDA HYPON       ; no tick while the path is plotted and the ship accelerates
         CMP #$01        ; (the original's $B3F6 loop does not call $BE29)
@@ -776,7 +777,9 @@ WTCNT:  .BYTE 44
 
 ; In the 3D view's free time (at 1 MHz: the vertical blank is full in a fight): a step
 ; of the squadrons' move, if one is going on, and of a squadron coming in.
-VIEWWORK:LDA WTPEND
+VIEWWORK:               ; (shpj: JSR GSHLOAD while the squadron's shapes load, else
+shpj:   BIT GSHLOAD     ; a BIT that costs a fight's tight frame only 4 cycles)
+        LDA WTPEND
         BEQ g_vw1
         LDA $D012       ; (the tick takes ~40 lines: late, the next frame)
         CMP #126
@@ -830,6 +833,7 @@ SQINCHK: LDA ARRFX
         BMI g_ac9
         LDA M_COUNT,X
         BEQ g_ac9
+        JSR GSQTYPE     ; (its shapes load while its points rush in)
         LDA #$01
         STA ARRFX
 g_ac9:  RTS
@@ -956,6 +960,7 @@ g_ap9:  RTS
 ; The fighters ($1B60-$1B92, $1C24-$1C55): at least 3 ships, one group, the dogfight
 ; and the warning.
 ARREND: JSR SECIDX
+        JSR GSQTYPE
         LDA M_COUNT,X
         CMP #$03
         BCS g_ar1
@@ -1014,6 +1019,7 @@ SECTORIN:
         LDA #$00        ; (a squadron's coming in is off: the map's wipe clears it)
         STA ARRFX
         JSR SECIDX
+        JSR GSQTYPE     ; (its type: the fighters' shapes are loaded meanwhile)
         LDA #$00
         LDY M_STATE,X
         BEQ g_sin1      ; empty
@@ -1291,6 +1297,7 @@ HSCANGO:JSR HMINIT
         CLC
         ADC HTGTX
         TAX
+        JSR GSQTYPE     ; (its shapes load during the jump)
         LDA #$00
         LDY M_STATE,X
         BEQ g_sg1       ; empty
@@ -3012,6 +3019,174 @@ HDH:    .BYTE 0
 ; Loaded with the program at $6400 (the 3D view's bitmap, wiped before it shows)
 ; and moved here by GAMEINIT: a program cannot load across $D000-$DFFF (I/O).
         * = $E000
+TSH1    = $E600         ; masters: type 1 $20-$2E (15), type 2 $3E-$44 (7), type 3
+TSH2    = $E9C0         ; $31-$38 (8); type 2's x and y streams (the original's $0600,
+TSH3    = $EB80         ; $8100); build.py puts them here, GAMEINIT moves them along
+STR2X   = $EE00
+STR2Y   = $F000
+
+; ---------------- squadron types 2 and 3 ($FFAF, $2E86 / $2EBE / $2F18) ----------------
+; The squadron's type (SQTYPE, from the map's STATE: 1 the twin-pod fighters, 2 the
+; spiky ships, 3 the lens ships) picks the fighters' shapes, streams and looks. The
+; three types share the fighters' sprite slots ($80-$8E): GSHLOAD copies the type's
+; shapes there a shape a frame from their masters at $E600 (16, 7 or 8 shapes),
+; meanwhile the approach goes on. Types 2 and 3: multicolour (6 / 2), twice as wide;
+; their colours step every frame, white on their last hit ($2EC4).
+GSQTYPE:LDA M_STATE,X   ; X = the sector: 1-3 a squadron's type
+        BEQ g_sq9
+        BMI g_sq9
+        STA SQTYPE
+        CMP SHLT        ; its shapes to load: VIEWWORK calls GSHLOAD
+        BEQ g_sq9
+        LDA #$20
+        STA shpj
+g_sq9:  RTS
+
+GSHLOAD:LDA SHLT        ; the slots hold SQTYPE's shapes?
+        CMP SQTYPE
+        BEQ g_sl9
+        LDA $D012       ; (time: in the 3D view's, before line 150)
+        CMP #150
+        BCS g_sl9
+        LDX SQTYPE
+        LDA SHLK        ; shape SHLK: from the master to $6000 + SHLK x 64
+        LSR A
+        LSR A
+        STA CDST+1
+        LDA SHLK
+        ROR A
+        ROR A
+        ROR A
+        AND #$C0
+        STA CDST
+        CLC
+        ADC SHMLO-1,X
+        STA CSRC
+        LDA CDST+1
+        ADC SHMHI-1,X
+        STA CSRC+1
+        LDA CDST+1
+        CLC
+        ADC #$60
+        STA CDST+1
+        LDY #63
+g_sl1:  LDA (CSRC),Y
+        STA (CDST),Y
+        DEY
+        BPL g_sl1
+        INC SHLK
+        LDA SHLK
+        CMP SHMN-1,X
+        BCC g_sl9
+        LDA #$00        ; all of them
+        STA SHLK
+        STX SHLT
+        LDA #$2C        ; (VIEWWORK: a BIT again)
+        STA shpj
+g_sl9:  RTS
+SHMLO:  .BYTE <TSH1,<TSH2,<TSH3
+SHMHI:  .BYTE >TSH1,>TSH2,>TSH3
+SHMN:   .BYTE 15,7,8
+
+; The type's set-up when a wave starts (NEWWAVE, after its colours): multicolour and
+; width of sprites 4-6 by self-modifying SPRENEMY's AND / ORA (sprmc, sprxe: the same
+; time for every type), the multicolours 6 / 2.
+GTYPE:  LDA ETYPE
+        CMP #$02
+        BCS g_ty1
+        LDA #$29        ; AND #$8F: single colour, not expanded
+        LDX #$8F
+        BNE g_ty2
+g_ty1:  LDA #$06
+        STA $D025
+        LDA #$02
+        STA $D026
+        LDA #$09        ; ORA #$70: multicolour, twice as wide
+        LDX #$70
+g_ty2:  STA sprmc
+        STA sprxe
+        STX sprmc+1
+        STX sprxe+1
+        LDX #$05        ; PLACE's shape: type 1's own code, else JSR GESHP
+        LDA ETYPE
+        CMP #$02
+        BCS g_ty4
+g_ty3:  LDA PLSH1,X
+        STA plshp,X
+        DEX
+        BPL g_ty3
+        RTS
+g_ty4:  LDA PLSH2,X
+        STA plshp,X
+        DEX
+        BPL g_ty4
+        RTS
+PLSH1:  .BYTE $38,$A9,$2F,$ED,<ZT,>ZT   ; SEC / LDA #$2F / SBC ZT
+PLSH2:  .BYTE $20,<GESHP,>GESHP,$EA,$EA,$EA
+
+; Types 2 and 3: each fighter's colour steps every frame, white once it can take only
+; one more hit ($2EC4, every placement in the original).
+GCOLCYC:LDA APPR        ; approaching: sprite 4 is the scanner's blip, single colour
+        BEQ g_cc0       ; and narrow whatever fought last (NEWWAVE's GTYPE sets the
+        LDA #$29        ; next type's looks)
+        STA sprmc
+        STA sprxe
+        LDA #$8F
+        STA sprmc+1
+        STA sprxe+1
+        RTS
+g_cc0:  LDA ETYPE
+        CMP #$02
+        BCC g_cc9
+        LDA ALIVE
+        ORA ALIVE+1
+        ORA ALIVE+2
+        BEQ g_cc9
+        LDX #$02
+g_cc1:  LDY $D02B,X
+        DEY
+        LDA EHITS,X
+        CMP #$02
+        BCS g_cc2
+        LDY #$01
+g_cc2:  TYA
+        STA $D02B,X
+        DEX
+        BPL g_cc1
+g_cc9:  RTS
+
+; The x / y streams' first page by type ($FF15 / $FF18): type 2 its own tables
+; (the original's $0600 and $8100, copied to STR2X / STR2Y).
+GSTRX:  LDY #>STREAMS
+        LDA ETYPE
+        CMP #$02
+        BNE g_gs1
+        LDY #>STR2X
+g_gs1:  RTS
+GSTRY:  LDY #>STREAMS+2
+        LDA ETYPE
+        CMP #$02
+        BNE g_gs2
+        LDY #>STR2Y
+g_gs2:  RTS
+
+; The shape from the depth (ZT, 0-15): type 1 $2F - ZT ($2E86); types 2 and 3 from
+; their tables ($2EAE, $2F08), as the slot holding it: $20 + its place in the type's
+; shapes (ENPTR: slot $80 + that).
+GESHP:  LDX ZT          ; (types 2 and 3 only)
+        LDA ETYPE
+        CMP #$03
+        BEQ g_es3
+        LDA T2K,X
+        RTS
+g_es3:  LDA T3K,X
+        RTS
+T2K:    .BYTE $26,$26,$26,$25,$25,$25,$24,$24,$23,$23,$22,$22,$21,$21,$20,$20
+T3K:    .BYTE $27,$27,$26,$26,$25,$25,$24,$24,$23,$23,$22,$22,$21,$21,$20,$20
+SQTYPE: .BYTE 1
+SHLT:   .BYTE 1         ; the type whose shapes the slots hold
+SHLK:   .BYTE 0
+
 ; (meteors, continued)
 ; Dodging ($B8D9): each meteor pushed away from the stick's directions by twice
 ; its growth; out of the view: gone.

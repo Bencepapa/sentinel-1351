@@ -48,7 +48,7 @@ MAPCODE = 0xA500         # provisional: assemble() puts the map right after the 
 VDCDATA = 0x2900
 GLUE = 0x5300            # game.asm's code and data (after the master copy at $5000)
 HIGH2 = 0xE000           # more code, under the KERNAL too: loaded at HIGH2SRC (the view's bitmap)
-HIGH2SRC = 0x6400        # and moved by GAMEINIT (6 pages)
+HIGH2SRC = 0x6400        # and moved by GAMEINIT (18 pages: code to $E5FF, then shapes and streams)
 HIGH = 0xC000            # game.asm's code in the RAM under the KERNAL (MMU $3E)
 OUT = os.path.join(HERE, 'sentinel-c128-game.prg')
 
@@ -155,6 +155,18 @@ PATCHES_COCKPIT = [
     # no burst over the open map (MAPOPEN stops them; a shot reaching the ship started one)
     ('        LDA EXPL2       ; ($CA80) 12 points burst where it was\n        BNE efm9\n',
      '        LDA EXPL2       ; ($CA80) 12 points burst where it was\n        ORA MAPSHOWN    ; (game) not over the map\n        BNE efm9\n'),
+    # squadron types 2 and 3 (game.asm GTYPE, GESHP, GSTRX / GSTRY, GSHLOAD)
+    ('NEWWAVE:LDA #$01        ; type 1\n', 'NEWWAVE:LDA SQTYPE      ; (game) the squadron\'s type ($A5)\n'),
+    ('        LDA #$01\n        STA $D02D\n        LDA #$00\n',
+     '        LDA #$01\n        STA $D02D\n        JSR GTYPE       ; (game) the type\'s looks\n        LDA #$00\n'),
+    ('        LDY #>STREAMS   ; x stream (original page $E8, table $FF15)\n',
+     '        JSR GSTRX       ; (game) x stream by type ($FF15)\n'),
+    ('        LDY #$82        ; y stream, STREAMS page + 2 ($EA, table $FF18)\n',
+     '        JSR GSTRY       ; (game) y stream by type ($FF18)\n'),
+    ('        SEC\n        LDA #$2F\n        SBC ZT\n        STA ESHP,Y\n',
+     'plshp:  SEC             ; (game) $2E86; types 2, 3: JSR GESHP ($2EBE, $2F18), set by GTYPE\n        LDA #$2F\n        SBC ZT\n        STA ESHP,Y\n'),
+    ('        LDA $D01C       ; type 1: single colour, not expanded, in front\n        AND #$8F\n        STA $D01C\n        LDA $D01D\n        AND #$8F\n',
+     '        LDA $D01C       ; (game) the type\'s colours and width: GTYPE sets sprmc, sprxe\nsprmc:  AND #$8F\n        STA $D01C\n        LDA $D01D\nsprxe:  AND #$8F\n'),
     # in hyperspace no steering, enemy fire or approach in the vertical blank (HVBR)
     ('vbr:    LDA APPR\n        BEQ vbdog\n', 'vbr:    JSR HVBR        ; (game)\n        BEQ vbdog\n'),
     # in hyperspace the border pulses (HBORD), the sweeps leave it alone
@@ -245,7 +257,7 @@ def main():
     chunks, symbols = assemble()
     if set(chunks) != {ENTRY, CODE2, MAPCODE, GLUE, HIGH, HIGH2}:
         raise SystemExit(f'unexpected assembly chunks: {[hex(c) for c in chunks]}')
-    for start, limit in ((ENTRY, VDCDATA), (CODE2, MAPCODE), (MAPCODE, 0xC000), (GLUE, 0x6000), (HIGH, 0xD000), (HIGH2, HIGH2 + 0x600)):
+    for start, limit in ((ENTRY, VDCDATA), (CODE2, MAPCODE), (MAPCODE, 0xC000), (GLUE, 0x6000), (HIGH, 0xD000), (HIGH2, 0xE600)):
         if start + len(chunks[start]) > limit:
             raise SystemExit(f'code from ${start:04X} ends at ${start + len(chunks[start]):04X}, past ${limit:04X}')
 
@@ -256,6 +268,18 @@ def main():
     cockpit_build.place_assets(p)                   # the cockpit's picture wins where they meet
     for address, data in chunks.items():
         p(HIGH2SRC if address == HIGH2 else address, data)
+    # the fighters' shape masters by type and type 2's streams, at $E600+ (moved there)
+    ref = os.path.join(ROOT, 'c128-gui', 'ref')
+    sprites = open(os.path.join(ref, 'sprites-4800.bin'), 'rb').read()
+    order = [b + i for b in (0x20, 0x30, 0x40, 0x60, 0x70) for i in range(16)]
+    shape = lambda s: sprites[order.index(s) * 64:order.index(s) * 64 + 64]
+    hi2 = lambda name: HIGH2SRC + symbols[name] - HIGH2
+    p(hi2('TSH1'), b''.join(shape(s) for s in range(0x20, 0x2F)))
+    p(hi2('TSH2'), b''.join(shape(s) for s in range(0x3E, 0x45)))
+    p(hi2('TSH3'), b''.join(shape(s) for s in range(0x31, 0x39)))
+    p(hi2('STR2X'), open(os.path.join(ref, 'streams2-0600.bin'), 'rb').read())
+    p(hi2('STR2Y'), open(os.path.join(ref, 'streams2-8100.bin'), 'rb').read())
+    assert hi2('STR2Y') + 512 <= 0x7680, 'the $E000 load overlaps the cockpit art'
     # master copy of the colour matrix's view rows for MAPCLOSE (game.asm)
     p(symbols['MMAT'], bytes(body[0x4478 - LOAD:0x4478 - LOAD + 600]))
 

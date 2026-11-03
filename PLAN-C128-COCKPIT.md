@@ -15,7 +15,7 @@ Left, in a suggested order:
 
 1. **Hyperspace** (see below): the phases, streaking stars, energy, countdown, the path plotted on the map, the map's erase, the border's pulse, the engine sound, the long range scanner, positioning, meteors, dodging and the deflector are in (`HYPSTART`, `HYPVB`, `HYPVIEW` in `c128-game/game.asm`, code at `$C000`); the abort and a destroyed coordinator are next.
 2. **Proton torpedoes** (`FINDINGS.md`) and thrust (W, `$FEA7`).
-3. **Squadron types 2 and 3** (all fight as type 1).
+3. **Squadron types 2 and 3**: done (`GSQTYPE`, `GSHLOAD`, `GTYPE`, `GESHP`, `GSTRX` / `GSTRY`, `GCOLCYC` in `c128-game/game.asm`): the type's shapes are copied into the fighters' sprite slots a shape a frame from masters at `$E600`, type 2 flies its own streams (the original's `$0600` / `$8100`), types 2 and 3 are multicoloured and twice as wide, their colours step, white on the last hit.
 4. **Mothership and base sequences**, mines, docking.
 5. **What the other destroyed systems disable**, their messages, and game over. So far
    the scanners, the sequencer and the tracking computer act on their counters.

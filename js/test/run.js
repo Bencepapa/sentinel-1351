@@ -1000,6 +1000,15 @@ for (const name of Object.keys(Profiles)) {
   run(m, hooks, 3, () => m.setKey(7, 5, true)); m.setKey(7, 5, false);
   run(m, hooks, 20);
   check(!m.stopped && K[s.MAPSHOWN] === 0 && K[s.M_SELY] * 10 + K[s.M_SELX] === idx && K[s.OVRUN] === 0, `game: C= again closes the map without a jump (map ${K[s.MAPSHOWN]}, sector ${K[s.M_SELY] * 10 + K[s.M_SELX]} / ${idx}, overruns ${K[s.OVRUN]}, breakpoints ${Object.keys(m.bpAt || {}).filter(a => m.bpAt[a]).length})`);
+  {   // squadron types 2 and 3: their shapes loaded into the fighters' slots, their looks
+    const res = [];
+    for (const T of [2, 3, 1]) {
+      K[s.SQTYPE] = T; K[s.shpj] = 0x20; run(m, hooks, 20);
+      K[s.ETYPE] = T; callAt(s.GTYPE);
+      res.push(`${T}:${K[s.SHLT]}/${K[s.plshp] === (T > 1 ? 0x20 : 0x38) ? 'ok' : 'bad'}/${K[s.sprmc] === (T > 1 ? 0x09 : 0x29) ? 'ok' : 'bad'}`);
+    }
+    check(res.join(' ') === '2:2/ok/ok 3:3/ok/ok 1:1/ok/ok', `game: squadron types load their shapes and set their sprites' looks (${res.join(' ')})`);
+  }
   report(hooks, 'game');
 }
 
