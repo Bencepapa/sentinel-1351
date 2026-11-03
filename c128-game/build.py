@@ -155,13 +155,6 @@ PATCHES_COCKPIT = [
     # no burst over the open map (MAPOPEN stops them; a shot reaching the ship started one)
     ('        LDA EXPL2       ; ($CA80) 12 points burst where it was\n        BNE efm9\n',
      '        LDA EXPL2       ; ($CA80) 12 points burst where it was\n        ORA MAPSHOWN    ; (game) not over the map\n        BNE efm9\n'),
-    # voice 2 is the map's while it is open: the fight's sounds there wait (GV2CHK)
-    ('EFSND:  LDA #$00        ; ($C413) voice 2: the enemy shot\n        STA $D40B\n',
-     'EFSND:  JSR GV2CHK      ; (game) not while the map is open\n        NOP\n        NOP\n'),
-    ('MSGBEEP:LDA #$00        ; ($9D4A) voice 2\n        STA $D40B\n',
-     'MSGBEEP:JSR GV2CHK      ; (game) not while the map is open\n        NOP\n        NOP\n'),
-    ('HITSND2:LDA #$00        ; ($C3A8) the second noise of a hit\n        STA $D407\n',
-     'HITSND2:JSR GV2CHK7     ; (game) not while the map is open\n        NOP\n        NOP\n'),
     # in hyperspace no steering, enemy fire or approach in the vertical blank (HVBR)
     ('vbr:    LDA APPR\n        BEQ vbdog\n', 'vbr:    JSR HVBR        ; (game)\n        BEQ vbdog\n'),
     # in hyperspace the border pulses (HBORD), the sweeps leave it alone

@@ -1074,7 +1074,8 @@ DSK:    .BYTE 0
 ; harmless while the KERNAL's vectors are not visible.
 
 ; The map's beeps (its SNDTOG, $B2BC; BLIP, $223D): voices 1 and 2 set up whole every
-; time, not just gated: a fight goes on with the map open, and its sounds change them.
+; time, not just gated. A fight goes on with the map open and its sounds play over
+; the beeps (as in the original); this way the beeps come back right after them.
 GSNDTOG:DEC M_SNDCNT
         BNE g_gt9
         LDA #$02
@@ -1107,24 +1108,6 @@ GSNDTOG:DEC M_SNDCNT
         STA M_SNDVAL
         STA $D404
 g_gt9:  RTS
-; The fight's voice-2 sounds (EFSND, MSGBEEP, HITSND2) are left out while the map is
-; open (the map's beeps hold voices 1 and 2) or its pixels still show: out of the
-; routine. Else the instruction they replaced.
-GV2CHK: LDA MAPSHOWN
-        ORA HMAP
-        BNE g_v2x
-        LDA #$00
-        STA $D40B
-        RTS
-GV2CHK7:LDA MAPSHOWN
-        ORA HMAP
-        BNE g_v2x
-        LDA #$00
-        STA $D407
-        RTS
-g_v2x:  PLA
-        PLA
-        RTS
 GBLIP:  LDA #$00
         STA $D404
         STA $D406
