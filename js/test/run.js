@@ -967,13 +967,15 @@ for (const name of Object.keys(Profiles)) {
   check(K[s.PTON] === 1 && K[s.M_CURX] === idx % 10 && K[s.M_CURY] === Math.floor(idx / 10) && (K[0xD015 - 0xD000 + 0] !== undefined),
     `game: the map's mouse pointer (a +) moves over the grid, the box follows it to sector ${idx % 10},${Math.floor(idx / 10)}`);
   // a jump goes through hyperspace: accelerating, a step per point of the path, decelerating
-  let hyperFight = 0;     // (no squadron comes in, no fight, during the jump; the world's clock
+  let hyperFight = 0, hyperScan = 0, hyperSlots = '';     // (no squadron comes in, no fight, during the jump; the world's clock
                           // held, so the destination's squadron is still there on arrival)
-  const throughHyper = () => { const f0 = m.frame; for (let n = 0; n < 4000 && (K[s.HYPON] || K[s.WIPE]); n++) { K[s.WTCNT] = 100; run(m, hooks, 1); if (K[s.HYPON] && (K[s.ARRFX] || K[s.ALIVE] || K[s.ALIVE + 1] || K[s.ALIVE + 2] || K[s.RBON] || K[s.RBON + 1] || K[s.RBON + 2])) hyperFight++; } const n = m.frame - f0; run(m, hooks, 20); return n; };
+  const throughHyper = () => { const f0 = m.frame; for (let n = 0; n < 4000 && (K[s.HYPON] || K[s.WIPE]); n++) { K[s.WTCNT] = 100; run(m, hooks, 1); if (K[s.HYPON] && (K[s.ARRFX] || K[s.ALIVE] || K[s.ALIVE + 1] || K[s.ALIVE + 2] || (K[s.HSCAN] !== 3 && (K[s.RBON] || K[s.RBON + 1] || K[s.RBON + 2])) || (K[s.EVIS] & 0x10))) hyperFight++; if (K[s.HSCAN] === 3) hyperScan++; if (K[s.HYPON] === 3 && K[s.HSCAN] === 3) { hyperSlots = [...K.subarray(s.ENX, s.ENX + 18)].join(); } } const n = m.frame - f0; run(m, hooks, 20); return n; };
   run(m, hooks, 4, i => { m.mouse.left = i < 2; }); run(m, hooks, 2);
   const hyp = K[s.HYPON], steps = K[s.HSTEPS], hypFrames = throughHyper();
+  check(hyperScan > 200 && hyperSlots !== '' && K[s.RELAYOUT] === 0 && [...K.subarray(s.ENX, s.ENX + 18)].join() !== [1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0].join(),
+    `game: in the jump the long range scanner shows the destination's groups (${hyperScan} frames); on arrival they stay where hyperspace put them (relayout ${K[s.RELAYOUT]})`);
   check(hyp >= 1 && steps > 0 && hypFrames > 300 + steps * 12 && hypFrames < 400 + steps * 15 && hyperFight === 0 && K[s.QN] === 0,
-    `game: the jump goes through hyperspace: ${steps} steps, ${hypFrames} frames, ${hyperFight} frames with fighters or radar marks, ${K[s.QN]} boxes left queued for the map`);
+    `game: the jump goes through hyperspace: ${steps} steps, ${hypFrames} frames, ${hyperFight} frames with fighters, the blip or stray radar marks, ${K[s.QN]} boxes left queued for the map`);
   check(!m.stopped && K[s.MAPSHOWN] === 0 && K[s.M_SELY] * 10 + K[s.M_SELX] === idx && K[s.APPR] === 1 && K[s.SQCOUNT] === n0 && +tg() === n0,
     `game: fire on a squadron's sector closes the map and jumps there: the approach of ${n0} ships begins, TARGETS ${tg()}`);
   check(K[s.M_SELX] + 1 === K[s.HUDSEC + 1] - 0x70 && K[s.M_SELY] + 1 === K[s.HUDSEC + 4] - 0x70, 'game: the HUD shows the new sector');

@@ -257,7 +257,13 @@ MAPVB:  LDA WIPE
         LDA HYPON       ; hyperspace: the path, the map's erase and the stars here,
         BEQ g_vh1       ; the rest in the view's time
         JMP HYPMVB
-g_vh1:  LDA #$00
+g_vh1:  LDA WIPE        ; the radar's circle being drawn (about 100 lines, VBWORK):
+        BNE g_vh2       ; the map waits a frame
+        LDA CRUN
+        ORA CPEND
+        BEQ g_vh2
+        RTS
+g_vh2:  LDA #$00
         STA MBUSY
         JSR MAPVB1
         LDA MBUSY       ; a box or icons drawn: no time for the stars
@@ -268,7 +274,9 @@ g_vh1:  LDA #$00
         CMP #243
         BCC g_vs9
         BCS g_vs2
-g_vs1:  LDA $D012
+g_vs1:  LDA APPR        ; (approaching, a rush's star steps do not fit after the wrap)
+        BNE g_vs9
+        LDA $D012
         CMP #STARLIM
         BCS g_vs9
 g_vs2:  JMP STARS
@@ -1165,6 +1173,185 @@ g_ic2:  STA (CSRC),Y
         BPL g_ic1
         RTS
 
+; The jump begins ($B58B-$B5C8): the scanner goes to long range ($3194), the
+; destination's squadron is split into groups and laid out ($3D79, LYSTEP in the
+; vertical blank), then put level with the ship ($1D/$1F/$21 = $88; at the easy
+; levels the first group straight ahead, $17 = $88, $23 = $94) and the blip starts
+; ($3736). An empty destination shows readings of 0.
+HSCANGO:LDA HTGTY       ; the destination's sector
+        ASL A
+        ASL A
+        CLC
+        ADC HTGTY
+        ASL A
+        CLC
+        ADC HTGTX
+        TAX
+        LDA #$00
+        LDY M_STATE,X
+        BEQ g_sg1       ; empty
+        BMI g_sg1       ; a mothership: not ported yet
+        LDA M_COUNT,X
+g_sg1:  STA SQCOUNT
+        LDA #$00
+        STA GSEL
+        STA NUMT
+        STA HPACC
+        LDA #$01        ; (the radar's mode in the vertical blank: in the view's
+        STA LRMODE      ; time it ran late)
+        STA HVBJ
+        JSR LRCLEAR
+        LDA SQCOUNT
+        BEQ g_sg2
+        LDA #$01        ; laying out
+        STA HSCAN
+        JMP LAYOUT
+g_sg2:  LDA #$00        ; empty: no groups, the readings 0
+        STA GSIZE
+        STA GSIZE+1
+        STA GSIZE+2
+        LDA #$88
+        STA ENX+1
+        STA ENY+1
+        STA ENZ+1
+        LDA #$02
+        STA HSCAN
+        JMP lr7
+
+; The jump's frame: the layout's end, positioning ($9A95, every 2 passes: about
+; 1.4 a frame), the readings ($3776, every 16 passes: every 6 frames).
+HSCANF: LDA HSCAN
+        CMP #$01
+        BNE g_sf3
+        LDA LYACT       ; the layout done: level with the ship, the blip
+        BNE g_sf9
+        LDA #$88
+        STA ENY+1
+        STA ENY+3
+        STA ENY+5
+        LDA DIFF
+        CMP #$02
+        BCS g_sf1
+        LDA #$88
+        STA ENX+1
+        LDA #$94
+        STA ENZ+1
+g_sf1:  LDA #$03        ; (no blip, no choosing a group with fire: the original's
+        STA HSCAN       ; tracking sprite comes on arrival)
+        RTS
+g_sf3:  CMP #$03
+        BNE g_sf9
+        JSR HJPOS
+        CLC
+        LDA HPACC
+        ADC #$66
+        STA HPACC
+        BCC g_sf4
+        JSR HJPOS
+g_sf4:  DEC HRDC
+        BPL g_sf9
+        LDA #$05
+        STA HRDC
+        JMP lr7         ; (the readings only: no blip, fire does not choose)
+g_sf9:  RTS
+
+; Positioning ($9A95): the stick moves every group: up / down its depth by $40
+; (nearer / farther, $2C27), left / right its side by $40 ($2BEF). A slot with no
+; group keeps depth 0 ($B600).
+HJPOS:  LDX #$04
+g_po1:  LDA JOY
+        STA HJT
+        LSR HJT
+        BCS g_po2
+        LDA #$40
+        JSR ADDZ
+g_po2:  LSR HJT
+        BCS g_po3
+        LDA #$C0
+        JSR ADDZ
+g_po3:  LSR HJT
+        BCS g_po4
+        LDA #$40
+        JSR ADDX
+g_po4:  LSR HJT
+        BCS g_po5
+        LDA #$C0
+        JSR ADDX
+g_po5:  DEX
+        DEX
+        BPL g_po1
+        LDX #$04
+        LDY #$02
+g_po6:  LDA GSIZE,Y
+        BNE g_po7
+        STA ENZ+1,X
+g_po7:  DEX
+        DEX
+        DEY
+        BPL g_po6
+        RTS
+
+; The arrival: the radar back to close range, the sector entered (SECTORIN); the
+; groups stay where hyperspace put them (the original's slots are not laid out
+; again), the approach begins with them.
+HARRIVE:LDA HSCAN
+        BEQ g_hz3
+        LDX #17         ; the slots and the groups' sizes kept
+g_hz1:  LDA ENX,X
+        STA HSLOT,X
+        DEX
+        BPL g_hz1
+        LDX #$02
+g_hz2:  LDA GSIZE,X
+        STA HSLOT+18,X
+        DEX
+        BPL g_hz2
+g_hz3:  JSR SECTORIN
+        LDA HSCAN
+        CMP #$03
+        BNE g_hz6
+        LDA APPR        ; (an approach: the same squadron)
+        BEQ g_hz6
+        LDX #17
+g_hz4:  LDA HSLOT,X
+        STA ENX,X
+        DEX
+        BPL g_hz4
+        LDX #$02
+g_hz5:  LDA HSLOT+18,X
+        STA GSIZE,X
+        DEX
+        BPL g_hz5
+        LDA #$00
+        STA RELAYOUT
+g_hz6:  LDA #$00
+        STA HSCAN
+        RTS
+
+; RADMODE without its beep: in hyperspace the radar changes range silently.
+HRMODE: LDY LRMODE
+        LDA RTAB,Y
+        STA RXLO
+        LDA RTAB+2,Y
+        STA RXHI
+        LDA RTAB+4,Y
+        STA RZLO
+        LDA RTAB+6,Y
+        STA RZHI
+        LDA #$04        ; long: plot 4, erase 8; close: plot 8, erase 4
+        LDX #$08
+        CPY #$00
+        BNE g_rm1
+        LDA #$08
+        LDX #$04
+g_rm1:  STA CRAD1
+        STX CRAD2
+        LDA #$02        ; (the circles in the next vertical blanks, CIRCLES)
+        STA CPEND
+        LDA #$01        ; the colour band moves
+        STA SHACT
+        RTS
+
 ; The radar's marks go: in hyperspace it shows no ships (the radar's pass is left
 ; out there, its last marks stood still).
 HRADCLR:LDY #$02
@@ -1475,6 +1662,16 @@ g_en3:  LDA HEFH
 
 ; The upper HUD's border pulses through the grays in hyperspace ($09B7: $F8 or $BA);
 ; a sweep that plays pulses it itself (SNDTICK).
+; VBWORK after the radar: in hyperspace nothing more (the original's hyperspace loop
+; has no steering, enemy fire or approach), out of VBWORK; else LDA APPR.
+HVBR:   LDA HYPON
+        BEQ g_vr1
+        PLA
+        PLA
+        RTS
+g_vr1:  LDA APPR
+        RTS
+
 HBRDSET:LDX HYPON       ; (SNDTICK's light blue: not in hyperspace)
         BNE g_bd9
         STA HUDBRD
@@ -1524,8 +1721,9 @@ g_hv11: LDA #10         ; energy: a unit every 10 frames
         LDA #$00        ; the engine's pitch holds ($B567); the rush ($1349)
         STA HESTP
         JSR SNDRUSH
-        JMP g_hvst
-g_hv20: LDA #$01        ; 2: the jump, a unit a frame
+        JMP HSCANGO
+g_hv20: JSR HSCANF      ; 2: the jump: the scanner, positioning
+        LDA #$01        ; a unit a frame
         JSR HENERGY
         CLC             ; a step every 13.5 frames
         LDA HACC
@@ -1545,7 +1743,12 @@ g_hv21: JSR HCLRDIG     ; over: decelerating, 120 frames
         STA HESTP
         LDA #$00
         STA HEDIR
-        JMP g_hvst
+        LDX HSCAN       ; the radar back to close range (vertical blank)
+        BEQ g_hv22
+        STA LRMODE
+        LDA #$01
+        STA HVBJ
+g_hv22: JMP g_hvst
 g_hv30: LDA HTIME       ; 3: decelerating
         AND #$07
         BNE g_hv31
@@ -1571,7 +1774,7 @@ g_hv31: LDA #10
         LDA HTGTY
         STA M_SELY
         JSR SHOWSEC
-        JMP SECTORIN
+        JMP HARRIVE
 g_hvst: RTS
 
 ; Hyperspace's phase, in the 3D view's free time (VIEWWORK, every frame): the start,
@@ -1579,6 +1782,17 @@ g_hvst: RTS
 HYPVIEW:LDA MAPSHOWN    ; sprite 1 the map's planet (the cockpit's SPRCROSS)
         ORA HMAP
         STA MAPSPR
+        LDA #$00        ; the radar's pass: not in hyperspace until the scanner
+        LDX HYPON       ; runs (VBWORK)
+        BEQ g_hw1
+        LDX HSCAN       ; (in the jump only: decelerating, its marks are gone)
+        CPX #$03
+        BNE g_hw2
+        LDX HYPON
+        CPX #$02
+        BEQ g_hw1
+g_hw2:  LDA #$01
+g_hw1:  STA HNORAD
         LDA HPEND
         BEQ g_hvp
         LDA #$00
@@ -1595,7 +1809,20 @@ g_hv9:  RTS
 HYPMVB: LDA HMAP        ; the planet turns while the map is there
         BEQ g_hm9
         JSR M_PLANET
-g_hm9:  LDA HICR
+g_hm9:  LDA HVBJ        ; a job of the scanner's: the radar's mode, the blip
+        BEQ g_hm8       ; (instead of the stars this frame)
+        LDX #$00
+        STX HVBJ
+        CMP #$01
+        BNE g_hm7
+        JSR HRADCLR     ; (the marks go with the long range)
+        JMP HRMODE
+g_hm7:  RTS
+g_hm8:  LDA CRUN        ; the radar's circle being drawn (about 100 lines): no
+        ORA CPEND       ; time for the stars
+        BEQ g_hm6
+        RTS
+g_hm6:  LDA HICR
         BEQ g_hm0
         DEC HICR
         JSR HICONS
@@ -1606,7 +1833,10 @@ g_hm0:  LDA HPATH
 g_hm1:  LDA HMW
         BEQ g_hm2
         JSR HMSTEP
-g_hm2:  LDA HYPON
+g_hm2:  LDA LYACT       ; the destination's groups laid out: a group a frame,
+        BEQ g_hm3       ; instead of the stars
+        JMP LYSTEP
+g_hm3:  LDA HYPON
         CMP #$04
         BNE HSTARS
         RTS
@@ -1622,10 +1852,35 @@ HSTARS: CLC
         STA HSACC
         LDA HSN
         BEQ g_hv9
-        LDX #HNS-1
-g_hss1: JSR HSTAR
+        LDA #HNS        ; (from where the last frame stopped)
+        STA HSCNT
+        LDX HSROT
+g_hss1: JSR HSTLATE
+        BCS g_hssx
+        JSR HSTAR
         DEX
-        BPL g_hss1
+        BPL g_hss2
+        LDX #HNS-1
+g_hss2: DEC HSCNT
+        BNE g_hss1
+g_hssx: STX HSROT
+        RTS
+; C set: no more time for the stars. When the radar runs in this vertical blank
+; (the scanner's marks: about 50 lines from the wrap) they stop at line 296; the
+; rest go on in the next frame.
+HSTLATE:LDA HNORAD
+        BNE g_hl8
+        LDA EFRM
+        AND #$01
+        BEQ g_hl1
+        LDA RADPEND
+        BEQ g_hl8
+g_hl1:  BIT $D011
+        BPL g_hl8
+        LDA $D012
+        CMP #40
+        RTS
+g_hl8:  CLC
         RTS
 
 ; A = frames per energy unit
@@ -1941,6 +2196,13 @@ HNS     = 10            ; stars ($F0B4: 10)
 HYPON:  .BYTE 0         ; 1 accelerating, 2 the jump, 3 decelerating
 HPEND:  .BYTE 0         ; a jump chosen on the map, to start
 MAPSPR: .BYTE 0         ; MAPSHOWN or HMAP: sprite 1 is the planet
+HVBJ:   .BYTE 0         ; the scanner's job for the vertical blank: 1 RADMODE, 2 APINIT
+HSCAN:  .BYTE 0         ; the scanner in the jump: 1 laying out, 2 empty, 3 on
+HNORAD: .BYTE 0         ; the radar's pass left out (VBWORK)
+HPACC:  .BYTE 0
+HRDC:   .BYTE 0
+HJT:    .BYTE 0
+HSLOT:  .BYTE 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
 HICR:   .BYTE 0         ; icon rows left to erase
 HOFL:   .BYTE 0
 HOFH:   .BYTE 0
@@ -1979,6 +2241,8 @@ HSPD:   .BYTE 0
 HSACC:  .BYTE 0
 HSN:    .BYTE 0
 HSK:    .BYTE 0
+HSCNT:  .BYTE 0
+HSROT:  .BYTE HNS-1
 HACC:   .BYTE 0
 HENC:   .BYTE 0
 HBX:    .BYTE 0

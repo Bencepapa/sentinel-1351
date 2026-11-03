@@ -135,10 +135,12 @@ PATCHES_COCKPIT = [
     ('        LDA MAPSHOWN\n        BNE scm\n', '        LDA MAPSPR      ; (game)\n        BNE scm\n'),
     ('        LDA MAPSHOWN    ; the map open: the pointer (if a mouse), the planet\n        BEQ scv\n',
      '        LDA MAPSPR      ; (game) the map open: the pointer (if a mouse), the planet\n        BEQ scv\n'),
+    # in hyperspace no steering, enemy fire or approach in the vertical blank (HVBR)
+    ('vbr:    LDA APPR\n        BEQ vbdog\n', 'vbr:    JSR HVBR        ; (game)\n        BEQ vbdog\n'),
     # in hyperspace the border pulses (HBORD), the sweeps leave it alone
     ('        BNE sd0\n        LDA #$0E\n        STA HUDBRD\nsd0:    RTS\n',
      '        BNE sd0\n        LDA #$0E\n        JSR HBRDSET     ; (game)\nsd0:    RTS\n'),
-    ('vbr0:   LDA RADPEND\n        BEQ vbr\n','vbr0:   LDA RADPEND\n        BEQ vbr\n        LDX HYPON       ; (game) no radar marks in hyperspace (the slots hold nothing)\n        BNE vbr\n'),
+    ('vbr0:   LDA RADPEND\n        BEQ vbr\n','vbr0:   LDA RADPEND\n        BEQ vbr\n        LDX HNORAD      ; (game) no radar marks in hyperspace until its scanner runs\n        BNE vbr\n'),
     ('        LDA NUMCOL      ; white, light green while the target is behind ($3934)\n',
      '        LDA HCOLOR      ; (game) NUMCOL, or the colours of the hyperspace test\n'),
     # a squadron coming into the ship's sector starts the dogfight (ARREND in game.asm)
