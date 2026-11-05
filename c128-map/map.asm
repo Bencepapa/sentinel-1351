@@ -1442,14 +1442,14 @@ cp3:    STA MPX
         LDY MDY
         BMI cp5
         BCS cp6
-        CMP #131
-        BCC cp7
-cp6:    LDA #130
+        CMP #127        ; (126: more than three lines in from the bottom, and the
+        BCC cp7         ; sprite's 21 lines end before the game's gun split, line 194)
+cp6:    LDA #126
         BNE cp7
 cp5:    BCC cp8
-        CMP #35
+        CMP #38         ; (38: three lines in from the grid's top)
         BCS cp7
-cp8:    LDA #35
+cp8:    LDA #38
 cp7:    STA MPY
         SEC             ; the sector under it: column (x - 17) / 12, row (y - 35) / 16
         LDA MPX

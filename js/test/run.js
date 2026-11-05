@@ -1102,11 +1102,13 @@ for (const name of Object.keys(Profiles)) {
     let late = 0, first = -1, last = -1, prev = 0, growth = [], message = '';
     for (let f = 0; f < 450; f++) {
       m.runFrame();
+      if (f === 0) { K[s.MSPHASE] = 1; K[s.MSPCOUNT] = 255; K[s.MSPCOLOR] = 0x11; }
       if (f === 1) message = String.fromCharCode(...K.subarray(s.LRROW, s.LRROW + 39)).replace(/[@`]/g, ' ').trim();
       if (K[s.MSRAD] !== prev) { if (K[s.MSRAD] === 2) first = f; last = f; growth.push(K[s.MSRAD]); prev = K[s.MSRAD]; }
       const v = m.vicLog;
       for (let i = 0; i < v.length; i += 4) if ((v[i + 2] === 0x20 || v[i + 2] === 0x21) &&
         ((v[i] >= 50 && v[i] <= 76) || (v[i] >= 230 && v[i] <= 245)) && v[i + 1] >= 16 && v[i + 1] <= 55) late++;
+      if (K[s.MSSTATE] === 4) break;
     }
     const end = kind === 0x80 ? 0x22 : 0x28;
     check(message === (kind === 0x80 ? 'GORGANITOR BASESTAR DETECTED' : 'ENTERING BASE SECTOR'), `mothership: original entry message: ${message}`);
@@ -1121,6 +1123,14 @@ for (const name of Object.keys(Profiles)) {
     check(((K[centreAddress] >> ((3 - (85 & 3)) * 2)) & 3) === 2 && K[0x44A0] === 0x11 && K[s.MSCPEND] === 0,
       'mothership: the completed opening is filled with white bitmap pixels');
     snap(m, kind === 0x80 ? 'mothership-enemy' : 'mothership-friendly');
+    for(let n=0;n<1800 && K[s.MSSTATE];n++) m.runFrame();
+    run(m,g.hooks,80);
+    check(K[s.MAPSHOWN] === 1 && K[s.MSLOCK] === 1 && K[s.MSSTATE] === 0,
+      'mothership: the normal endpoint opens the map and locks immediate re-entry');
+    K[s.M_CURX] = K[s.M_SELX]; K[s.M_CURY] = K[s.M_SELY];
+    call(m, s.M_SELECT); call(m, s.MAPIN);
+    check(K[s.MAPSHOWN] === 1 && !K[s.HYPON], 'mothership: firing on the just-completed base sector keeps the map open');
+    call(m, s.MAPCLOSE); run(m, g.hooks, 20);
     call(m, s.SECTORIN);                 // approach under firing/steering load
     let stressLate = 0;
     for (let f = 0; f < 200; f++) {
@@ -1133,12 +1143,326 @@ for (const name of Object.keys(Profiles)) {
     m.mouse.left = false;
     check(K[s.MSRAD] >= 12 && K[s.OVRUN] === 0 && stressLate === 0,
       `mothership: steering and phasors during approach: radius ${K[s.MSRAD]}, ${stressLate} late writes, ${K[s.OVRUN]} overruns`);
-    m.setKey(7, 4, true); run(m, g.hooks, 2); m.setKey(7, 4, false); run(m, g.hooks, 90);
-    check(K[s.MSSTATE] === 4 && K[s.M_STATE + idx] === kind && K[0x485B] === protons[1] - 1,
-      'mothership: SPACE launches a proton and its blast ends the approach without destroying the base');
+    K[s.MSPHASE] = 0; K[s.MSPCOUNT] = 255;
+    const beforeMissRadius = K[s.MSRAD], beforeMissProtons = K[0x485B];
+    m.setKey(7, 4, true); run(m, g.hooks, 2); m.setKey(7, 4, false); run(m, g.hooks, 60);
+    for(let n=0;n<120&&K[s.TPF];n++)m.runFrame();
+    run(m,g.hooks,12);
+    check(K[s.MSSTATE] === 3 && !K[s.MSKILLED] && K[s.MSRAD] > beforeMissRadius && K[s.M_STATE + idx] === kind && K[0x485B] === beforeMissProtons - 1,
+      'mothership: a phase-off SPACE shot misses and the approach keeps growing');
     K[s.M_STATE + idx] = 0; call(m, s.SECTORIN);
     check(K[s.MSSTATE] === 0 && K[s.shpj] === 0x2C && K[s.gplmode + 1] === (s.MAPSHOWN & 255) && K[s.vv2 + 1] === (s.STARS & 255) && K[s.vv2 + 2] === (s.STARS >> 8), 'mothership: leaving restores the idle hooks');
   }
+  // Original $BB81 truth table, including the hidden friendly phase and early shots.
+  let blastRules = true;
+  for (const base of [0, 1]) for (const radius of [5, 12]) for (const phase of [0, 1]) {
+    R[0xE1] = base; R[0x8ED1] = radius >= 12 ? radius : 0; R[0x953E] = phase;
+    R[0x8C3E] = R[0xBAD1] = 0;
+    call(o.m, 0xBB70);
+    K[s.MSSTATE] = base ? 3 : 0; K[s.MSRAD] = radius; K[s.MSPHASE] = phase;
+    K[s.MSKILLED] = 0; K[s.TPF] = 2;
+    call(k.m, s.MSBLAST);
+    blastRules = blastRules && !!R[0x8C3E] === !!K[s.MSKILLED] &&
+      (base && !R[0x8C3E] ? K[s.TPF] === 6 : K[s.TPF] === 2);
+  }
+  check(blastRules, 'mothership destruction: blast gate matches original $BB81 for every sector/centre/phase combination');
+
+  // The original toggles after 25 calls; random colour is restricted to enemy phase 0.
+  let phaseRules = true;
+  for (const kind of [0x80, 0xFF]) {
+    R[0xE2] = kind === 0x80 ? 1 : 0; R[0x953D] = 25; R[0x953E] = 0;
+    K[s.MSKIND] = kind; K[s.MSPCOUNT] = 25; K[s.MSPHASE] = 0;
+    const colours = new Set();
+    for (let n = 0; n < 75; n++) {
+      call(o.m, 0x953F); call(k.m, s.MSPCALL);
+      phaseRules = phaseRules && R[0x953D] === K[s.MSPCOUNT] && R[0x953E] === K[s.MSPHASE];
+      if (K[s.MSPHASE] === 0) colours.add(K[s.MSPCOLOR]);
+      else phaseRules = phaseRules && K[s.MSPCOLOR] === 0x11;
+    }
+    phaseRules = phaseRules && (kind === 0x80 ? colours.size >= 3 : colours.size === 1 && colours.has(0x11));
+  }
+  check(phaseRules, 'mothership destruction: 25-call phase toggles match original, enemy phase 0 flickers, friendly stays white');
+
+  // Static pixel comparison; real DMA deadlines are tested by the frame loops below.
+  k.m.read=function(a){return a===0xD012?80:read.call(this,a);};
+  R.fill(0x5B,0x63C0,0x7680); K.fill(0x5B,0x63C0,0x7680);
+  K[s.mscent]=0x2C; K[s.msmode+1]=2;
+  let erasePixels=true;
+  for(let radius=1;radius<=44;radius++) {
+    R[0x3668]=1; R[0x3674]=radius;
+    o.m.cpu.x=0x50;o.m.cpu.y=0x64;o.m.cpu.a=radius;call(o.m,0x3635,0xEEFB);
+    K[s.MSRAD]=radius;K[s.MSBIAS]=radius;K[s.MSRUN]=0;
+    call(k.m,s.MSRING);call(k.m,s.MSSTEP);
+    erasePixels=erasePixels&&Buffer.from(R.subarray(0x63C0,0x7680)).equals(Buffer.from(K.subarray(0x63C0,0x7680)));
+  }
+  K[s.mscent]=0x20;K[s.msmode+1]=1;k.m.read=read;
+  check(erasePixels,'mothership destruction: all 44 erasing circles match original $9020/$EEFB pixels in the view');
+
+  function scene(kind) {
+    const g = boot('game', 'trace'), m = g.m, S = g.p.symbols, A = m.ram;
+    m.dma = true; run(m, g.hooks, 60);
+    A.fill(0, S.M_STATE, S.M_STATE + 60); A.fill(0, S.M_COUNT, S.M_COUNT + 60);
+    const index = kind === 0xFF ? 12 : 0;
+    A[S.M_SELX] = index % 10; A[S.M_SELY] = Math.floor(index / 10);
+    A[S.M_STATE + index] = kind;
+    call(m, S.SECTORIN);
+    for (let n = 0; n < 200 && A[S.MSSTATE] !== 3; n++) m.runFrame();
+    return { ...g, S, A, index };
+  }
+  function lateWrites(m) {
+    let n = 0, v = m.vicLog;
+    for (let i = 0; i < v.length; i += 4) if ((v[i + 2] === 0x20 || v[i + 2] === 0x21) &&
+      ((v[i] >= 50 && v[i] <= 76) || (v[i] >= 230 && v[i] <= 245)) && v[i + 1] >= 16 && v[i + 1] <= 55) n++;
+    return n;
+  }
+  function row(m,S) { return String.fromCharCode(...m.ram.subarray(S.LRROW,S.LRROW+39)).replace(/[@`]/g,' ').trim(); }
+
+  // Measure 32-pass phase scheduling on both real frame loops, with DMA enabled.
+  const po = boot('c64game', 'trace'); run(po.m, po.hooks, 300);
+  run(po.m, po.hooks, 300, i => { po.m.mouse.left = i < 10 || (i >= 150 && i < 160); });
+  po.m.mouse.left = false; po.m.dma = true;
+  const PR = po.m.ram, phaseStart = po.m.frame, originalToggles = [];
+  PR[0xE1] = 1; PR[0xE2] = 0; PR[0xBAD1] = PR[0xBACE] = PR[0x8C3E] = 0; PR[0x89] = 1;
+  po.hooks.on(0x8EF8, () => { PR[0x953D] = 25; PR[0x953E] = 0; });
+  po.hooks.on(0x9544, () => originalToggles.push(po.m.frame - phaseStart));
+  PR.set([0x4C,0,3],0x300); po.m.cpu.push(2); po.m.cpu.push(0xFF); po.m.cpu.pc = 0x909D;
+  run(po.m,po.hooks,130);
+  const pg = scene(0xFF), portToggles = [];
+  pg.A[pg.S.MSPCOUNT] = 25; pg.A[pg.S.MSPHASE] = pg.A[pg.S.MSPACC] = 0;
+  let prevPhase = 0, phaseLate = 0;
+  for(let f=0; f<130; f++) {
+    pg.m.runFrame(); phaseLate += lateWrites(pg.m);
+    if(pg.A[pg.S.MSPHASE]!==prevPhase) { portToggles.push(f); prevPhase=pg.A[pg.S.MSPHASE]; }
+  }
+  check(originalToggles.length >= 3 && portToggles.length >= 3 && portToggles.slice(0,3).every((v,i)=>Math.abs(v-originalToggles[i])<=10),
+    `mothership destruction: DMA phase toggles port ${portToggles.slice(0,3)}, original ${originalToggles.slice(0,3)} frames`);
+  check(phaseLate === 0 && pg.A[pg.S.OVRUN] === 0, 'mothership destruction: phase updates do not overrun or write splits late');
+
+  const fg = scene(0x80), flickerColours = new Set();
+  fg.A[fg.S.MSPHASE]=0; fg.A[fg.S.MSPCOUNT]=255;
+  let flickerLate=0;
+  for(let f=0;f<80;f++){fg.m.runFrame();flickerColours.add(fg.A[0x44A0]);flickerLate+=lateWrites(fg.m);}
+  fg.A[fg.S.MSPHASE]=0;fg.A[fg.S.MSPCOUNT]=1;call(fg.m,fg.S.MSPCALL);run(fg.m,fg.hooks,10);
+  check(flickerColours.size>=3&&fg.A.subarray(0x44A0,0x46D0).every(v=>v===0x11),
+    `mothership destruction: enemy palette visibly flickers (${flickerColours.size} colours), then returns to white`);
+  check(flickerLate===0&&fg.A[fg.S.OVRUN]===0,'mothership destruction: real flicker/centre updates fit the DMA budget');
+
+  for(const kind of [0x80,0xFF]) {
+    const g=scene(kind), {m,S,A,index}=g;
+    for(let n=0;n<200&&A[S.MSRAD]<12;n++) m.runFrame();
+    A[S.MSPHASE]=1; A[S.MSPCOUNT]=255;
+    const hp=Buffer.from(A.subarray(S.SYSHP,S.SYSHP+8)), cockpitArt=Buffer.from(A.subarray(0x7680,0x7CC0));
+    m.setKey(7,4,true); run(m,g.hooks,2); m.setKey(7,4,false);
+    let sawDocking=false, sawKill=false, sawMessage=false, sawErase=false, deathRadii=[], lastR=-1, late=0;
+    for(let f=0;f<1000;f++) {
+      m.runFrame(); late+=lateWrites(m);
+      sawDocking ||= A[S.MSSTATE]>=7; sawKill ||= !!A[S.MSKILLED]; sawMessage ||= row(m,S)==='BASESTAR DESTROYED CAPTAIN';
+      if(A[S.MSSTATE]===6) {
+        sawErase ||= A[S.msmode+1]===2;
+        if(A[S.MSRAD]!==lastR) {deathRadii.push(A[S.MSRAD]);lastR=A[S.MSRAD];}
+      }
+      if(A[S.MAPSHOWN] && A[S.MSSTATE]===0 && sawErase) break;
+    }
+    check(sawKill && sawMessage && sawErase && deathRadii.length===44 && deathRadii.every((r,i)=>r===i+1),
+      `mothership destruction: ${kind===0x80?'enemy':'friendly'} hit shows message and erasing rings 1-$2C (${deathRadii.length} radii)`);
+    check(A[S.M_STATE+index]===0&&A[S.M_COUNT+index]===0&&A[S.MAPSHOWN]===1&&!sawDocking&&Buffer.from(A.subarray(S.SYSHP,S.SYSHP+8)).equals(hp),
+      'mothership destruction: cell cleared, map opened, no repair or enemy torpedo damage');
+    check(kind!==0xFF||A[S.M_DEAD]===1,'mothership destruction: killing a friendly base marks its strategic destroyed flag');
+    check(late===0&&A[S.OVRUN]===0,`mothership destruction: full kill sequence has ${late} late split writes, ${A[S.OVRUN]} overruns`);
+    check(Buffer.from(A.subarray(0x7680,0x7CC0)).equals(cockpitArt),'mothership destruction: rings and particles preserve cockpit bitmap art');
+    run(m,g.hooks,80);
+    check(A[S.MSLOCK]===0&&A[S.g_mi8+1]===(S.MAPCLOSE&255)&&A[S.g_mi8+2]===(S.MAPCLOSE>>8),
+      'mothership destruction: the emptied sector can be chosen straight back (as in the original)');
+    if(kind===0x80) {
+      A[S.M_CURX]=1; A[S.M_CURY]=0; call(m,S.M_SELECT); call(m,S.MAPIN);
+      let jumping=!!A[S.HYPON];
+      for(let f=0;f<1200&&A[S.HYPON];f++)m.runFrame();
+      check(jumping&&!A[S.HYPON]&&A[S.MSLOCK]===0&&A[S.M_SELX]===1,
+        'mothership destruction: another sector remains selectable and arrival clears the re-entry lock');
+    }
+  }
+
+  // Friendly beam: original Bresenham paths and every cumulative ring in the view.
+  const beamRead = k.m.read;
+  k.m.read = function(a) { return a === 0xD012 ? 80 : a === 0xD011 ? 0 : beamRead.call(this,a); };
+  const paths=[];
+  for(const [x,end,page] of [[60,15,2],[100,146,5]]) {
+    Object.assign(R, { [0x54]:1,[0x36]:x,[0x37]:110,[0x4E]:end,[0x4F]:186,
+      [0x55]:0,[0x56]:page,[0x57]:0,[0x58]:4 });
+    call(o.m,0x3580);
+    paths.push([...R.subarray(page*256,page*256+76)]);
+  }
+  const storedLeft=[...K.subarray(s.MBLEFT,s.MBLEFT+76)];
+  const storedRight=[...K.subarray(s.MBRIGHT,s.MBRIGHT+76)];
+  check(JSON.stringify(paths)===JSON.stringify([storedLeft,storedRight]),'friendly repair: both 76-point beam paths match original $3580');
+  R.fill(0,0x63C0,0x7680); K.fill(0,0x63C0,0x7680);
+  const beamArt=Buffer.from(K.subarray(0x7680,0x7CC0)); R.set(beamArt,0x7680);
+  K[s.mscent]=0x2C;K[s.MSBIAS]=1;call(k.m,s.MBSET);
+  let beamPixels=true;
+  for(let i=0;i<76;i++) for(let side=0;side<2;side++) {
+    const radius=1+Math.floor((i+4)/10);
+    R[0x3668]=R[0x3674]=1;o.m.cpu.a=radius;o.m.cpu.x=paths[side][i];o.m.cpu.y=110+i;call(o.m,0x3635,0xEF30);
+    K[s.MRINDEX]=i;K[s.MRSIDE]=side===0?1:0;K[s.MSRAD]=radius;K[s.MSRUN]=0;
+    call(k.m,s.MBPLOT);call(k.m,s.MSRING);call(k.m,s.MSSTEP);
+    beamPixels &&= !K[s.MSRUN]&&Buffer.from(K.subarray(0x63C0,0x7CC0)).equals(Buffer.from(R.subarray(0x63C0,0x7CC0)));
+  }
+  call(k.m,s.MBRESTORE);k.m.read=beamRead;
+  check(beamPixels&&!Buffer.from(K.subarray(0x7680,0x7CC0)).equals(beamArt),
+    'friendly repair: all 152 rings match the original through the cockpit down to the guns');
+
+  function originalRepair(damaged,energy,protons) {
+    const g=boot('c64game','trace'),m=g.m,R=m.ram;
+    run(m,g.hooks,300);run(m,g.hooks,300,i=>m.mouse.left=i<10||(i>=150&&i<160));
+    m.mouse.left=false;m.dma=true;
+    const start=m.frame,events={statuses:[],chars:[],noiseWrites:0};let done=false,scan=false,scanned=false;
+    g.hooks.on(0x9510,()=>{if(!scanned){scan=true;events.noiseStart=m.frame;}});
+    g.hooks.on(0x953C,()=>{if(scan){scan=false;scanned=true;events.noiseFrames=m.frame-events.noiseStart;}});
+    const originalWrite=m.write;
+    m.write=function(a,v){if(scan&&((a>=0xDB2C&&a<0xDB3C)||(a>=0xDB54&&a<0xDB64)))events.noiseWrites++;return originalWrite.call(this,a,v);};
+    for(const [address,name] of [[0x918E,'beam'],[0x92E3,'repair'],[0x93BB,'typed'],[0xFA33,'charged'],[0x8D6F,'done']])
+      g.hooks.on(address,()=>{events[name]=m.frame-start;if(name==='done')done=true;});
+    g.hooks.on(0x9489,()=>events.chars.push(m.frame-start));
+    g.hooks.on(0x94DC,()=>events.statuses.push({frame:m.frame-start,index:R[0x9496]}));
+    R[0xE1]=1;R[0xE2]=0;R[0x89]=1;R[0xBAD1]=R[0xBACE]=R[0x8C3E]=0;
+    R.fill(damaged?0:1,0x39,0x41);R[0x844F]=1;R[0x8450]=protons;
+    R.set(String(energy).padStart(4,'0').split('').map(x=>0x70+Number(x)),0x543E);
+    m.cpu.pc=0x8D59;
+    for(let f=0;f<1800&&!done;f++)m.runFrame();
+    check(done&&R[0x844F]===40&&R[0x8450]===((protons+1)&255),
+      `friendly repair reference: DMA ${damaged?'damaged':'working'} ship finishes in ${events.done} frames, proton ${protons}->${R[0x8450]}`);
+    return events;
+  }
+  for(const [damaged,energy,protons] of [[true,0,99],[false,9999,255]]) {
+    const reference=originalRepair(damaged,energy,protons),g=scene(0xFF),{m,S,A,index}=g;
+    A.fill(damaged?0:1,S.SYSHP,S.SYSHP+8);A[S.SHLD]=1;A[S.HITS]=37;A[S.HITS+1]=2;
+    A.set(String(energy).padStart(4,'0').split('').map(x=>0x70+Number(x)),S.HUDE);
+    A[S.MRPHUND]=Math.floor(protons/100);A[0x485A]=0x70+Math.floor(protons%100/10);A[0x485B]=0x70+protons%10;
+    const originalSlots=new Map([S.GSPACE,S.MAPTOG,S.LAUNCHD,S.MRMODE,S.MRATTR,S.MRGUN,S.MRWAIT,S.SPRCROSS,S.SPRGUNS,S.MSSTEP,S.TPLOT1].map(a=>[a,Buffer.from(A.subarray(a,a+14))]));
+    const art=Buffer.from(A.subarray(0x7680,0x7CC0)),seenNames=[],statuses=[],colours=new Set();
+    const protectedRanges=[[0x4000,0x4400],[0x4C00,0x5000],[0x6000,0x63C0],[0x7CC0,0x8000],
+      [S.TSH1,S.TSH1+960],[S.TSH2,S.TSH3+512],[S.TSHOT,S.TSHOT+128],[S.MMAT,S.MMAT+600],[S.COLORDATA,S.COLORDATA+1000]];
+    const protectedBefore=protectedRanges.map(([a,b])=>Buffer.from(A.subarray(a,b))),artColours=Buffer.from(m.colorRam.subarray(720,920));
+    // A before/after comparison alone missed the old bug: its PRG already had
+    // text/path data in scanner and barrel sprite slots. Also check the source art.
+    const spriteSource=fs.readFileSync(path.join(ROOT,'../c128-gui/ref/sprites-4800.bin'));
+    const spriteOrder=[0x20,0x30,0x40,0x60,0x70].flatMap(b=>Array.from({length:16},(_,i)=>b+i));
+    check([[0x4D80,0x4C],[0x4DC0,0x4D],[0x4E00,0x4E],[0x4F40,0x47],[0x4F80,0x48]].every(([a,n])=>Buffer.from(A.subarray(a,a+64)).equals(spriteSource.subarray(spriteOrder.indexOf(n)*64,spriteOrder.indexOf(n)*64+64))),
+      'repair fixes: scanner blips and both barrel shapes match the original assets before docking');
+    let cleanExit=false,reportMode=true,blocks=false,scanSound=false,firstNoiseWrites=0,firstNoiseFrames=0,frameNoise=0,firstScan=false;
+    const noiseColours=new Set(),write=m.write;
+    m.write=function(a,v){if(A[S.MSSTATE]===10&&((a>=0xDB2C&&a<0xDB3C)||(a>=0xDB54&&a<0xDB64))){frameNoise++;noiseColours.add(v&15);}return write.call(this,a,v);};
+    g.hooks.on(S.MRCOMPLETE,()=>{cleanExit=A.subarray(0x63C0,0x7680).every(v=>v===0)&&Buffer.from(A.subarray(0x7680,0x7CC0)).equals(art)&&A[S.MRMODE+1]===0x7B;});
+
+    let start=-1,beamEnd=-1,typeStart=-1,typeEnd=-1,lastOffset=0,lastIndex=0,late=0,steps=[],finished=-1,sawNoise=false;
+    for(let f=0;f<1900;f++) {
+      firstScan=A[S.MSSTATE]===10&&A[S.MRROW]>0;frameNoise=0;
+      m.runFrame();late+=lateWrites(m);
+      if(firstScan){firstNoiseWrites+=frameNoise;firstNoiseFrames++;}
+      const state=A[S.MSSTATE];
+      if(state===7&&start<0)start=f;
+      if(state===8&&beamEnd<0)beamEnd=f;
+      if(state===9&&typeStart<0)typeStart=f;
+      if(state===10&&typeEnd<0){typeEnd=f;lastIndex=0;}
+      if(state===9&&A[S.MRINDEX]!==lastIndex){seenNames.push(lastIndex);lastIndex=A[S.MRINDEX];}
+      if(state===10&&A[S.MRINDEX]!==lastIndex){statuses.push({frame:f,index:lastIndex});lastIndex=A[S.MRINDEX];}
+      if(state>=9&&state<=11)reportMode&&=(A[S.MRMODE+1]===0x1B||(state===11&&A[S.MRMODE+1]===0x7B))&&A[S.SPRCROSS]===0x60&&A[S.SPRGUNS]===0x60;
+      if(state===10) {
+        blocks ||= A.subarray(0x41F8,0x4200).every(v=>v===0xFF)&&A.subarray(0x4B2C,0x4B3C).every(v=>v===0x3F)&&A.subarray(0x4B54,0x4B64).every(v=>v===0x3F);
+        if(frameNoise)scanSound ||= m.sidLog.some((v,i)=>i%3===1&&v===1&&m.sidLog[i+1]===0x62)&&m.sidLog.some((v,i)=>i%3===1&&v===4&&m.sidLog[i+1]===0x11);
+        if(damaged&&f<typeEnd+30)colours.add(m.colorRam[4*40]);
+        const n=A.subarray(S.HUDE,S.HUDE+4).reduce((v,x)=>v*10+x-0x70,0);if(lastOffset&&n<9999)steps.push(n-lastOffset);lastOffset=n;
+        sawNoise ||= m.sidLog.some((v,i)=>i%3===1&&v===0x0B&&m.sidLog[i+1]===0x11);
+      }
+      if(state===0&&start>=0){finished=f;break;}
+    }
+    const expected=Array.from({length:8},(_,i)=>i===7?255:A[S.HPTAB+i*5+A[S.DIFF]]);
+    const expectedProtons=(protons+1)&255;
+    check(finished>=0&&Buffer.from(A.subarray(S.SYSHP,S.SYSHP+8)).equals(Buffer.from(expected))&&A[S.SHLD]===A[S.SHTAB+A[S.DIFF]]&&
+      A.subarray(S.HUDE,S.HUDE+4).every(x=>x===0x79)&&A[S.MRPHUND]===Math.floor(expectedProtons/100)&&
+      A[0x485A]===0x70+Math.floor(expectedProtons%100/10)&&A[0x485B]===0x70+expectedProtons%10,
+      'friendly repair: systems, shields and energy full; one proton, including byte wrap at 255');
+    check(A[S.HITS]===37&&A[S.HITS+1]===2&&A[S.M_STATE+index]===0xFF,
+      'friendly repair: lifetime hit count and surviving base are preserved');
+    check(statuses.length===8&&statuses.every((x,i)=>x.index===i)&&seenNames.join(',')==='0,1,2,3,4,5,6',
+      'friendly repair: all eight original system names and statuses appear in order');
+    const names=Array.from({length:8},(_,i)=>String.fromCharCode(...A.subarray(0x4800+(4+2*i)*40,0x4800+(4+2*i)*40+A[S.MRLENS+i])));
+    const expectedNames=['PHASOR CANNONS','LONG RANGE SCANNER','SHORT RANGE SCANNER','STELLAR GRID','AUTOMATIC TRACKING COMPUTER','HYPERSPACE COORDINATOR','LONG RANGE SCAN SEQUENCER','COMMUNICATIONS MODULE'];
+    check(names.every((n,i)=>n===expectedNames[i])&&Array.from({length:8},(_,i)=>String.fromCharCode(...A.subarray(0x4800+(4+2*i)*40+29,0x4800+(4+2*i)*40+40))).every(t=>t===(damaged?'@@@REPAIRED':'OPERATIONAL')),
+      'friendly repair: exact original text, columns and repaired/operational results');
+    check(Math.abs((beamEnd-start)-(reference.repair-reference.beam))<=10&&Math.abs((finished-start)-reference.done)<=65,
+      `friendly repair: DMA beam ${beamEnd-start}/${reference.repair-reference.beam}, full sequence ${finished-start}/${reference.done} frames (port/original)`);
+    const intervals=statuses.slice(1).map((v,i)=>v.frame-statuses[i].frame),refIntervals=reference.statuses.slice(1).map((v,i)=>v.frame-reference.statuses[i].frame);
+    check(typeEnd-typeStart===64&&intervals.every((v,i)=>Math.abs(v-refIntervals[i])<=4)&&(!damaged||steps.every(v=>v===9)),
+      `friendly repair: 64-frame typing, status intervals ${intervals}, energy +9/frame`);
+    check(sawNoise&&(!damaged||colours.has(7)||colours.has(2)), 'friendly repair: charging sound and original damaged-system colour flash');
+    check(late===0&&A[S.OVRUN]===0&&Buffer.from(A.subarray(0x7680,0x7CC0)).equals(art),
+      `friendly repair: whole DMA sequence has ${late} late split writes, ${A[S.OVRUN]} overruns; cockpit intact`);
+    check(A[S.MAPSHOWN]&&A[S.MSLOCK]&&[...originalSlots].every(([a,b])=>Buffer.from(A.subarray(a,a+b.length)).equals(b)),
+      'friendly repair: map/re-entry lock and every temporary code slot restored');
+    check(protectedRanges.every(([a,b],i)=>Buffer.from(A.subarray(a,b)).equals(protectedBefore[i]))&&Buffer.from(m.colorRam.subarray(720,920)).equals(artColours),
+      'repair fixes: every sprite, font, fighter/shot master and colour master preserved; cockpit palette restored');
+    check(reportMode&&blocks&&noiseColours.size>=10&&scanSound,
+      'repair fixes: full text report without radar/guns, two solid random-colour block rows and damaged-scan beeps');
+    const portRate=firstNoiseWrites/firstNoiseFrames,originalRate=reference.noiseWrites/reference.noiseFrames;
+    check(reference.noiseWrites===8704&&Math.abs(portRate-originalRate)/originalRate<0.2,
+      `repair fixes: DMA block rate ${portRate.toFixed(1)}/${originalRate.toFixed(1)} colour writes/frame (port/original)`);
+    check(cleanExit,'repair fixes: cockpit art restored and old base bitmap cleared while still in text mode before map return');
+    if(damaged)snap(m,'fix-docking-map');
+    snap(m,damaged?'friendly-repaired':'friendly-operational');
+    if(damaged) {
+      A[S.MAPSHOWN]=A[S.WIPE]=0;A[S.TREQ]=1;call(m,S.GTORP);
+      check(A[S.MRPHUND]===0&&A[0x485A]===0x79&&A[0x485B]===0x79,
+        'friendly repair: the hundredth proton remains usable when the HUD reads 00');
+    }
+  }
+
+  // A surviving friendly proton miss must still dock. Inputs cannot interrupt it.
+  {
+    const g=scene(0xFF),{m,S,A}=g;
+    for(let f=0;f<200&&A[S.MSRAD]<12;f++)m.runFrame();
+    A[S.MSPHASE]=0;A[S.MSPCOUNT]=255;A[S.SYSHP]=0;A.fill(0x79,S.HUDE,S.HUDE+4);
+    const count=A[0x485B];let docking=false,late=0,returned=false;
+    m.setKey(7,4,true);run(m,g.hooks,2);m.setKey(7,4,false);
+    for(let f=0;f<1400;f++) {
+      if(A[S.MSSTATE]>=7) {
+        docking=true;m.mouse.left=true;m.moveMouse(f%2?3:-3,f%2?2:-2);m.setKey(7,4,true);m.setKey(7,5,true);
+      }
+      m.runFrame();late+=lateWrites(m);
+      if(docking&&A[S.MSSTATE]===0){returned=true;break;}
+    }
+    m.mouse.left=false;m.setKey(7,4,false);m.setKey(7,5,false);
+    check(returned&&!A[S.MSKILLED]&&A[S.SYSHP]>0&&A[0x485B]===count&&A[S.MAPSHOWN]&&A[S.MSLOCK],
+      'friendly repair: a surviving SPACE miss repairs and replaces the fired proton; held fire/SPACE/map cannot interrupt docking');
+    check(late===0&&A[S.OVRUN]===0,`friendly repair: held-input DMA sequence has ${late} late writes, ${A[S.OVRUN]} overruns`);
+  }
+
+  // Four strategic events route through SURROUND's real stores and VDCMSG's old slot.
+  const bg=boot('game','trace'), BM=bg.m, BS=bg.p.symbols, B=BM.ram;
+  BM.dma=true; run(BM,bg.hooks,60);
+  B.fill(0,BS.M_STATE,BS.M_STATE+60); B.fill(0,BS.M_COUNT,BS.M_COUNT+60);
+  B.fill(0,BS.M_ENGC,BS.M_ENGC+5); B.fill(0,BS.M_DEAD,BS.M_DEAD+5);
+  for(let i=0;i<4;i++){B[BS.M_STATE+B[BS.M_GRP+i]]=1;B[BS.M_COUNT+B[BS.M_GRP+i]]=1;}
+  B[BS.M_STATE+12]=0xFF;
+  let texts=[];
+  call(BM,BS.M_SURROUND);call(BM,BS.M_VDCMSG);texts.push(row(BM,BS));
+  B[BS.M_ENGC]=1;call(BM,BS.M_SURROUND);call(BM,BS.M_VDCMSG);texts.push(row(BM,BS));
+  for(let i=16;i<20;i++){B[BS.M_STATE+B[BS.M_GRP+i]]=1;B[BS.M_COUNT+B[BS.M_GRP+i]]=1;}
+  call(BM,BS.M_SURROUND);call(BM,BS.M_VDCMSG);texts.push(row(BM,BS));
+  B[BS.M_ENGC4]=1;call(BM,BS.M_SURROUND);call(BM,BS.M_VDCMSG);texts.push(row(BM,BS));
+  check(texts.join('|')==='MOTHERSHIP ENGAGED IN BATTLE|MOTHERSHIP DESTROYED|JARALOBA IS SURROUNDED|JARALOBA CEASES TO EXIST'&&B[BS.M_VDCON]===0,
+    `battle messages: all four events appear on the cockpit with VDC off (${texts.join('; ')})`);
+  check(B[BS.MSGCOL]===0x87&&B[BS.MSGRATE]===15&&B[BS.MSGN]===15&&B[BS.SNDHI0]===0x1E&&!B[BS.SHIPLOST],
+    'battle messages: original yellow/orange timing and siren, no game-over implementation');
+  // Direct subroutine comparisons above advance CPU time outside the raster loop.
+  // Settle those calls before beginning this independent real-frame timing test.
+  run(BM,bg.hooks,10); B[BS.OVRUN]=0;
+  B.fill(0,BS.M_ENGC,BS.M_ENGC+5);B.fill(0,BS.M_DEAD,BS.M_DEAD+5);
+  for(let i=0;i<20;i++)B[BS.M_STATE+B[BS.M_GRP+i]]=1;
+  B[BS.WTPEND]=1;B[BS.WTCNT]=200;B[BS.M_TICKC]=10;
+  let battleLate=0;for(let f=0;f<10;f++){BM.runFrame();battleLate+=lateWrites(BM);}
+  check(B[BS.GBTCOUNT]===4&&battleLate===0&&B[BS.OVRUN]===0,
+    `battle messages: five simultaneous events queue safely (${B[BS.GBTCOUNT]} waiting), ${battleLate} late writes, ${B[BS.OVRUN]} overruns`);
+
 }
 
 console.log(failures ? failures + ' check(s) failed' : 'all checks passed');

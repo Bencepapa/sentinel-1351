@@ -38,7 +38,8 @@ It is the browser page's default program.
   points rush to three places with a sound (`$1AF2`), three fighters appear there,
   the warning sounds and the dogfight starts. A squadron of fewer than 3 becomes 3,
   as in the original.
-- In mothership sectors, the original entry message appears and concentric rings grow in the view: red for an enemy base star, blue for a friendly base, with the white rectangular opening growing in the middle from radius 12. The approach stops at the original radius; mines, enemy torpedoes, the tractor beam, repairs and destroying a base are still to come. Opening and closing the map starts the approach again.
+- In mothership sectors the rings and rectangular opening grow as in the original. Enemy bases flicker and turn white in alternating phases; friendly bases stay white but share the same hidden phase. A proton destroys a base only if its opening has appeared and the phase is on when the torpedo arrives; a miss only flashes and the approach continues. A kill shows BASESTAR DESTROYED CAPTAIN, a burst and expanding erasing rings, then clears the sector. Every base sequence returns to the map; that sector cannot be selected straight back until you jump elsewhere. A surviving friendly base draws its white tractor rays, types the full-screen eight-system report with coloured scanning blocks and repair beeps, recharges energy, repairs the ship and grants one proton before the map returns. Tractor rays reach the guns; docking restores the cockpit and all sprite shapes for the next fight. Mines and enemy torpedoes are still to come. Opening and closing the map before the sequence ends restarts the approach.
+- Strategic warnings (a mothership engaged/destroyed, JARALOBA surrounded/lost) now appear on the cockpit message line even with VDC off.
 - The ship (systems, shields, hits, difficulty) is one: the cockpit's model.
 - The second display (VDC) is off in this program for now: its updates take more
   time than a frame has to spare while the cockpit runs.
@@ -81,5 +82,5 @@ jump into a squadron's sector (the approach begins, TARGETS), the HUD's sector,
 the view's colours back, kills emptying the sector, C= closing the map, the right
 button, fire on the ship's own sector, a squadron coming in, the splits' timing.
 
-Not yet: hyperspace's abort, thrust (W), mothership combat and
-docking, the second display while flying, game over, and the destroyed-system messages.
+Not yet: hyperspace's abort, thrust (W), mothership mines, enemy torpedoes and
+the second display while flying, game over, and the destroyed-system messages.

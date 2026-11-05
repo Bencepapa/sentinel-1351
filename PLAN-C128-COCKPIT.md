@@ -388,107 +388,213 @@ code is full up to `$C000`, so the new code goes in the glue (`$5300-$5FFF`), or
 
 ### Mothership sequences
 
-Approach ported in `MSECTOR` / `MSVIEW` / `MSRING` / `MSSTEP` in
-`c128-game/game.asm`. Enemy STATE `$80` maps to original `$E2=1`; friendly
-STATE `$FF` to `$E2=0` (the port stores the kind in `MSKIND`).
+Implemented in `c128-game/game.asm` (`MSECTOR`, `MSVIEW`, `MSSTEP`, `MSCINIT`,
+`MSVB`, `MSPSTEP`, `MSBLAST`, `MSFINISH`, `MSRETURN`). STATE `$80` is enemy,
+`$FF` friendly (`MSKIND`, original `$E2=1/0`).
 
-Original control flow, checked against the unpacked v10 code:
+Original findings, checked against the unpacked C64 v10 routines:
 
-- Sector entry is `$FCE1`, with the mothership branch at `$FD3B`: `$E1=1`.
-  Enemy: `$8C3D=1`, **GORGANITOR BASESTAR DETECTED**, yellow/orange, ten
-  flips at five-frame intervals, and the downward `$0921` sweep. Friendly:
-  `$8C3D=0`, **ENTERING BASE SECTOR**, the same message timing, no entry sweep.
-  `$FBFB` dispatches a negative STATE to `$FC77`, which is map/path work;
-  these addresses alone do not set up the mothership sequence.
-- `$8C3F` / `$8C44` establish the original long-range/pre-approach phase:
-  `$E2=1` only for STATE `$80`, otherwise zero; `$8E8F` and `$8ED1` clear.
-  The distance check at `$8D1C` leads through `$9054` and the `$0F7F` wait,
-  then `$8D56` calls `$909D` if the sector still contains a base. The mines
-  and this preliminary positioning phase remain deferred; the port starts
-  the ring approach after the sector's closing wipe.
-- `$909D` sets the view colours, and `$90D9` resets both circle operands
-  `$3668` / `$3674` to 1. Centre is `$50,$64`, initial radius 1. The
-  callback `$EF6B` plots value 3, preserving existing value-2 pixels.
-  `$8ED2` sets the matrix to `$19` for an enemy and `$1B` for a friend;
-  colour RAM is 2 / 6. The port limits fills to view rows 4-17 and keeps
-  the cockpit/radar intact.
-- `$90F3`: **128 loop passes, not 128 video frames**, between increments
-  of radius `$43`. The second circle operand grows by 3 for an enemy,
-  by 1 for a friend, producing the unusual concentric shapes. From
-  radius 12, `$8F05` also runs with `$8ED1=radius`: this is the central
-  rectangular opening, now ported (`MSCINIT`, `MSVB`). `$8ED2` patches its
-  starting x/y to 75/100, width to 10 and height to 1. At radius r, with
-  n=r-12, x=75-ceil(n/2), y=100-ceil(n/2), width=10+n, height=1+n.
-  `$B39A` includes both endpoints, so the first rectangle is 11 by 2
-  multicolour pixels. Nested outlines fill the rectangle as it grows;
-  no rounded-corner routine is used. Value-2 pixels survive later circles.
-  `$953F` sets matrix `$11` for a friendly base, making the opening white.
-  The port uses this stable palette for both kinds; enemy random colour
-  flickering from `$953F` remains deferred.
-- **Different endpoints:** enemy `$917A` returns at radius `$22`; friendly
-  `$9184` returns at `$28`. `$9162` also returns when our torpedo's blast
-  flag `$BAD1` is set. The port has both radius endpoints and terminates
-  its approach when the player's torpedo reaches its blast phase; it
-  does not clear the base's map cell or award a base kill.
-- With `m.dma=true`, booting the C64 game through its title/difficulty
-  screens and entering `$909D` gives **234 frames enemy / 265 friendly**
-  from radius 2 to the final radius. Growth intervals are roughly 6-10
-  frames, including the drawing time. The frame-locked port measures
-  **229 / 268 frames**, respectively; its cadence is a measured
-  approximation, with rendering allowed to continue across frames.
-  Tests rerun the original measurement, allowing at most ten frames
-  difference, and compare **all 74 rings pixel for pixel**.
+- Entry is `$FCE1`, mothership branch `$FD3B`, setting `$E1=1` for either kind.
+  Enemy: GORGANITOR BASESTAR DETECTED, downward `$0921` sweep; friendly:
+  ENTERING BASE SECTOR, no entry sweep. Both use yellow/orange, ten flips
+  every five frames. `$FBFB/$FC77` are map/path dispatch, not the full setup.
+- `$8C3F/$8C44` perform preliminary long-range positioning; `$8D1C` reaches
+  `$9054`, waits for `$0F7F`, then `$8D56` calls `$909D`. The port still starts
+  the ring approach after the closing wipe, without this preliminary phase.
+- `$909D` initializes centre `$50,$64`, radius 1. `$90F3` increases radius every
+  **128 loop passes, not 128 video frames**. `$3674` grows by 3 for an enemy,
+  by 1 for a friend, producing the unusual concentric shapes. Port `MSSTEP`
+  matches all 74 friendly/enemy radii pixel for pixel.
+- From radius 12, `$8F05` draws the rectangular opening via `$B39A/$EF45` (value
+  2, protected by later circles). `$8ED2` patches its width operand `$8F06` to
+  **10**, not the unpatched literal 20. With n=radius-12: x=75-ceil(n/2),
+  y=100-ceil(n/2), width=10+n, height=1+n, including both endpoints. Nested
+  outlines fill the rectangle; `MSCINIT/MSVB` draw an equivalent filled area.
+  All 74 cumulative centre/ring stages are compared against the original.
 
-Deferred sequences and known exits:
+Proton rule and phase (destroying either kind of base):
 
-- Enemy `$916C` arms `$CF01` at radius `$19`, clearing `$CF02` repeatedly
-  while the radius stays there. `$CF04`, called every 16 loop passes,
-  copies 31 animation frames backwards from `$AF80` toward `$A000` into
-  `$5140` (shapes `$45/$46`), using two expanded white sprites 5 and 6,
-  x `$8C/$A1`. It uses the same source art as `TORPA`. `$CF8C` applies
-  five hits. The old estimate of ten seconds assumed one loop pass per
-  video frame: in the measured approach the active interval was frames
-  158-201 (about 0.86 seconds). Shoot-down/dodging still needs tracing.
-- On normal completion, `$8D66` calls `$918E`: only a friendly base,
-  with `$BACE`, `$BAD1` and `$8C3E` all zero, runs its two path/ring
-  tractor-beam effect. `$92E3` then skips enemies and enters the friendly
-  status/repair sequence at `$932D`. Neither effect is ported.
-- Mines (`$71-$7C`, `$CCDF/$CD27`), destroying a base and the cleanup at
-  `$8F53` remain later work. No repair/refuel/proton grant runs in this port.
+- `$BB81` tests `$E1`, `$8ED1` and `$953E` at the end of the player's proton
+  flight, after clearing `$BACE`. Only a base sector, an opening already
+  started (radius >=12), and phase 1 set `$8C3E` and `$BAD1`.
+- A miss leaves `$BAD1=0`: the approach continues. This includes shots before
+  radius 12 and friendly-base shots in the hidden phase 0. The user confirmed
+  repeated misses followed by friendly repair in VICE. `MSBLAST` implements
+  this truth table; `MSFLASH` flashes/restores colour RAM without erasing the
+  base or ending its approach. Phase/radius are sampled on arrival, not launch.
+- `$953F` runs every 32 passes, toggling `$953E` after 25 calls. `$8ED2` starts
+  the phase randomly and the first period randomly in 1-64 calls. Enemy phase
+  0 sets a random `$1x` matrix colour every call; phase 1 uses `$11`. Friendly
+  is always `$11`, with the same hidden phase controlling vulnerability.
+- `MSPSTEP` schedules four calls per measured radius interval; `MSPCALL` uses
+  the original 25-call counter. With DMA, first three toggles with counter 25
+  and phase 0 measure **port 37/74/115 frames vs original 36/75/115** in a
+  friendly approach. Both initial random values use the map's RNG.
+- `MSPAINT` bounds matrix fills in vertical blank (line 256+12 deadline), yielding
+  rows across frames. During flicker, an unfinished fill uses the latest colour;
+  phase 1 restarts a complete white fill. Centre work takes priority. Heavy jobs
+  replace stars in those blanks. The colour effect is therefore a bounded row
+  approximation of the original whole-view flicker.
 
-Port integration and limits:
+End of the sequence:
 
-- `SECTORIN` calls `MSECTOR` in the existing three-byte slot. Mothership
-  work switches `shpj` from dormant BIT to JSR; flight/fights retain their
-  former instruction sizes, addresses and idle cost. Star plot/erase
-  operands switch while approaching so stars do not erase the rings.
-  Existing JMP slots `vv2` and `g_vs2` switch from STARS to `MSVB` while
-  in a mothership sector, returning directly to STARS when no opening
-  update is pending. No extra idle-flight/fight instructions are added.
-- New code lives in the `$E000` chunk, ending below `$EDC0`. Type-1
-  masters now occupy `$2900-$2CBF`, reusing the disabled VDC's data area.
-  The build asserts VDC is disabled. The packed image starts at `$6200`;
-  `GINIT2` restores overwritten type-1 sprite slots after unpacking.
-  Standalone cockpit/map programs retain their original memory layouts.
-- Colour fills use one row per frame. Circle work checks raster line 174
-  before each eight-point step, yielding before the gun split; work is deferred
-  altogether when a phasor has already used the slot through line 150.
-  The center is filled a bitmap row at a time at 2 MHz in vertical blank,
-  checking `TLATE` at line 256+16 and replacing stars on those frames.
-  Completed filled rectangles are pixel-equivalent to the original's
-  cumulative nested outlines; the outer circle schedule stays separate. DMA tests
-  record zero late `$D020/$D021` writes in the sensitive split windows
-  and zero `OVRUN` for both approaches. VICE x128 remains the hardware
-  timing reference.
-- Opening/closing the map wipes the bitmap and restarts the approach.
-  The port waits at the final image, allowing navigation; it does not yet
-  perform the original beam/repair, enemy weapon or post-sequence cleanup.
-- Observed in the C64 original (user, VICE): after the sequence the map comes
-  up by itself (a friendly base has repaired the ship; an enemy base is too close
-  and its one proton torpedo has been fired, destroyed or not). The mothership's
-  sector is then the only one the map will not jump straight back to: the
-  player must jump elsewhere first and return to try again. Any other sector
-  can be targeted again whatever is in it. To port with the post-sequence work.
+- Normal endpoints are **enemy `$22`** (`$917A`), **friendly `$28`** (`$9184`).
+  Measured radius-2-to-end growth: port about 230/269 frames, original 234/265.
+  Tests measure the original afresh with DMA and allow at most ten frames drift.
+- `$9162` returns early only for a successful proton blast. `$8D64` skips beam
+  and repair after a kill. `$8F53` waits for the blast, shows BASESTAR DESTROYED
+  CAPTAIN (white/black, rate 20, 15 flips), clears the view, and starts four
+  bursts. `$9020` erases growing biased rings from 1 to `$2C`, callback `$EEFB`,
+  bias +1 per radius. `$8E42` clears the map cell on `$8C3E`.
+- Port `MSFINISH` waits for any proton/flash, shows the message, wipes one view
+  row per frame, seeds the two existing particle systems (26+12 points), and
+  runs the 44 erasing circles through `MSSTEP`. It reuses two bursts rather than
+  the original four; the effect is raster-budgeted rather than one blocking loop.
+  Tests check every death radius, the erase mode, and unchanged cockpit art.
+- `MSRETURN` clears STATE/COUNT and any pending movement-copy cell on a kill,
+  marks a friendly base's matching strategic DEAD flag, and opens the map.
+  A normal enemy endpoint opens the map immediately; a surviving friend now docks and repairs first (below). Enemy weapons remain absent.
+- The existing own-sector `g_mi8` JMP is redirected to RTS while `MSLOCK=1`, so
+  fire on the just-completed base sector leaves the map open. Other targets
+  still work. `MSECTOR` clears this lock on arrival elsewhere. Manually closing
+  the map does not restart a completed base; jumping elsewhere is required.
+
+Friendly beam and repair (`MRSTART` / `MBEAM` / `MRREPAIR`):
+
+- Original `$918E` tests `$E2 | $BACE | $BAD1 | $8C3E` before drawing. The
+  port's `MSFINISH` waits out any proton/flash, takes the destruction branch on
+  a kill, and dispatches only `$FF` to docking. Enemy endpoints still return
+  immediately. A phase-off friendly proton miss continues the approach and
+  eventually receives the same repairs.
+- `$3580` builds 77 points from (60,110) to (15,186), and (100,110) to
+  (146,186); `$91C4` takes the first 76. For point i=0..75 the radius is
+  `1+floor((i+4)/10)`; both circles have bias 1 and use `$EF30`: draw pixel
+  value 1 only on empty pixels. The paths/rings are white against the blue
+  friendly base. Both paths and all 152 cumulative rings are compared with
+  the original in tests. The original beam measures 95-97 DMA frames.
+- Original repair `$92E3` switches to text and clears rows 3..24. The eight
+  names at `$9245` type at columns 0, rows 4,6,8,10,12,14,16,18, green 13:
+  PHASOR CANNONS; LONG RANGE SCANNER; SHORT RANGE SCANNER; STELLAR GRID;
+  AUTOMATIC TRACKING COMPUTER; HYPERSPACE COORDINATOR; LONG RANGE SCAN
+  SEQUENCER; COMMUNICATIONS MODULE. Lengths 14,18,19,12,27,22,25,21;
+  158 characters take 62-64 DMA frames. `$9489` beeps for each character.
+- `$9436` snapshots whether each system works. `$943F` alternates whole-row
+  colour nibbles: `$DD` for working, `$72` for destroyed; roughly every 20
+  frames during a damaged scan. `$94AD` writes 11 characters at column 29:
+  `OPERATIONAL`, or three spaces plus `REPAIRED`. `$9510` does a random-colour
+  scan/noise on the bottom bands for a damaged system; `$223D` confirms each
+  result with a pulse beep. Main-loop scans take about 28 frames for a working
+  system or 81 with the damaged-system scan. First OPERATIONAL is about 81
+  frames after typing; first REPAIRED about 134 frames after typing.
+- Energy starts charging after the report is typed (`$93BB` sets `$F86B`),
+  **nine units per DMA frame**, BCD HUD 0000..9999; `$FA3C` starts voice 2 at
+  `$1200`, triangle `$11`, AD `$05`, SR 0. `$FA33` clears the charging flag at
+  9999. There are no separate SHIELD/ENERGY sentences: the existing HUD shows
+  those values. Shields and hit points do not rise one by one: at the very end
+  `$9430` increments byte `$8450`, then `$8451` restores all difficulty-based
+  hit points and shield capacity. The original has no proton clamp: 255 wraps
+  to 0, while its two HUD digits show the last two decimal digits.
+- VICE follow-up fixes (`briefs/mothership-repair-fixes.md`): the report now
+  matches the original addresses: names at `$48A0 + 80*n` (rows **4,6,...18**,
+  column 0), results at `$48BD + 80*n` (column 29). These correspond exactly
+  to original `$54A0` / `$54BD`; the physical left margin is the normal text
+  screen border, not an extra prefix in the strings. The entire lower screen
+  is text while reporting: radar, cockpit art, crosshair and guns are hidden.
+- No temporary font is copied into live fighter bitmap slots. The report uses
+  the original `$4000` font and `$4800` screen (`$D016=$08`, `$D018=$20`). The
+  eight-byte raster slot becomes JSR+NOPs while reporting; reducing the line-74
+  wait from 10 to 5 iterations compensates its 24 extra cycles (25 saved).
+  Every slot and wait immediate is restored afterward, with zero idle cost.
+- `$9510` is now visible: solid character `$3F` blocks at columns 12..27,
+  rows 20 and 21 (`$4B2C` / `$4B54`), with random colour writes to `$DB2C` /
+  `$DB54`. Original `$94F8` makes glyph `$3F` solid by filling `$41F8-$41FF`
+  with FF; the port now does that too and restores the saved original glyph.
+  The initial scan and each damaged-system scan animate these blocks. DMA
+  measurements find 8,704 colour writes per original scan, about 48–53 frames.
+  Bounded port jobs use 36 pairs in the view and 52 in the 2 MHz blank, with a
+  `TLATE` line-264 start deadline for the latter; late work yields. Damaged-scan
+  triangle beeps retain `$9973` settings (voice 1, frequency `$6200`, AD 2,
+  SR 0, gate/wave `$11`) and repeat while scanning, alongside red/yellow rows.
+- Beam work still yields at view lines 168/174 and blank line 280. Rays now
+  continue across the cockpit to the guns. Only y>=184 is excluded: these are
+  invisible bitmap rows under the bottom text strip, containing live shot and
+  radar sprites. All 152 ring stages are compared against the original through
+  y=183, including the cockpit. Clean cockpit art has no pixel value 1 (asserted
+  by the build), so removing only 01 pixels restores its exact pre-beam bitmap.
+- Completion first enters state 11. Like the original `$8D7C-$8DB0`, it blanks
+  the lower display before preparing the map; it never exposes the old base in
+  the repaired palette. Raster-budgeted jobs clear the view, erase beam-only
+  pixels from cockpit art, restore cockpit colour RAM, and restore the block
+  glyph. Only then do the original bitmap/input slots return and `MSRETURN`
+  open the map with the existing re-entry lock. The lifetime HITS are preserved;
+  SYSHP, SHLD/HUDS, energy and proton byte-wrap behavior remain as before.
+- **Root cause of the VICE sprite noise:** the first repair build placed report
+  text at `$4D80-$4E3B`, which holds all three long-range scanner blip shapes,
+  and beam X paths at `$4F40-$4FBF`, which holds both firing-barrel shapes. This
+  corrupted the PRG's sprite assets even before docking; a before/after-only
+  test missed it. New tests compare these shapes against the original sprite
+  asset file as well as comparing every sprite region and all font/shot/fighter
+  masters, cockpit art and persistent colour masters before/after docking.
+- Generated text now occupies `$2F50-$2FED`, words/lengths `$2CC0-$2CDD`, paths
+  `$36D0-$3767`. They are after XHI, after type-1 masters, and after DIGF,
+  respectively; **no sprite slots hold repair data**. Small helpers use asserted
+  padding gaps at `$28D7`, `$2CDE`, `$2FEE`, `$33E8`, `$3681`, `$3768`, `$3BC0`,
+  `$3BD1`, `$3BD8`, `$3D60`, `$BFC3`. No glue/cockpit/map instruction moves.
+  Only repair data and the MRDELAY helper move relative to the previous build.
+- Memory: high code ends exactly at STR2Y `$F400` (0 bytes spare), packed image
+  has 67 bytes spare before `$7680`, glue has 12 bytes. All new gaps and asset
+  bounds are checked. The previous shortest-token LZ format/decoder is unchanged.
+- Original minefield observation (not ported here): stars appear only in a
+  horizontal band, the star field cannot be steered once direction is locked,
+  and mines can remain stuck on the screen (original bug).
+
+Strategic battle messages:
+
+- Original `$3E7E` prints at the exact ring transitions: first fully surrounded
+  blue base, its 120-tick destruction, surrounded planet, its 255-tick end.
+  All four use `$9BE5` with colours `$87`, rate 15 / 15 flips, and `$0930` siren.
+- The joined map's SURROUND store slots call `GBTQUEUE` (same three bytes,
+  preserves A/X/Y/status). `GBTEXT` drains one event per world tick through the
+  old VDCMSG slot; its empty LDA/BEQ/RTS path has the same size and cost as before.
+  FIFO depth is 8; saturated input drops the newest entry. Simultaneous events
+  are serialized so each can be seen, instead of doing multiple heavy prints
+  in one raster slot. LASTMSG is still maintained for the debugger.
+- MOTHERSHIP ENGAGED IN BATTLE, MOTHERSHIP DESTROYED, JARALOBA IS SURROUNDED and
+  JARALOBA CEASES TO EXIST all show with VDC off. Message 4 does not implement
+  game over. Tests cover all four messages, their siren/timing, and a five-event
+  tick with no late split writes or OVRUN.
+
+Memory and integration:
+
+- New high code remains at `$E000`, below STR2Y `$F400`; small repair helpers also use checked padding gaps. Glue/cockpit/map code sizes
+  and positions are unchanged. Existing BIT/JSR and JMP slots provide the hooks,
+  with no additional idle flight/fight-frame cost.
+- The map shares the cockpit's YLO/YHI/XLO/XHI tables at `$2D00/$2E00/$2F00/$2F28`.
+  The freed `$3800-$3BBF` holds type-2/type-3 masters; type-1 stays at `$2900`.
+  STR2X is at `$3E00-$3FFF`, formerly disabled-VDC names. Build asserts identical
+  table contents/addresses, VDC off and all region bounds. Standalone map and
+  cockpit programs retain their original layouts.
+- The packed image now starts at `$5E00`, beyond glue ending `$5DF3`, and may
+  overwrite live fighter slots. GINIT2 restores them after unpacking. The build
+  checks the new glue/packed boundary and the `$7680` cockpit-art boundary.
+- The torpedo decoder now distinguishes 1 MHz view time, the PAL 256-311 segment,
+  and the wrapped 2 MHz blank; the old bit-8-only check allowed long copies past
+  line 47. It yields by view line 142 / wrapped blank line 16. Busy frames may
+  stretch the animation; full timing tests cover both hits and misses.
+- Approach circle and opening jobs retain line-150/174 view checks and the
+  line-256+16 centre deadline. DMA tests include continuous steering/fire,
+  phase changes, successful kills and simultaneous battle messages.
+
+Still deferred: preliminary base positioning, mines `$71-$7C` (`$CCDF/$CD27`),
+enemy torpedo `$CF01/$CF04`, friendly beam `$918E`, repair `$932D`, game over,
+ratings and other global consequences beyond the base cell/dead flag. The enemy
+animation shares TORPA's 31 frames, copied backwards from `$AF80` toward
+`$A000` into `$5140` (shapes `$45/$46`) by `$CF04` every 16 loop passes. It
+uses expanded white sprites 5/6 at x `$8C/$A1`, fires at radius `$19`, and
+`$CF8C` applies five hits. In the measured original it was active for roughly 43 frames, not
+ten seconds (the old estimate mistook loop passes for frames). Friendly beam
+requires no active proton, blast or killed flag before repair. Opening/closing
+the map during an unfinished approach still restarts that approach.
 
 ## Open questions
 

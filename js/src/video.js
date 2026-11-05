@@ -141,7 +141,8 @@ var SentinelVideo = (function () {
     var bmm = v[0x11] & 0x20, mcm = v[0x16] & 0x10, ecm = v[0x11] & 0x40;
     var cy = y >> 3, ln = y & 7, x, b, col, o;
     var charBase = (v[0x18] & 0x0E) * 0x400, bmBase = (v[0x18] & 8) ? 0x2000 : 0;
-    function put(x, c, f) { if (x < VIC_W) { line[x] = VICC[c]; fg[x] = f ? 1 : 0; } }
+    var invalid = ecm && (bmm || mcm);      // ECM with BMM or MCM: the VIC shows black
+    function put(x, c, f) { if (x < VIC_W) { line[x] = VICC[invalid ? 0 : c]; fg[x] = f ? 1 : 0; } }
     for (var cx = 0; cx < 40; cx++) {
       var i = cy * 40 + cx;
       var sc = this.vicByte(bank, screen + i);

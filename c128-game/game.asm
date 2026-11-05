@@ -20,7 +20,7 @@
 ; ships is approached group by group (the cockpit's long range scanner), each
 ; kill lowers the map's COUNT, the last one empties the sector on the map.
 ; Motherships (STATE $80 / $FF) approach as biased concentric rings (MSECTOR).
-; Their weapons, mines, docking, repairs and destruction are later work.
+; Friendly docking/repair and proton destruction follow the approach; mines and enemy weapons are later work.
 
 HUDSEC  = $4865         ; the HUD's sector digits (row 2, column 21)
 MATRIX  = $4400         ; the bitmap's colour matrix
@@ -1139,7 +1139,7 @@ mt_pb2:  STA HMACT,X
         RTS
 
 GINIT2:
-        JSR GUNPACK     ; the code and data for $E000, packed in the 3D view's bitmap
+        JSR GUNPK2      ; the code and data for $E000, packed in the 3D view's bitmap
         LDX #$00        ; type 1 masters in the disabled VDC data, restored below
 g_gi2:  LDA $2900,X     ; restore type 1 from TSH1 after unpacking over its slots
         STA $6000,X
@@ -1184,7 +1184,7 @@ GUNPACK:LDA #<PACKSRC
         STA CDST
         LDA #>HIGH2
         STA CDST+1
-        LDY #$00
+g_upb:  LDY #$00
         LDA (CSRC),Y
         STA UPEND
         JSR g_up8
@@ -1243,8 +1243,14 @@ g_up9:  INC CDST
         RTS
 UPEND:  .BYTE 0,0
 GSEED:  .BYTE 0
+; A second stream follows the first: STR2Y, unpacked over the packed data's own
+; start ($5E00, read already), so the $E000 code may run up to TORPA.
+GUNPK2: JSR GUNPACK
+        LDA #>STR2Y     ; (CDST's low byte is 0: the first stream ends at a page)
+        STA CDST+1
+        JMP g_upb
 HIGH2   = $E000
-PACKSRC = $6200
+PACKSRC = $5E00
 
         * = $C000
 
@@ -3113,17 +3119,16 @@ HDL:    .BYTE 0
 HDH:    .BYTE 0
 
 ; ---------------- more code: the RAM under the KERNAL at $E000 ----------------
-; Loaded packed at $6200 (restored sprite slots and the view, wiped before shown)
+; Loaded packed at $5E00 (restored sprite slots and the view, wiped before shown)
 ; and moved here by GAMEINIT: a program cannot load across $D000-$DFFF (I/O).
         * = $E000
-TSH1    = $2900         ; masters: type 1 $20-$2E (15, VDC off; restored to slots by
-TSH2    = $EDC0         ; GAMEINIT), type 2 $3E-$44 (7), type 3 $31-$38 (8); type 2's
-TSH3    = $EF80         ; x and y streams (the original's $0600, $8100); the proton
-STR2X   = $F200         ; torpedo's 32 frames ($A000-$AFFF), packed a frame at a time
-STR2Y   = $F400         ; (build.py: TORPA)
-TORPA   = $F600
-TSHOT   = $FE80         ; masters of the shot's shapes $67 / $68 (the torpedo borrows
-                        ; their slots, $F3 / $F4)
+TSH1    = $2900         ; type-1 masters (15 shapes), restored to live slots at init
+TSH2    = $3800         ; type-2 masters (7), reclaimed duplicate map address tables
+TSH3    = $39C0         ; type-3 masters (8), ending at $3BC0
+STR2X   = $3E00         ; type-2 X streams (512), reclaimed disabled-VDC system names
+STR2Y   = $5E00         ; type-2 Y streams (512): the second packed stream (GUNPK2)
+TORPA   = $F600         ; packed proton frames ($A000-$AFFF in the original)
+TSHOT   = $FE80         ; original shot shapes $67/$68, borrowed by the proton
 
 ; ---------------- the proton torpedo ($BAD4-$BC86) ----------------
 ; SPACE (or both mouse buttons) asks for it ($FDE5 -> $BACE). With none left a click
@@ -3183,7 +3188,10 @@ g_tp5:  LDA TPF         ; (each part works while there is time, and goes on in t
         BEQ g_tpk
         CMP #$04
         BEQ g_tpb
-        JMP TCOL        ; 3, 5: the view's colours
+        CMP #$06
+        BCC g_tpcol
+        JMP MSFLASH
+g_tpcol:JMP TCOL        ; 3, 5: the view's colours
 g_tp7:  JMP TFLY
 g_tpk:  JMP TKILL
 g_tpb:  JMP TBLAST
@@ -3197,6 +3205,8 @@ g_tp8:  LDA #$00
         BNE g_tp9
         LDA $485A
         CMP #$70
+        BNE g_tp9
+        LDA MRPHUND
         BNE g_tp9
         LDA #$00        ; none: a click ($BC6F)
         STA $D404
@@ -3215,6 +3225,12 @@ g_tp9:  DEC $485B       ; one less ($8450, $849E)
         LDA #$79
         STA $485B
         DEC $485A
+        LDA $485A
+        CMP #$6F
+        BNE g_tpa
+        LDA #$79
+        STA $485A
+        DEC MRPHUND
 g_tpa:  LDA #$0A        ; the launch ($BBB2): noise on voices 1 and 2
         STA $D401
         LDA #$80
@@ -3286,7 +3302,8 @@ g_tf3:  DEC TPY1
         DEC TPY2
         DEC TPY2
         DEC TPN
-        BEQ TEND
+        BNE g_tf9
+        JMP TEND
 g_tf9:  RTS
 
 ; The next of its animation's frames into $F3 / $F4 ($7CC0-$7D3F; tokens: $80 + n
@@ -3298,10 +3315,19 @@ TDEC:   LDA TPSRC
 g_td1:  LDX TPO
         CPX #128
         BCS g_td8
-        BIT $D011       ; (time: a token takes under a line, until line 256 + 44)
-        BPL g_td2
+        LDA FAST        ; after the PAL frame wraps, bit 8 alone is not enough
+        AND #$01
+        BEQ g_tdview
+        BIT $D011
+        BMI g_td2       ; PAL lines 256-311, before the frame wraps
         LDA $D012
-        CMP #44
+        CMP #243
+        BCS g_td2
+        CMP #16         ; wrapped blank: reserve the shape restore and world hook
+        BCS g_td9
+        BCC g_td2
+g_tdview:LDA $D012
+        CMP #142        ; longest token is 61 zero / 33 literal bytes
         BCS g_td9
 g_td2:
         LDY #$00
@@ -3372,7 +3398,7 @@ g_te1:  LDA TSHOT,X
         STA TPF
         LDA #$03        ; the fighters to look at
         STA TPKX
-        RTS
+        JMP MSBLAST
 
 ; ($BC88) every fighter in view goes down: one at a time, while there is time.
 TKILL:  LDA #28
@@ -3543,26 +3569,26 @@ TPLOT8: LDA TRX         ; (x, y) and (y, x) in the four quadrants
 TPLOT4: STA TPDX
         STY TPDY
         CLC
-        LDA #$50
+tpcx1:  LDA #$50
         ADC TPDX
         STA POSX
         CLC
-        LDA #$64
+tpcy1:  LDA #$64
         ADC TPDY
         STA POSY
         JSR TPLOT1
         SEC
-        LDA #$50
+tpcx2:  LDA #$50
         SBC TPDX
         STA POSX
         JSR TPLOT1
         SEC
-        LDA #$64
+tpcy2:  LDA #$64
         SBC TPDY
         STA POSY
         JSR TPLOT1
         CLC
-        LDA #$50
+tpcx3:  LDA #$50
         ADC TPDX
         STA POSX
 TPLOT1: JSR PIXADDR
@@ -4162,8 +4188,24 @@ g_cu1:  LDA HTEST
 H2END:
 
 ; Mothership sector ($FD3B, $8C44); work in the view through shpj, no idle cost.
-; TSH1 reuses the disabled VDC's $2900-$2CBF, leaving code up to TSH2 ($EDC0).
+; Fighter masters and STR2X use lower RAM; new code fits below TORPA ($F600).
 MSECTOR:
+        LDA #<MAPCLOSE
+        STA g_mi8+1
+        LDA #>MAPCLOSE
+        STA g_mi8+2
+        LDA #$00
+        STA MSLOCK
+        STA MSKILLED
+        JSR MSOFF
+        LDA M_STATE,X
+        BMI g_ms0
+        JMP GSQTYPE
+MSOFF:
+        LDA #$20
+        STA mscent
+        LDA #$01
+        STA msmode+1
         LDA #<STARS
         STA vv2+1
         STA g_vs2+1
@@ -4185,9 +4227,7 @@ MSECTOR:
         STA shpj+2
         LDA #$2C
         STA shpj
-        LDA M_STATE,X
-        BMI g_ms0
-        JMP GSQTYPE
+        RTS
 g_ms0:  STA MSKIND
         LDA #<MSVB
         STA vv2+1
@@ -4215,7 +4255,11 @@ MSVIEW: LDA $D012       ; a phasor can consume the view slot: defer heavy work
         CMP #150
         BCC g_mstime
         RTS
-g_mstime:LDA MAPSHOWN
+g_mstime:LDA MSSTATE
+        CMP #$04
+        BCC g_msactive
+        JMP MSFINISH
+g_msactive:LDA MAPSHOWN
         ORA WIPE
         ORA HYPON
         BEQ g_mvgo
@@ -4230,6 +4274,19 @@ g_mvgo: LDA MSSTATE
         STA MSCLOCK
         STA MSRUN
         STA MSCPEND
+        STA MSPACC
+        LDA #14
+        STA MSPROW
+        LDA #$11
+        STA MSPCOLOR
+        JSR M_RND
+        AND #$3F
+        CLC
+        ADC #$01
+        STA MSPCOUNT
+        JSR M_RND
+        AND #$01
+        STA MSPHASE
         LDA #$01
         STA MSRAD
         STA MSBIAS
@@ -4237,7 +4294,7 @@ g_mvgo: LDA MSSTATE
         STA MSSTATE
         LDA #$87
         STA MSGCOL
-        LDA #$05
+        LDA #$14        ; (the original's 5 per loop pass: 20 frames in the measured base entry)
         STA MSGRATE
         LDA #<MSFRIEND
         LDX #>MSFRIEND
@@ -4294,15 +4351,7 @@ g_msc3: STA (CDST),Y
         INC MSSTATE
         JMP MSRING
 
-g_msv3: CMP #$03
-        BNE g_msret
-        LDA TPF
-        CMP #$03
-        BCC g_msclock
-        LDA #$00
-        STA MSCPEND
-        INC MSSTATE     ; $9162: the player's proton blast also ends the approach
-        RTS
+g_msv3: JSR MSPSTEP
 g_msclock:INC MSCLOCK
         LDA MSRUN
         BNE g_msd
@@ -4319,7 +4368,7 @@ g_msclock:INC MSCLOCK
         LDA #$22
 g_msend:CMP MSRAD
         BNE g_msgrow
-        INC MSSTATE     ; endpoint only; no torpedo, beam, repair or destruction
+        INC MSSTATE     ; endpoint: friendly docking or enemy return (MSFINISH)
         RTS
 g_msgrow:
         INC MSRAD
@@ -4335,7 +4384,8 @@ g_msd:  LDA TPF         ; do not interfere with the player's torpedo's scratch
         RTS
 g_msd1: JMP MSSTEP
 
-MSRING: JSR MSCINIT
+MSRING:
+mscent: JSR MSCINIT
         LDA MSRAD
         STA MSRX
         LDA #$80
@@ -4363,14 +4413,14 @@ g_msstep:CLC
         CLC
         ADC MSBIAS
         STA MSD2
-        LDA #$01
+msmode: LDA #$01
         STA TPPASS
         LDA MSRX
         LDY MSRY
-        JSR TPLOT4
+msplot1:JSR TPLOT4
         LDA MSRY
         LDY MSRX
-        JSR TPLOT4
+msplot2:JSR TPLOT4
         LDA MSD1
         STA MSD
         INC MSRY
@@ -4403,7 +4453,7 @@ g_msdone:LDA #$00
         STA MSRUN
 g_msout:RTS
 
-MSSTATE:.BYTE 0         ; 0 idle, 1 init, 2 colours, 3 approach, 4 endpoint
+MSSTATE:.BYTE 0         ; 0 idle, 1 init, 2 colours, 3 approach, 4 end, 5 wipe, 6 death
 MSKIND: .BYTE 0         ; $80 hostile ($E2=1), $FF friendly ($E2=0)
 MSROW:  .BYTE 0
 MSRAD:  .BYTE 1
@@ -4464,12 +4514,18 @@ g_mcinit:SEC
 ; Switched JMP slots vv2 / g_vs2; idle flight/fights still jump straight to STARS.
 ; Centre updates replace stars for a blank; deadline leaves the radar its time.
 MSVB:   LDA MSCPEND
-        BEQ g_mcvstars
+        BEQ g_mcvpalette
         LDA MAPSHOWN
         ORA WIPE
         ORA HYPON
         ORA TPF
         BEQ g_mcvrow
+        JMP STARS
+g_mcvpalette:LDA MSPROW
+        CMP #14
+        BCS g_mcvstars
+        JSR MSPAINT
+        RTS
 g_mcvstars:JMP STARS
 g_mcvrow:LDA #16
         JSR TLATE
@@ -4535,3 +4591,982 @@ MSCEND: .BYTE 0
 MSCOFF: .BYTE 0
 MSCN:   .BYTE 0
 MSCENDCODE:
+
+; $953F every 32 passes: four calls per radius interval, frame-locked.
+MSPSTEP:CLC
+        LDA MSPACC
+        ADC #$04
+        STA MSPACC
+        LDX MSRAD
+        CMP MSDELAY,X
+        BCC g_mpout
+        SBC MSDELAY,X
+        STA MSPACC
+MSPCALL:DEC MSPCOUNT
+        BNE g_mpcol
+        LDA #25
+        STA MSPCOUNT
+        LDA MSPHASE
+        EOR #$01
+        STA MSPHASE
+        BEQ g_mpcol
+        LDA #$00        ; a white phase must repaint rows left from the flicker
+        STA MSPROW
+g_mpcol:LDA #$11
+        LDX MSKIND
+        CPX #$80
+        BNE g_mpset
+        LDX MSPHASE
+        BNE g_mpset
+        JSR M_RND
+        AND #$0F
+        ORA #$10
+g_mpset:CMP MSPCOLOR
+        BEQ g_mpout
+        STA MSPCOLOR
+        LDA MSPROW
+        CMP #14
+        BCC g_mpout
+        LDA #$00
+        STA MSPROW
+g_mpout:RTS
+MSPAINT:LDA TPF
+        ORA MAPSHOWN
+        ORA WIPE
+        ORA HYPON
+        BNE g_mppout
+g_mpprow:LDA MSPROW
+        CMP #14
+        BCS g_mppout
+        LDA #12
+        JSR TLATE
+        BCS g_mppout
+        LDX MSPROW
+        LDA ROWCL+1,X
+        STA CDST
+        LDA ROWCH+1,X
+        CLC
+        ADC #$44
+        STA CDST+1
+        LDA MSPCOLOR
+        LDY #39
+g_mppfill:STA (CDST),Y
+        DEY
+        BPL g_mppfill
+        INC MSPROW
+        JMP g_mpprow
+g_mppout:RTS
+
+; $BB81: sample the phase at the end of flight; a miss preserves the base.
+MSBLAST:LDA MSSTATE
+        BEQ g_msbout
+        CMP #$05
+        BCS g_msbout
+        LDA MSRAD
+        CMP #12
+        BCC g_msbmiss
+        LDA MSPHASE
+        BEQ g_msbmiss
+        LDA #$01
+        STA MSKILLED
+        LDA #$04
+        STA MSSTATE
+        LDA #$00
+        STA MSCPEND
+        RTS
+g_msbmiss:LDA #$06
+        STA TPF
+        LDA #$08
+        STA HCOLV
+        JMP TCOL0
+g_msbout:RTS
+MSFLASH:LDA TPF
+        PHA
+        JSR TCOL
+        PLA
+        LDX TPF
+        BNE g_msfout
+        CMP #$06
+        BNE g_msfout
+        LDA #$07
+        STA TPF
+        LDA #$06
+        LDX MSKIND
+        CPX #$80
+        BNE g_msfc
+        LDA #$02
+g_msfc: STA HCOLV
+        JMP TCOL0
+g_msfout:RTS
+
+; Finish states: 4 wait for proton, 5 wipe, 6 erasing rings; 7+ friendly docking.
+MSFINISH:LDA TPF
+        BEQ g_msfgo
+        RTS
+g_msfgo:LDA MSKILLED
+        BNE g_msfkill
+        JMP MRSTART
+g_msfkill:LDA MSSTATE
+        CMP #$04
+        BNE g_msfwait
+        LDA #<MSDESTROYED
+        LDX #>MSDESTROYED
+        LDY #$10
+        STY MSGCOL
+        LDY #20
+        STY MSGRATE
+        LDY #15
+        JSR MSGSTAT
+        LDA #$00
+        STA MSCPEND
+        STA EXPL
+        STA EXPL2
+        LDA #15
+        STA WIPE
+        INC MSSTATE
+        RTS
+g_msfwait:LDA WIPE
+        BEQ g_msfrdy
+        RTS
+g_msfrdy:LDA MSSTATE
+        CMP #$05
+        BNE g_msfdraw
+        LDA #$2C
+        STA mscent
+        LDA #$02
+        STA msmode+1
+        LDA #$01
+        STA MSRAD
+        STA MSBIAS
+        LDA #$00
+        STA MSRUN
+        STA EXPB
+        STA EXPB2
+        STA EVX0
+        STA EVY0
+        STA EVX02
+        STA EVY02
+        LDA #$50
+        STA EXPX
+        STA EXPX2
+        LDA #$64
+        STA EXPY
+        STA EXPY2
+        STA EXPL
+        STA EXPL2
+        JSR MSRING
+        INC MSSTATE
+        RTS
+g_msfdraw:LDA MSRUN
+        BEQ g_msfnext
+        JMP MSSTEP
+g_msfnext:LDA MSRAD
+        CMP #$2C
+        BCC g_msfmore
+        JMP MSRETURN
+g_msfmore:INC MSRAD
+        INC MSBIAS
+        JMP MSRING
+MSRETURN:JSR SECIDX
+        LDA MSKILLED
+        BEQ g_msrmap
+        LDA #$00
+        STA M_STATE,X
+        STA M_COUNT,X
+        STA M_NEWST,X
+        STA M_NEWCT,X
+        LDA #$01
+        STA M_DIRTY,X
+        TXA
+        LDY #$03
+g_msrdi:CMP M_INNER,Y
+        BNE g_msrdi1
+        LDX MSKIND
+        CPX #$FF
+        BNE g_msrkl
+        LDA #$01
+        STA M_DEAD,Y
+        BNE g_msrkl
+g_msrdi1:DEY
+        BPL g_msrdi
+g_msrkl:JSR MSOFF       ; destroyed: its empty sector can be chosen straight away
+        JMP MAPOPEN
+g_msrmap:JSR MSOFF
+        LDA #$01
+        STA MSLOCK
+        LDA #<g_mi9
+        STA g_mi8+1
+        LDA #>g_mi9
+        STA g_mi8+2
+        JMP MAPOPEN
+
+; SURROUND's STA LASTMSG slots become JSRs, preserving A/X/Y/status.
+GBTQUEUE:PHP
+        PHA
+        TXA
+        PHA
+        TSX
+        LDA $0102,X
+        BEQ g_gbqfull
+        LDX GBTCOUNT
+        CPX #$08
+        BCS g_gbqfull
+        INC GBTCOUNT
+        LDX GBTIN
+        STA GBTBUF,X
+        INX
+        TXA
+        AND #$07
+        STA GBTIN
+g_gbqfull:PLA
+        TAX
+        PLA
+        STA M_LASTMSG
+        PLP
+        RTS
+; VDCMSG's idle LDA/BEQ/RTS is unchanged in size and cost.
+GBTEXT: LDY GBTOUT
+        LDA GBTBUF,Y
+        SEC
+        SBC #$01
+        TAX
+        INY
+        TYA
+        AND #$07
+        STA GBTOUT
+        DEC GBTCOUNT
+        LDA GBTLO,X
+        PHA
+        LDA GBTHI,X
+        TAX
+        PLA
+        LDY #$87
+        STY MSGCOL
+        LDY #15
+        STY MSGRATE
+        JSR MSGSTAT
+        JMP SNDSIREN
+GBTLO:  .BYTE <GBMSG1,<GBMSG2,<GBMSG3,<GBMSG4
+GBTHI:  .BYTE >GBMSG1,>GBMSG2,>GBMSG3,>GBMSG4
+MSPHASE:.BYTE 0
+MSPCOUNT:.BYTE 1
+MSPACC: .BYTE 0
+MSPCOLOR:.BYTE $11
+MSPROW: .BYTE 14
+MSKILLED:.BYTE 0
+MSLOCK: .BYTE 0
+GBTCOUNT:.BYTE 0
+GBTIN:  .BYTE 0
+GBTOUT: .BYTE 0
+GBTBUF: .BYTE 0,0,0,0,0,0,0,0
+MSDESTROYED: .BYTE $40,$40,$40,$40,$40,$40,$40,$40,$42,$41,$53,$45,$53,$54,$41,$52,$40,$44,$45,$53,$54,$52,$4F,$59,$45,$44,$40,$43,$41,$50,$54,$41,$49,$4E,$FF
+GBMSG1: .BYTE $40,$40,$40,$40,$40,$40,$4D,$4F,$54,$48,$45,$52,$53,$48,$49,$50,$40,$45,$4E,$47,$41,$47,$45,$44,$40,$49,$4E,$40,$42,$41,$54,$54,$4C,$45,$FF
+GBMSG2: .BYTE $40,$40,$40,$40,$40,$40,$40,$40,$40,$40,$4D,$4F,$54,$48,$45,$52,$53,$48,$49,$50,$40,$44,$45,$53,$54,$52,$4F,$59,$45,$44,$FF
+GBMSG3: .BYTE $40,$40,$40,$40,$40,$40,$40,$40,$40,$4A,$41,$52,$41,$4C,$4F,$42,$41,$40,$49,$53,$40,$53,$55,$52,$52,$4F,$55,$4E,$44,$45,$44,$FF
+GBMSG4: .BYTE $40,$40,$40,$40,$40,$40,$40,$40,$4A,$41,$52,$41,$4C,$4F,$42,$41,$40,$43,$45,$41,$53,$45,$53,$40,$54,$4F,$40,$45,$58,$49,$53,$54,$FF
+MSDEND:
+; Friendly docking ($918E/$92E3). All hooks are changed only while active.
+; Text/path data uses verified table/master padding, never sprite slots.
+MRDATA  = $2F50
+MRTEXT  = $2F50
+MRWORDS = $2CC0
+MRLENS  = $2CD6
+MBLEFT  = $36D0
+MBRIGHT = $371C
+MBTAIL  = $3BC0
+MRSTART:LDA MSKIND
+        CMP #$FF
+        BEQ g_mrstart
+        JMP MSRETURN
+g_mrstart:LDA #<MRVIEW
+        STA shpj+1
+        LDA #>MRVIEW
+        STA shpj+2
+        LDA #<MBEAM
+        STA vv2+1
+        STA g_vs2+1
+        LDA #>MBEAM
+        STA vv2+2
+        STA g_vs2+2
+        LDA #$60
+        STA GSPACE
+        STA MAPTOG
+        STA LAUNCHD
+        LDA #$00
+        STA SNDON
+        STA MSRUN
+        STA MRSIDE
+        LDA #$FF
+        STA MRINDEX
+        LDA #$07
+        STA MSSTATE
+        STA MRCLOCK
+        LDA #$01
+        STA MSRAD
+        STA MSBIAS
+        JMP MBSET
+MRVIEW:LDA $D012
+        CMP #150
+        BCS g_mrout
+        LDA MSSTATE
+        CMP #7
+        BEQ MBEAM
+        CMP #11
+        BCC g_mrrun
+        JMP MRCLEAN
+g_mrrun:JSR MRNOISE
+        JMP MRREPAIR
+g_mrout:RTS
+MBEAM:  JSR MBDEAD
+        CMP #168
+        BCS g_mbout
+        LDA MSRUN
+        BEQ g_mbnext
+        JSR MSSTEP
+        LDA MSRUN
+        BEQ MBEAM
+        RTS
+g_mbout:RTS
+g_mbnext:LDA MRSIDE
+        EOR #$01
+        STA MRSIDE
+        BEQ g_mbring
+        INC MRINDEX
+        LDA MRINDEX
+        CMP #76
+        BNE g_mbmore
+        JMP MRINIT
+g_mbmore:
+        DEC MRCLOCK
+        BNE g_mbring
+        LDA #10
+        STA MRCLOCK
+        INC MSRAD
+g_mbring:LDA #$2C
+        STA mscent
+        LDA MRSIDE
+        BNE g_mbquiet
+        JSR MRBEEP
+g_mbquiet:JSR MBPLOT
+        JSR MSRING
+        JMP MBEAM
+; Temporarily move the existing circle plotter; only empty pixels get value 1.
+MBPLOT: LDX MRINDEX
+        TXA
+        CLC
+        ADC #110
+        STA tpcy1+1
+        STA tpcy2+1
+        LDA MBLEFT,X
+        LDY MRSIDE
+        BNE g_mbleft
+        LDA MBRIGHT,X
+
+g_mbleft:STA tpcx1+1
+        STA tpcx2+1
+        STA tpcx3+1
+        RTS
+MBSET:  LDA #<MBADDR
+        STA TPLOT1+1
+        LDA #>MBADDR
+        STA TPLOT1+2
+        LDA #$20
+        STA MSSTEP
+        LDA #<MBDEAD
+        STA MSSTEP+1
+        LDA #>MBDEAD
+        STA MSSTEP+2
+        LDA #<MBZERO
+        STA TPLOT1+9
+        LDA #>MBZERO
+        STA TPLOT1+10
+        LDA #$D0
+        STA TPLOT1+11
+        LDA #<MASK1
+        STA g_pl8-2
+        LDA #>MASK1
+        STA g_pl8-1
+        RTS
+MBRESTORE:LDA #<PIXADDR
+        STA TPLOT1+1
+        LDA #>PIXADDR
+        STA TPLOT1+2
+        LDA #$AD
+        STA MSSTEP
+        LDA #$12
+        STA MSSTEP+1
+        LDA #$D0
+        STA MSSTEP+2
+        LDA #<g_msret
+        STA vv2+1
+        STA g_vs2+1
+        LDA #>g_msret
+        STA vv2+2
+        STA g_vs2+2
+        LDA #<M_MASK2
+        STA TPLOT1+9
+        LDA #>M_MASK2
+        STA TPLOT1+10
+        LDA #$F0
+        STA TPLOT1+11
+        LDA #<MASK3
+        STA g_pl8-2
+        LDA #>MASK3
+        STA g_pl8-1
+        LDA #$50
+        STA tpcx1+1
+        STA tpcx2+1
+        STA tpcx3+1
+        LDA #$64
+        STA tpcy1+1
+        STA tpcy2+1
+        RTS
+MRINIT: JSR MBRESTORE
+        LDA #$2C        ; the radar's sweep (colour band) off: the report has no
+        STA VBWORK      ; radar, as in the original (BIT in place of both JSRs)
+        STA VBWORK+3
+        LDA #$20
+        STA mscent
+        LDA #$7B        ; black (an invalid mode) while the old rows are cleared:
+        STA MRMODE+1    ; text shows only when they are (MRTEXTON)
+        LDA #5
+        STA MRWAIT+1
+        LDA #$20
+        STA MRATTR
+        LDA #<MRVIDEO
+        STA MRATTR+1
+        LDA #>MRVIDEO
+        STA MRATTR+2
+        LDX #4
+        LDA #$EA
+g_mrmode:STA MRATTR+3,X
+        DEX
+        BPL g_mrmode
+        LDA #$60
+        STA SPRCROSS
+        STA SPRGUNS
+        LDA #0
+        STA VICENA
+        LDA #<MRNOISE
+        STA vv2+1
+        STA g_vs2+1
+        LDA #>MRNOISE
+        STA vv2+2
+        STA g_vs2+2
+        LDA #0
+        STA MRINDEX
+        STA MRCOL
+        STA MROFF
+        STA MRACC
+        STA MREN
+        STA MSGON
+        STA MSGFINE
+        LDA #21
+        STA MRROW
+        LDA #8
+        STA MSSTATE
+        LDX #7
+g_mrhp:LDA SYSHP,X
+        STA MRHP,X
+        DEX
+        BPL g_mrhp
+        RTS
+g_mrtype:CMP #9
+        BNE g_mrscan
+; Original typewriter: 158 characters in 63 frames (2.5/frame).
+        LDA MRACC
+        CLC
+        ADC #5
+        STA MRACC
+g_mrchar:LDA MRACC
+        CMP #2
+        BCC g_mrout2
+        SBC #2
+        STA MRACC
+        LDX MRINDEX
+        JSR MRADDR
+        LDY MRCOL
+        LDX MROFF
+        LDA MRTEXT,X
+        STA (CDST),Y
+        JSR MRBEEP
+        INC MROFF
+        INC MRCOL
+        LDX MRINDEX
+        LDA MRCOL
+        CMP MRLENS,X
+        BCC g_mrchar
+        LDA #0
+        STA MRCOL
+        INC MRINDEX
+        LDA MRINDEX
+        CMP #8
+        BCC g_mrchar
+        LDA #0
+        STA MRINDEX
+        LDA #50
+        STA MRROW
+        LDA MRHP
+        JSR MRDELAY
+        CLC
+        ADC #53
+        STA MRCLOCK
+        INC MSSTATE
+        LDA #0
+        STA $D40B
+        STA $D407
+        STA $D40D
+        LDA #$12
+        STA $D408
+        LDA #5
+        STA $D40C
+        LDA #$11
+        STA $D40B
+        RTS
+g_mrout2:RTS
+g_mrscan:LDA MRROW
+        BEQ g_mrscanned
+        DEC MRROW
+g_mrscanned:JSR MRFLASH
+        JSR MRCHARGE
+        LDA MRINDEX
+        CMP #8
+        BEQ g_mrwait
+        DEC MRCLOCK
+        BNE g_mrout2
+        LDX MRINDEX
+        JSR MRADDR
+        LDY #29
+        LDX MRINDEX
+        LDA MRHP,X
+        LDX #11
+        CMP #0
+        BNE g_mrok
+        LDX #0
+g_mrok: LDA MRWORDS,X
+        STA (CDST),Y
+        INX
+        INY
+        CPY #40
+        BCC g_mrok
+        JSR GBLIP
+        LDX MRINDEX
+        LDA #1
+        STA MRHP,X
+        INC MRINDEX
+        LDX MRINDEX
+        LDA MRHP,X
+        JSR MRDELAY
+        STA MRCLOCK
+        RTS
+g_mrwait:LDA MREN
+        BNE g_mrfinish
+        RTS
+g_mrfinish:INC MRCOL
+        LDA MRCOL
+        CMP #3
+        BCC g_mrout2
+        JSR MRBLACK
+        LDA #15
+        STA WIPE
+        INC MSSTATE
+        RTS
+MRTEXTON:JSR MRBLOCKS     ; the rows are clear: the report's text mode on
+        LDA #$1B
+        STA MRMODE+1
+        RTS
+
+MRCOMPLETE:
+        LDA #$20        ; the radar's sweep back on
+        STA VBWORK
+        STA VBWORK+3
+; Original INC $8450 is byte-wide (wrap at 255); joined HUD keeps two digits.
+        INC $485B
+        LDA $485B
+        CMP #$7A
+        BCC g_mrproton
+        LDA #$70
+        STA $485B
+        INC $485A
+        LDA $485A
+        CMP #$7A
+        BCC g_mrproton
+        LDA #$70
+        STA $485A
+        INC MRPHUND
+g_mrproton:LDA MRPHUND
+        CMP #2
+        BNE g_mrship
+        LDA $485A
+        CMP #$75
+        BNE g_mrship
+        LDA $485B
+        CMP #$76
+        BNE g_mrship
+        LDA #0
+        STA MRPHUND
+        LDA #$70
+        STA $485A
+        STA $485B
+g_mrship:JSR SHIPINIT
+        LDA #$3B
+        STA MRMODE+1
+        LDX #7
+g_mrnormal:LDA MRNORMAL,X
+        STA MRATTR,X
+        DEX
+        BPL g_mrnormal
+        LDA #10
+        STA MRWAIT+1
+        LDA #$AD
+        STA SPRCROSS
+        STA SPRGUNS
+        LDA #$AD
+        STA GSPACE
+        STA MAPTOG
+        STA LAUNCHD
+        JMP MSRETURN
+; Original report: rows 4,6,..18, name column 0, status column 29.
+MRPHUND:.BYTE 0         ; hundreds of the byte-wide proton supply (HUD shows last two digits)
+MRINDEX:.BYTE 0
+MRSIDE: .BYTE 0
+MRCLOCK:.BYTE 0
+MRCOL:  .BYTE 0
+MROFF:  .BYTE 0
+MRACC:  .BYTE 0
+MREN:   .BYTE 0
+MRTMP:  .BYTE 0
+MRROW:  .BYTE 0
+MRDELAY:BEQ g_mrdbad
+        LDA #28
+        RTS
+g_mrdbad:LDA #81
+g_mrdret:RTS
+; One full palette update fits the otherwise empty view slot.
+MRFLASH:INC MRBLINK
+        LDA MRBLINK
+        CMP #20
+        BCC g_mrflout
+        LDA #0
+        STA MRBLINK
+        LDA MRNIB
+        EOR #1
+        STA MRNIB
+        LDX #7
+g_mrflrow:JSR MRADDR
+        LDA CDST+1
+        CLC
+        ADC #$90
+        STA CDST+1
+        LDX MRFLROW
+        LDA MRHP,X
+        BEQ g_mrflbad
+        LDA #$DD
+        BNE g_mrflcolor
+g_mrflbad:LDA #$72
+g_mrflcolor:LDY MRNIB
+        BNE g_mrflput
+        LSR A
+        LSR A
+        LSR A
+        LSR A
+g_mrflput:AND #15
+        LDY #39
+g_mrflfill:STA (CDST),Y
+        DEY
+        BPL g_mrflfill
+        DEC MRFLROW
+        LDX MRFLROW
+        BPL g_mrflrow
+        LDA #7
+        STA MRFLROW
+g_mrflout:RTS
+MREND:
+
+        * = $3D60
+MRCHARGE:LDA MREN
+        BNE g_mrcout
+        LDX #9
+g_mrcdigit:STX MRTMP
+        LDX #3
+g_mrcarry:INC HUDE,X
+        LDA HUDE,X
+        CMP #$7A
+        BCC g_mrcnext
+        LDA #$70
+        STA HUDE,X
+        DEX
+        BPL g_mrcarry
+        LDY #3
+        LDA #$79
+g_mrcfull:STA HUDE,Y
+        DEY
+        BPL g_mrcfull
+        INC MREN
+        RTS
+g_mrcnext:LDX MRTMP
+        DEX
+        BNE g_mrcdigit
+g_mrcout:RTS
+MRBEEP: LDA #0
+        STA $D404
+        STA $D406
+        STA $D400
+        LDA #$62
+        STA $D401
+        LDA #2
+        STA $D405
+        LDA #$11
+        STA $D404
+        RTS
+MRADDR:TXA
+        ASL A
+        CLC
+        ADC #4
+        JMP MRROWADDR
+MRNORMAL:.BYTE $A9,$18,$8D,$16,$D0,$8D,$18,$D0
+        .BYTE 0,0
+MRGUNS:
+MRVIDEO:LDA #8
+        STA $D016
+        LDA #$20
+        STA $D018
+        RTS
+        .BYTE 0,0,0,0,0
+MRFONT:
+MRRESTORE:LDX #200
+g_mrrcolor:LDA COLORDATA+719,X
+        STA $DACF,X
+        DEX
+        BNE g_mrrcolor
+        JSR MRGLYPHBACK
+        RTS
+MRNBUDGET:LDA FAST
+        AND #1
+        BEQ g_mnbview
+        LDY #52
+        LDA #8
+        JSR TLATE
+        BCS g_mnbret
+        TYA
+        STA MRNCOUNT
+g_mnbret:RTS
+g_mnbview:LDA #36
+        STA MRNCOUNT
+        CLC
+        RTS
+MRLOWEND:
+
+
+        * = $3BD8
+MBDEAD: BIT $D011
+        BMI g_mbdvb
+        LDA $D012
+        CMP #243
+        BCC g_mbdret
+g_mbdvb:LDA #24
+        JSR TLATE
+        LDA #0
+        BCC g_mbdret
+        LDA #174
+g_mbdret:RTS
+; Rays reach the guns; y>=184 is hidden by text and holds live shot sprites.
+MBADDR: LDA POSY
+        CMP #184
+        BCC g_mbaddr
+        NOP
+        NOP
+        NOP
+        PLA
+        PLA
+        RTS
+g_mbaddr:JMP PIXADDR
+MBLOWEND:
+
+        * = $3768
+MRNOISE:LDA MSSTATE
+        CMP #11
+        BNE g_mnnmode
+        JMP MRBLACK
+g_mnnmode:CMP #10
+        BNE g_mnnret
+        LDA MRCLOCK
+        CMP #1
+        BEQ g_mnnret
+        LDA MRROW
+        BNE g_mnngo
+        LDX MRINDEX
+        CPX #8
+        BCS g_mnnret
+        LDA MRHP,X
+        BNE g_mnnret
+        LDA MRCLOCK
+        CMP #50
+        BCS g_mnnret
+g_mnngo:JSR MBDEAD
+        CMP #100
+        BCS g_mnnret
+        LDA MRCLOCK
+        AND #3
+        BNE g_mnnquiet
+        JSR MRBEEP
+g_mnnquiet:JSR MRNBUDGET
+        BCS g_mnnret
+g_mnnloop:JSR M_RND
+        AND #15
+        TAX
+        JSR M_RND
+        STA $DB2C,X
+        AND #15
+        TAX
+        JSR M_RND
+        STA $DB54,X
+        DEC MRNCOUNT
+        BNE g_mnnloop
+g_mnnret:RTS
+MRROWADDR: ; A = physical row (3..23); $4800 + A*40, no high-byte overflow.
+        STA CDST
+        ASL A
+        ASL A
+        CLC
+        ADC CDST
+        ASL A
+        STA CDST
+        LDA #0
+        ASL CDST
+        ROL A
+        ASL CDST
+        ROL A
+        CLC
+        ADC #$48
+        STA CDST+1
+        RTS
+MRGLYPH = $28F8
+MRGLYPHSET:LDX #7
+        LDA #$FF
+g_mrglyphset:STA $41F8,X
+        DEX
+        BPL g_mrglyphset
+        RTS
+MRGLYPHBACK:LDX #7
+g_mrglyphback:LDA MRGLYPH,X
+        STA $41F8,X
+        DEX
+        BPL g_mrglyphback
+        RTS
+MRHP:   .BYTE 0,0,0,0,0,0,0,0
+MRFIXEND:
+
+        * = $3BC0
+MRBLOCKS:LDX #15
+        LDA #$3F
+g_mrblocks:STA $4B2C,X
+        STA $4B54,X
+        DEX
+        BPL g_mrblocks
+        JMP MRGLYPHSET
+MRBLOCKEND:
+        * = $3BD1
+MBZERO: .BYTE 0,0,0,0
+MRBLINK:.BYTE 0
+MRNIB:  .BYTE 0
+MRFLROW:.BYTE 7
+
+
+        * = $2CDE
+MRCLEAN:LDA MRROW
+        CMP #7
+        BCC g_mrcart
+        CMP #8
+        BCS g_mrcview
+        JSR MRRESTORE
+        INC MRROW
+g_mrcview:LDA WIPE
+        BNE g_mrcdone
+        JMP MRCOMPLETE
+g_mrcdone:RTS
+g_mrcart:JMP MRART
+MRCLEANEND:
+
+        * = $2FEE
+MRART: CLC
+        ADC #$76
+        STA CDST+1
+        LDA #$80
+        STA CDST
+        JMP MRARTLOOP
+MRARTEND:
+
+        * = $33E8
+MRARTLOOP:LDY MRARTY
+        LDX #0
+        LDA MRROW
+        CMP #6
+        BNE g_mrartlen
+        LDX #64
+g_mrartlen:STX MRARTN
+        JMP MRARTSTEP
+MRARTN:.BYTE 0
+MRARTY:.BYTE 0
+MRARTLOOPEND:
+
+
+        * = $BFC3
+MRREPAIR:LDA MSSTATE
+        CMP #8
+        BEQ g_mrclrgo
+        JMP g_mrtype
+g_mrclrgo:
+ ; Clear report rows 3..22, including the cockpit/radar area, in text mode.
+        LDA MRROW
+        CLC
+        ADC #2
+        JSR MRROWADDR
+        LDY #39
+        LDA #$60
+g_mrclr:STA (CDST),Y
+        DEY
+        BPL g_mrclr
+        LDA CDST+1
+        CLC
+        ADC #$90
+        STA CDST+1
+        LDY #39
+        LDA #13
+g_mrcol:STA (CDST),Y
+        DEY
+        BPL g_mrcol
+        DEC MRROW
+        BNE g_mrclearout
+        JSR MRTEXTON
+        INC MSSTATE
+g_mrclearout:RTS
+MRCLEAREND:
+
+        * = $28D7
+MRARTSTEP:LDA (CDST),Y   ; a 01 pixel becomes 00: AND with (v >> 1) | $AA
+        LSR A
+        ORA #$AA
+        AND (CDST),Y
+        STA (CDST),Y
+        INY
+        CPY MRARTN
+        BEQ g_mrastd
+        TYA             ; 64 bytes a call: the rest in the next frames
+        AND #$3F
+        BNE MRARTSTEP
+g_mrasty:STY MRARTY
+        RTS
+g_mrastd:INC MRROW
+        LDY #0
+        BEQ g_mrasty
+MRARTSTEPEND:
+
+        * = $3681
+MRNCOUNT:.BYTE 0
+MRBLACK:LDA #$7B        ; ECM+BMM: an invalid mode, black, with the bad lines (timing) kept
+        STA MRMODE+1
+        LDA #5 
+        STA MRWAIT+1
+        RTS
+MRGAPEND:

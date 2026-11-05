@@ -19,8 +19,9 @@ $3800-$3FFF (c128-map/build.py):
   $5000  master copies of the cockpit picture (the VIC-IIe cannot use $5000-$5FFF,
          the CPU can): bitmap rows 0-2 (sprite shapes), the shot slots in rows
          23-24, the cockpit art (rows 18-22), the colour matrix rows 3-22
-  $2900  the map's second-display data (VDC characters, planet, row tables, texts),
-         between the cockpit's first code chunk and its tables
+  $2900  type-1 masters (VDC is disabled); $3800-$3BBF type-2/3 masters,
+         $3E00-$3FFF type-2 X streams. The map shares the cockpit address tables.
+  $5E00  packed $E000 image, after glue and over sprite slots restored at init
   $xx00  the map's code: right after the cockpit's second chunk
   $5300  the glue (game.asm), CPU RAM the VIC-IIe cannot use
   $C000  more of the glue, in the RAM under the KERNAL (MMU $3E: the game calls no
@@ -48,7 +49,7 @@ MAPCODE = 0xA500         # provisional: assemble() puts the map right after the 
 VDCDATA = 0x2900
 GLUE = 0x5300            # game.asm's code and data (after the master copy at $5000)
 HIGH2 = 0xE000           # more code, under the KERNAL too: loaded at HIGH2SRC (the view's bitmap)
-HIGH2SRC = 0x6200        # packed image; overlaps type-1 slots restored by GINIT2
+HIGH2SRC = 0x5E00        # packed image; overlaps type-1 slots restored by GINIT2
 HIGH = 0xC000            # game.asm's code in the RAM under the KERNAL (MMU $3E)
 OUT = os.path.join(HERE, 'sentinel-c128-game.prg')
 
@@ -244,7 +245,29 @@ def assemble():
         if not old:
             raise SystemExit(f'map: constant {name} = ${value:04X} not found')
         mapsrc = mapsrc.replace(old.group(0), '%s = $%04X' % (name, value - 0x4000 + VDCDATA))
+    # The bitmap-address tables are identical to the cockpit's. Sharing them
+    # frees $3800-$3BBF for fighter masters; disabled VDC names at $3E00 hold STR2X.
+    for name, old, new in [('YLO', 0x3800, 0x2D00), ('YHI', 0x3900, 0x2E00),
+                           ('XLO', 0x3A00, 0x2F00), ('XHI', 0x3A28, 0x2F28)]:
+        pattern = r'^%s\s*=\s*\$%04X' % (name, old)
+        mapsrc, count = re.subn(pattern, '%s = $%04X' % (name, new), mapsrc, flags=re.M)
+        assert count == 1, name
+    mapsrc = mapsrc.replace('        STA LASTMSG', '        JSR GBTQUEUE')
+    mapsrc = mapsrc.replace('VDCMSG: LDA VDCON\n        BEQ vmret',
+                            'VDCMSG: LDA GBTCOUNT\n        BEQ vmret')
+    # Same five bytes, same idle path (LDA/BEQ/RTS); active events drain one per tick.
+    mapsrc = mapsrc.replace('        LDA LASTMSG\n        BEQ vmret',
+                            '        JMP GBTEXT\n        NOP\n        NOP')
     mapsrc = prefix_map(mapsrc)
+    # Same-size raster slots; repair rewrites these only while docked.
+    cockpit = cockpit.replace('        LDA #$3B        ; multicolor bitmap:', 'MRMODE: LDA #$3B        ; multicolor bitmap:')
+    cockpit = cockpit.replace('        LDA #$18\n        STA $D016\n        STA $D018', 'MRATTR: LDA #$18\n        STA $D016\n        STA $D018')
+    cockpit = cockpit.replace('        LDY #10         ; (timed from line 74:', 'MRWAIT: LDY #10         ; (timed from line 74:')
+    cockpit = cockpit.replace('        JSR SPRGUNS     ; sprites', 'MRGUN:  JSR SPRGUNS     ; sprites')
+    # A docking refill must preserve the lifetime hit count ($F432/$F433).
+    # BIT preserves both size and cycles of the initialization-only stores.
+    cockpit = cockpit.replace('        STA HITS\n        STA HITS+1\n        JMP SHOWSH',
+                              '        BIT HITS\n        BIT HITS+1\n        JMP SHOWSH')
     glue = read('c128-game', 'game.asm')
     global MAPCODE
     for _ in range(3):              # the map's code goes right after the cockpit's second chunk
@@ -259,31 +282,42 @@ def assemble():
 
 
 def lz_pack(data):
-    """Tokens for GUNPACK: $00-$7F n + 1 literals; $80-$FF a copy of (n & $7F) + 3
-    bytes from distance d back (two bytes follow). Greedy, longest match."""
-    out, lits, i, where = bytearray(), bytearray(), 0, {}
-    def flush():
-        while lits:
-            n = min(len(lits), 128)
-            out.append(n - 1); out.extend(lits[:n]); del lits[:n]
-    while i < len(data):
-        best, bestd = 0, 0
-        for j in reversed(where.get(data[i:i + 3], [])[-64:]):
+    """Shortest token stream for GUNPACK's literal/back-reference format.
+
+    Dynamic programming avoids greedy matches that split a longer later match.
+    Runtime decoder and its cost are unchanged.
+    """
+    size = len(data)
+    matches, where = [], {}
+    for i in range(size):
+        best, distance = 0, 0
+        key = data[i:i + 3]
+        for j in reversed(where.get(key, [])[-256:]):
             n = 0
-            while i + n < len(data) and n < 130 and data[j + n] == data[i + n]:
+            while n < 130 and i + n < size and data[j + n] == data[i + n]:
                 n += 1
             if n > best:
-                best, bestd = n, i - j
-        if best >= 3:
-            flush()
-            out.append(0x80 | (best - 3)); out.append(bestd & 255); out.append(bestd >> 8)
-            for k in range(i, i + best):
-                where.setdefault(data[k:k + 3], []).append(k)
-            i += best
+                best, distance = n, i - j
+        matches.append((best, distance))
+        where.setdefault(key, []).append(i)
+    costs, choices = [0] * (size + 1), [None] * size
+    for i in range(size - 1, -1, -1):
+        length = min(range(1, min(128, size - i) + 1), key=lambda n: n + 1 + costs[i + n])
+        cost, choice = length + 1 + costs[i + length], (length, 0)
+        best, distance = matches[i]
+        for n in range(3, best + 1):
+            if 3 + costs[i + n] < cost:
+                cost, choice = 3 + costs[i + n], (n, distance)
+        costs[i], choices[i] = cost, choice
+    out, i = bytearray(), 0
+    while i < size:
+        n, distance = choices[i]
+        if distance:
+            out.extend((0x80 | (n - 3), distance & 255, distance >> 8))
         else:
-            where.setdefault(data[i:i + 3], []).append(i)
-            lits.append(data[i]); i += 1
-    flush()
+            out.append(n - 1)
+            out.extend(data[i:i + n])
+        i += n
     return bytes(out)
 
 
@@ -307,11 +341,25 @@ def torp_frames(raw):
     return bytes(out)
 
 
+def repair_assets():
+    """Original $9245/$9497 text and $3580's two beam paths, without scratch dumps."""
+    names = ('PHASOR CANNONS', 'LONG RANGE SCANNER', 'SHORT RANGE SCANNER',
+             'STELLAR GRID', 'AUTOMATIC TRACKING COMPUTER', 'HYPERSPACE COORDINATOR',
+             'LONG RANGE SCAN SEQUENCER', 'COMMUNICATIONS MODULE')
+    text = ''.join(names).encode('ascii')
+    lengths = bytes(len(n) for n in names)
+    # $3580 includes the starting point, takes a minor step only when error > 76,
+    # and the beam uses the first 76 of the 77 generated points.
+    left = bytes(60 - (45 * i + 37) // 76 for i in range(76))
+    right = bytes(100 + (46 * i + 37) // 76 for i in range(76))
+    return text + b'@@@REPAIREDOPERATIONAL' + lengths + left + right
+
+
 def main():
     chunks, symbols = assemble()
-    if set(chunks) != {ENTRY, CODE2, MAPCODE, GLUE, HIGH, HIGH2}:
+    if set(chunks) != {ENTRY, CODE2, MAPCODE, GLUE, HIGH, HIGH2, 0x3D60, 0x3BD8, 0x3768, 0x3BC0, 0x2CDE, 0x2FEE, 0x33E8, 0x28D7, 0xBFC3, 0x3BD1, 0x3681}:
         raise SystemExit(f'unexpected assembly chunks: {[hex(c) for c in chunks]}')
-    for start, limit in ((ENTRY, VDCDATA), (CODE2, MAPCODE), (MAPCODE, 0xC000), (GLUE, 0x6000), (HIGH, 0xD000), (HIGH2, 0xEDC0)):
+    for start, limit in ((ENTRY, 0x28D7), (CODE2, MAPCODE), (MAPCODE, 0xBFC3), (GLUE, HIGH2SRC), (HIGH, 0xD000), (HIGH2, 0xF600), (0x3D60, 0x3E00), (0x3BD8, 0x3C00), (0x3768, 0x3800), (0x3BC0, 0x3BD8), (0x2CDE, 0x2D00), (0x2FEE, 0x3000), (0x33E8, 0x3400), (0x28D7, 0x2900), (0xBFC3, 0xC000), (0x3BD1, 0x3BD8), (0x3681, 0x3690)):
         if start + len(chunks[start]) > limit:
             raise SystemExit(f'code from ${start:04X} ends at ${start + len(chunks[start]):04X}, past ${limit:04X}')
 
@@ -323,9 +371,8 @@ def main():
     for address, data in chunks.items():
         if address != HIGH2:
             p(address, data)
-    # the $E000 image: code, the fighters' shape masters by type (type 1's come from
-    # $2900 VDC area), type 2's streams, the torpedo's frames; packed into the
-    # 3D view's bitmap, which GAMEINIT unpacks and clears
+    # The packed $E000 image: code, torpedo frames and borrowed shot shapes.
+    # Fighter masters / STR2X are loaded directly into reclaimed lower RAM.
     ref = os.path.join(ROOT, 'c128-gui', 'ref')
     sprites = open(os.path.join(ref, 'sprites-4800.bin'), 'rb').read()
     order = [b + i for b in (0x20, 0x30, 0x40, 0x60, 0x70) for i in range(16)]
@@ -334,21 +381,56 @@ def main():
     # Unpacking may overlap their live sprite slots; GINIT2 restores them next.
     assert symbols["TSH1"] == VDCDATA
     assert chunks[MAPCODE][symbols["M_VDCON"] - MAPCODE] == 0, "TSH1 reuses disabled VDC data"
+    assert (symbols['TSH2'], symbols['TSH3'], symbols['STR2X']) == (0x3800, 0x39C0, 0x3E00)
+    assert all(symbols['M_' + n] == symbols[n] for n in ('YLO', 'YHI', 'XLO', 'XHI'))
+    assert symbols['TSH3'] + 512 <= symbols['M_VLAB']
+    assert symbols['STR2X'] + 512 <= 0x4000
+    # Check the actual assets as well as shared addresses before reclaiming tables.
+    for old, shared, size in ((0x3800, 0x2D00, 200), (0x3900, 0x2E00, 200),
+                              (0x3A00, 0x2F00, 40), (0x3A28, 0x2F28, 40)):
+        assert body[old - LOAD:old - LOAD + size] == body[shared - LOAD:shared - LOAD + size]
     p(symbols["TSH1"], b"".join(shape(s) for s in range(0x20, 0x2F)))
+    # Original repair text and paths in verified table/master padding; never sprites.
+    repair = repair_assets()
+    assert len(repair) == 340
+    assert symbols['MRDATA'] == 0x2F50 and symbols['MRDATA'] + 158 <= 0x2FEE
+    assert symbols['MRWORDS'] == 0x2CC0 and symbols['MRWORDS'] + 30 <= 0x2CDE
+    assert symbols['MBLEFT'] == 0x36D0 and symbols['MBLEFT'] + 152 == 0x3768
+    assert symbols['TSH1'] + 15 * 64 == 0x2CC0
+    assert symbols['DIGF'] + 64 == symbols['MBLEFT']
+    assert symbols['LRTAB'] + 129 == 0x3681
+    assert symbols['MRGAPEND'] <= symbols['DIGF']
+    assert symbols['XHI'] + 40 == symbols['MRDATA']
+    assert symbols['COLORDATA'] + 1000 == 0x33E8
+    assert 0x3D60 >= symbols['M_DIRTY'] + 60
+    assert 0x3D60 + len(chunks[0x3D60]) <= symbols['STR2X']
+    # Beam pixels have value 1; clean cockpit art contains no such pixels.
+    # Therefore deleting only 01 pixels restores the exact art, without a backup.
+    art = cockpit_build.clean_radar(open(os.path.join(ref, 'cockpit-art.bin'), 'rb').read()[3000:4600])
+    assert all((v >> shift) & 3 != 1 for v in art for shift in (0, 2, 4, 6))
+    assert symbols['MRARTSTEPEND'] <= symbols['MRGLYPH']
+    assert symbols['MRGLYPH'] + 8 <= symbols['TSH1']
+    p(symbols['MRGLYPH'], bytes(body[0x41F8 - LOAD:0x4200 - LOAD]))
+    p(symbols['MRDATA'], repair[:158])
+    p(symbols['MRWORDS'], repair[158:188])
+    p(symbols['MBLEFT'], repair[188:340])
     image = bytearray(chunks[HIGH2])
     def at(name, data):
         off = symbols[name] - HIGH2
         image.extend(bytes(max(0, off + len(data) - len(image))))
         image[off:off + len(data)] = data
-    at('TSH2', b''.join(shape(s) for s in range(0x3E, 0x45)))
-    at('TSH3', b''.join(shape(s) for s in range(0x31, 0x39)))
-    at('STR2X', open(os.path.join(ref, 'streams2-0600.bin'), 'rb').read())
-    at('STR2Y', open(os.path.join(ref, 'streams2-8100.bin'), 'rb').read())
+    p(symbols['TSH2'], b''.join(shape(s) for s in range(0x3E, 0x45)))
+    p(symbols['TSH3'], b''.join(shape(s) for s in range(0x31, 0x39)))
+    p(symbols['STR2X'], open(os.path.join(ref, 'streams2-0600.bin'), 'rb').read())
     at('TORPA', torp_frames(open(os.path.join(ref, 'torpedo-a000.bin'), 'rb').read()))
     at('TSHOT', shape(0x67) + shape(0x68))
     end = HIGH2 + len(image)
     assert end <= 0xFF00, f'the $E000 image ends at ${end:04X}'
+    assert end & 255 == 0, 'GUNPK2 relies on the first stream ending at a page'
     packed = bytes((end & 255, end >> 8)) + lz_pack(bytes(image))
+    # The second stream: STR2Y, unpacked over the packed data's start once it is read.
+    assert symbols['STR2Y'] == HIGH2SRC and HIGH2SRC + len(packed) >= HIGH2SRC + 512
+    packed += bytes((0x00, (HIGH2SRC + 512) >> 8)) + lz_pack(open(os.path.join(ref, 'streams2-8100.bin'), 'rb').read())
     assert HIGH2SRC + len(packed) <= 0x7680, f'the packed $E000 image ({len(packed)} bytes) overlaps the cockpit art'
     p(HIGH2SRC, packed)
     # master copy of the colour matrix's view rows for MAPCLOSE (game.asm)
@@ -357,6 +439,7 @@ def main():
     with open(OUT, 'wb') as f:
         f.write(bytes((LOAD & 255, LOAD >> 8)) + body)
     ends = ', '.join(f'${a:04X}-${a + len(c) - 1:04X}' for a, c in sorted(chunks.items()))
+    print(f'memory left: high {0xF600 - HIGH2 - len(chunks[HIGH2])} bytes, packed {0x7680 - HIGH2SRC - len(packed)} bytes, glue {HIGH2SRC - GLUE - len(chunks[GLUE])} bytes')
     print(f'wrote {OUT} (${LOAD:04X}-${LOAD + len(body) - 1:04X}, code {ends}, entry ${symbols["START"]:04X})')
     return symbols
 
