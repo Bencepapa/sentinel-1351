@@ -103,7 +103,7 @@ SHOTHIT     $324C   ; found: the shot against sprites 2-6 during the hit window 
 ENEMYDOWN   $32BE   ; found: an enemy destroyed (explosion setup)
 
 ; ---- motherships (from the user's description, found in the code) ----
-MSAPPROACH  $90F3   ; found: approach loop: radius $43 grows every 128 frames, circles drawn
+MSAPPROACH  $90F3   ; found: approach loop: radius $43 grows every 128 loop passes, circles drawn
 MSRADIUS    $43     ; found: approach radius (torpedo at $19, end at $22)
 MSCIRCLE    $3635   ; found: draws the mothership's circles for a radius (also $364C)
 MSENEMY     $E2     ; found: non-zero on an enemy mothership (torpedo, faster approach)

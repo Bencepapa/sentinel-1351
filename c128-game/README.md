@@ -38,7 +38,7 @@ It is the browser page's default program.
   points rush to three places with a sound (`$1AF2`), three fighters appear there,
   the warning sounds and the dogfight starts. A squadron of fewer than 3 becomes 3,
   as in the original.
-- Mothership sectors are empty in the cockpit for now.
+- In mothership sectors, the original entry message appears and concentric rings grow in the view: red for an enemy base star, blue for a friendly base, with the white rectangular opening growing in the middle from radius 12. The approach stops at the original radius; mines, enemy torpedoes, the tractor beam, repairs and destroying a base are still to come. Opening and closing the map starts the approach again.
 - The ship (systems, shields, hits, difficulty) is one: the cockpit's model.
 - The second display (VDC) is off in this program for now: its updates take more
   time than a frame has to spare while the cockpit runs.
@@ -81,5 +81,5 @@ jump into a squadron's sector (the approach begins, TARGETS), the HUD's sector,
 the view's colours back, kills emptying the sector, C= closing the map, the right
 button, fire on the ship's own sector, a squadron coming in, the splits' timing.
 
-Not yet: hyperspace's abort, thrust (W), motherships and
-bases, the second display while flying, game over, and the destroyed-system messages.
+Not yet: hyperspace's abort, thrust (W), mothership combat and
+docking, the second display while flying, game over, and the destroyed-system messages.

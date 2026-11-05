@@ -19,8 +19,8 @@
 ; In a sector the map's STATE / COUNT decide what is there: a squadron of COUNT
 ; ships is approached group by group (the cockpit's long range scanner), each
 ; kill lowers the map's COUNT, the last one empties the sector on the map.
-; Motherships (STATE $80 / $FF) are not ported yet: those sectors are empty here.
-; All squadrons fight as type 1 for now.
+; Motherships (STATE $80 / $FF) approach as biased concentric rings (MSECTOR).
+; Their weapons, mines, docking, repairs and destruction are later work.
 
 HUDSEC  = $4865         ; the HUD's sector digits (row 2, column 21)
 MATRIX  = $4400         ; the bitmap's colour matrix
@@ -687,7 +687,7 @@ GPLOT:  STX SAVEX
         LDA STARY,X
         STA POSY
         JSR PIXADDR
-        LDA MAPSHOWN
+gplmode:LDA MAPSHOWN
         ORA WIPE
         BNE g_pl1
         LDA (PTR),Y
@@ -707,7 +707,7 @@ GERASE: STX SAVEX
         LDA STARY,X
         STA POSY
         JSR PIXADDR
-        LDA MAPSHOWN
+germode:LDA MAPSHOWN
         ORA WIPE
         BEQ g_er1
         LDA (PTR),Y
@@ -1008,7 +1008,7 @@ SECTORIN:
         LDA #$00        ; (a squadron's coming in is off: the map's wipe clears it)
         STA ARRFX
         JSR SECIDX
-        JSR GSQTYPE     ; (its type: the fighters' shapes are loaded meanwhile)
+        JSR MSECTOR     ; sector kind; mothership work uses the dormant shape hook
         LDA #$00
         LDY M_STATE,X
         BEQ g_sin1      ; empty
@@ -1140,17 +1140,17 @@ mt_pb2:  STA HMACT,X
 
 GINIT2:
         JSR GUNPACK     ; the code and data for $E000, packed in the 3D view's bitmap
-        LDX #$00        ; type 1's shapes: their masters from their sprite slots
-g_gi2:  LDA $6000,X     ; ($6000-$63BF to TSH1, $EA00)
-        STA $EA00,X
-        LDA $6100,X
-        STA $EB00,X
-        LDA $6200,X
-        STA $EC00,X
+        LDX #$00        ; type 1 masters in the disabled VDC data, restored below
+g_gi2:  LDA $2900,X     ; restore type 1 from TSH1 after unpacking over its slots
+        STA $6000,X
+        LDA $2A00,X
+        STA $6100,X
+        LDA $2B00,X
+        STA $6200,X
         CPX #$C0
         BCS g_gi1
-        LDA $6300,X
-        STA $ED00,X
+        LDA $2C00,X
+        STA $6300,X
 g_gi1:  INX
         BNE g_gi2
         LDA #$63        ; the view's bitmap cleared: $63C0-$767F (18 pages and 192)
@@ -1244,7 +1244,7 @@ g_up9:  INC CDST
 UPEND:  .BYTE 0,0
 GSEED:  .BYTE 0
 HIGH2   = $E000
-PACKSRC = $63C0
+PACKSRC = $6200
 
         * = $C000
 
@@ -3113,10 +3113,10 @@ HDL:    .BYTE 0
 HDH:    .BYTE 0
 
 ; ---------------- more code: the RAM under the KERNAL at $E000 ----------------
-; Loaded with the program at $6400 (the 3D view's bitmap, wiped before it shows)
+; Loaded packed at $6200 (restored sprite slots and the view, wiped before shown)
 ; and moved here by GAMEINIT: a program cannot load across $D000-$DFFF (I/O).
         * = $E000
-TSH1    = $EA00         ; masters: type 1 $20-$2E (15, copied from their slots by
+TSH1    = $2900         ; masters: type 1 $20-$2E (15, VDC off; restored to slots by
 TSH2    = $EDC0         ; GAMEINIT), type 2 $3E-$44 (7), type 3 $31-$38 (8); type 2's
 TSH3    = $EF80         ; x and y streams (the original's $0600, $8100); the proton
 STR2X   = $F200         ; torpedo's 32 frames ($A000-$AFFF), packed a frame at a time
@@ -4160,3 +4160,378 @@ g_cu1:  LDA HTEST
         AND MPRES
         RTS
 H2END:
+
+; Mothership sector ($FD3B, $8C44); work in the view through shpj, no idle cost.
+; TSH1 reuses the disabled VDC's $2900-$2CBF, leaving code up to TSH2 ($EDC0).
+MSECTOR:
+        LDA #<STARS
+        STA vv2+1
+        STA g_vs2+1
+        LDA #>STARS
+        STA vv2+2
+        STA g_vs2+2
+        LDA #$00
+        STA MSSTATE
+        STA MSCPEND
+        LDA #<MAPSHOWN
+        STA gplmode+1
+        STA germode+1
+        LDA #>MAPSHOWN
+        STA gplmode+2
+        STA germode+2
+        LDA #<GSHLOAD
+        STA shpj+1
+        LDA #>GSHLOAD
+        STA shpj+2
+        LDA #$2C
+        STA shpj
+        LDA M_STATE,X
+        BMI g_ms0
+        JMP GSQTYPE
+g_ms0:  STA MSKIND
+        LDA #<MSVB
+        STA vv2+1
+        STA g_vs2+1
+        LDA #>MSVB
+        STA vv2+2
+        STA g_vs2+2
+        LDA #$01
+        STA MSSTATE
+        LDA #<MSVIEW
+        STA shpj+1
+        LDA #>MSVIEW
+        STA shpj+2
+        LDA #$20
+        STA shpj
+        LDA #<MSSTATE
+        STA gplmode+1
+        STA germode+1
+        LDA #>MSSTATE
+        STA gplmode+2
+        STA germode+2
+        RTS
+
+MSVIEW: LDA $D012       ; a phasor can consume the view slot: defer heavy work
+        CMP #150
+        BCC g_mstime
+        RTS
+g_mstime:LDA MAPSHOWN
+        ORA WIPE
+        ORA HYPON
+        BEQ g_mvgo
+        LDA #$01        ; closing the map wipes the rings: approach again
+        STA MSSTATE
+        RTS
+g_mvgo: LDA MSSTATE
+        CMP #$01
+        BNE g_msv2
+        LDA #$00
+        STA MSROW
+        STA MSCLOCK
+        STA MSRUN
+        STA MSCPEND
+        LDA #$01
+        STA MSRAD
+        STA MSBIAS
+        LDA #$02
+        STA MSSTATE
+        LDA #$87
+        STA MSGCOL
+        LDA #$05
+        STA MSGRATE
+        LDA #<MSFRIEND
+        LDX #>MSFRIEND
+        LDY MSKIND
+        CPY #$80
+        BNE g_msm
+        LDA #<MSHOSTILE
+        LDX #>MSHOSTILE
+g_msm:  LDY #$0A
+        JSR MSGSTAT
+        LDA MSKIND
+        CMP #$80
+        BNE g_msret
+        LDA #$00        ; $0921, same sweep as SECALERT; friendly has no sweep
+        STA SNDDIR
+        LDA #$50
+        STA SNDHI0
+        LDA #$40
+        LDX #$08
+        LDY #$1E
+        JMP SNDGO
+g_msret:RTS
+g_msv2: CMP #$02
+        BNE g_msv3
+        LDX MSROW       ; one row a frame: keep the cockpit and radar intact
+        LDA ROWCL+1,X
+        STA CDST
+        LDA ROWCH+1,X
+        CLC
+        ADC #$44
+        STA CDST+1
+        LDA #$11        ; $953F: value 2 is white (the growing central opening)
+g_msc0: LDY #39
+g_msc1: STA (CDST),Y
+        DEY
+        BPL g_msc1
+        LDA CDST+1
+        CLC
+        ADC #$94
+        STA CDST+1
+        LDA #$06
+        LDX MSKIND
+        CPX #$80
+        BNE g_msc2
+        LDA #$02
+g_msc2: LDY #39
+g_msc3: STA (CDST),Y
+        DEY
+        BPL g_msc3
+        INC MSROW
+        LDA MSROW
+        CMP #14
+        BCC g_msret
+        INC MSSTATE
+        JMP MSRING
+
+g_msv3: CMP #$03
+        BNE g_msret
+        LDA TPF
+        CMP #$03
+        BCC g_msclock
+        LDA #$00
+        STA MSCPEND
+        INC MSSTATE     ; $9162: the player's proton blast also ends the approach
+        RTS
+g_msclock:INC MSCLOCK
+        LDA MSRUN
+        BNE g_msd
+        LDX MSRAD
+        LDA MSCLOCK
+        CMP MSDELAY,X
+        BCC g_msret
+        LDA #$00
+        STA MSCLOCK
+        LDA #$28
+        LDX MSKIND
+        CPX #$80
+        BNE g_msend
+        LDA #$22
+g_msend:CMP MSRAD
+        BNE g_msgrow
+        INC MSSTATE     ; endpoint only; no torpedo, beam, repair or destruction
+        RTS
+g_msgrow:
+        INC MSRAD
+        INC MSBIAS
+        LDA MSKIND
+        CMP #$80
+        BNE g_msnew
+        INC MSBIAS
+        INC MSBIAS
+g_msnew:JMP MSRING
+g_msd:  LDA TPF         ; do not interfere with the player's torpedo's scratch
+        BEQ g_msd1
+        RTS
+g_msd1: JMP MSSTEP
+
+MSRING: JSR MSCINIT
+        LDA MSRAD
+        STA MSRX
+        LDA #$80
+        STA MSD
+        LDA #$00
+        STA MSRY
+        INC MSRUN
+        RTS
+
+; Original $3635/$364C: biased circle, not a standard midpoint circle.
+; Two octants through TPLOT4, centre $50/$64, value 3, brown pixels preserved.
+MSSTEP: LDA $D012
+        CMP #174
+        BCC g_msstep
+        RTS
+g_msstep:CLC
+        LDA MSD
+        ADC MSRY
+        ADC MSRY
+        ADC #$01
+        STA MSD1
+        SEC
+        SBC MSRX
+        SBC MSRX
+        CLC
+        ADC MSBIAS
+        STA MSD2
+        LDA #$01
+        STA TPPASS
+        LDA MSRX
+        LDY MSRY
+        JSR TPLOT4
+        LDA MSRY
+        LDY MSRX
+        JSR TPLOT4
+        LDA MSD1
+        STA MSD
+        INC MSRY
+        LDA MSD2
+        BMI g_msa
+        SEC
+        LDA #$80
+        SBC MSD2
+        JMP g_msb
+g_msa: AND #$7F
+g_msb: STA MSABS
+        LDA MSD
+        BMI g_msc
+        SEC
+        LDA #$80
+        SBC MSD
+        JMP g_mse
+g_msc: AND #$7F
+g_mse: CMP MSABS
+        BCC g_msf
+        BEQ g_msf
+        LDA MSD2
+        STA MSD
+        DEC MSRX
+g_msf: LDA MSRX
+        CMP MSRY
+        BCC g_msdone
+        JMP MSSTEP
+g_msdone:LDA #$00
+        STA MSRUN
+g_msout:RTS
+
+MSSTATE:.BYTE 0         ; 0 idle, 1 init, 2 colours, 3 approach, 4 endpoint
+MSKIND: .BYTE 0         ; $80 hostile ($E2=1), $FF friendly ($E2=0)
+MSROW:  .BYTE 0
+MSRAD:  .BYTE 1
+MSBIAS: .BYTE 1         ; original operand $3674: +3 hostile, +1 friendly
+MSCLOCK:.BYTE 0
+MSRUN:  .BYTE 0
+MSRX:   .BYTE 0
+MSRY:   .BYTE 0
+MSD:    .BYTE 0
+MSD1:   .BYTE 0
+MSD2:   .BYTE 0
+MSABS:  .BYTE 0
+; DMA-enabled original: growth intervals ~6 frames initially, ~9 at full size.
+; Torpedo animation's extra time is excluded (not part of this task).
+MSDELAY:.BYTE 6,6,6,6,6,6,6,6,6,6,6,6,6,6,7,6,7,6,7,6
+        .BYTE 7,7,7,7,7,8,7,8,7,8,8,8,8,8,9,8,8,9,8,9,9
+MSFRIEND:.BYTE $40,$40,$40,$40,$40,$40,$40,$40,$40,$40
+        .BYTE $45,$4E,$54,$45,$52,$49,$4E,$47,$40,$42,$41,$53,$45,$40,$53,$45,$43,$54,$4F,$52,$40,$FF
+MSHOSTILE:.BYTE $40,$40,$40,$40,$40,$40
+        .BYTE $47,$4F,$52,$47,$41,$4E,$49,$54,$4F,$52,$40,$42,$41,$53,$45,$53,$54,$41,$52,$40,$44,$45,$54,$45,$43,$54,$45,$44,$40,$FF
+MSEND:
+
+; $8F05 / $B39A: nested rectangle outlines fill the opening from radius 12.
+; For n=r-12: x=75-ceil(n/2), y=100-ceil(n/2), width=10+n,
+; height=1+n. B39A includes both edges (width+1 by height+1 pixels).
+; Queue a filled equivalent; the blank draws rows, while circles keep their cadence.
+MSCINIT:LDA MSRAD
+        CMP #12
+        BCS g_mcinit
+        RTS
+g_mcinit:SEC
+        SBC #12
+        STA MSCN
+        CLC
+        ADC #$01
+        LSR A
+        STA MSCOFF
+        SEC
+        LDA #75
+        SBC MSCOFF
+        STA MSCLEFT
+        CLC
+        ADC MSCN
+        ADC #10
+        STA MSCRIGHT
+        SEC
+        LDA #100
+        SBC MSCOFF
+        STA MSCROW
+        CLC
+        ADC MSCN
+        ADC #$01
+        STA MSCEND
+        LDA #$01
+        STA MSCPEND
+        RTS
+
+; Switched JMP slots vv2 / g_vs2; idle flight/fights still jump straight to STARS.
+; Centre updates replace stars for a blank; deadline leaves the radar its time.
+MSVB:   LDA MSCPEND
+        BEQ g_mcvstars
+        LDA MAPSHOWN
+        ORA WIPE
+        ORA HYPON
+        ORA TPF
+        BEQ g_mcvrow
+g_mcvstars:JMP STARS
+g_mcvrow:LDA #16
+        JSR TLATE
+        BCC g_mcvdraw
+        RTS
+g_mcvdraw:LDA MSCLEFT
+        STA POSX
+        LDA MSCROW
+        STA POSY
+        JSR PIXADDR
+        SEC
+        LDA MSCRIGHT
+        SBC MSCLEFT
+        CLC
+        ADC #$01
+        STA MSCN
+        LDY #$00
+        CPX #$00
+        BEQ g_mcvfull
+; Partial first/last byte; multicolour bitmap bytes are eight bytes apart.
+g_mcvpart:LDA (PTR),Y
+        AND CLEARM,X
+        ORA MASK2,X
+        STA (PTR),Y
+        DEC MSCN
+        BEQ g_mcveol
+        INX
+        CPX #$04
+        BCC g_mcvpart
+        LDX #$00
+        TYA
+        CLC
+        ADC #$08
+        TAY
+g_mcvfull:LDA MSCN
+        CMP #$04
+        BCC g_mcvpart
+        LDA #$AA
+        STA (PTR),Y
+        SEC
+        LDA MSCN
+        SBC #$04
+        STA MSCN
+        BEQ g_mcveol
+        TYA
+        CLC
+        ADC #$08
+        TAY
+        JMP g_mcvfull
+g_mcveol:INC MSCROW
+        LDA MSCROW
+        CMP MSCEND
+        BCC g_mcvrow
+        BEQ g_mcvrow
+        LDA #$00
+        STA MSCPEND
+        RTS
+MSCPEND:.BYTE 0
+MSCLEFT:.BYTE 0
+MSCRIGHT:.BYTE 0
+MSCROW: .BYTE 0
+MSCEND: .BYTE 0
+MSCOFF: .BYTE 0
+MSCN:   .BYTE 0
+MSCENDCODE:

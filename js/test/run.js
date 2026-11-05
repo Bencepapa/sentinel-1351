@@ -312,6 +312,11 @@ function report(hooks, label) {
     const sel = K[s.M_SELY] * 10 + K[s.M_SELX];
     K[s.M_STATE + sel] = 0; K[s.M_COUNT + sel] = 0; K[s.SQCOUNT] = 0; K[s.APPR] = 0; K[s.APRUN] = 0; K[s.LRMODE] = 0;
     K[s.ALIVE] = K[s.ALIVE + 1] = K[s.ALIVE + 2] = 0; K[s.GSIZE] = K[s.GSIZE + 1] = K[s.GSIZE + 2] = 0;
+    // Isolate the incoming pair: random starting squadrons can otherwise merge
+    // into it during the same movement pass (startup packing changes the seed).
+    for (let i = 0; i < 60; i++) if (K[s.M_STATE + i] < 0x80) {
+      K[s.M_STATE + i] = 0; K[s.M_COUNT + i] = 0;
+    }
     const nb = sel + (K[s.M_SELX] < 9 ? 1 : -1);
     K[s.M_STATE + nb] = 1; K[s.M_COUNT + nb] = 2;
     const o0 = K[s.OVRUN];
@@ -1010,6 +1015,130 @@ for (const name of Object.keys(Profiles)) {
     check(res.join(' ') === '2:2/ok/ok 3:3/ok/ok 1:1/ok/ok', `game: squadron types load their shapes and set their sprites' looks (${res.join(' ')})`);
   }
   report(hooks, 'game');
+}
+
+// ---- mothership approach -----------------------------------------------------
+{
+  function call(m, addr, plot) {
+    const c = m.cpu, pc = c.pc, sp = c.sp, flags = c.p;
+    if (plot !== undefined) { c.push(plot & 255); c.push(plot >> 8); }
+    c.push(0xFF); c.push(0xF3); c.pc = addr; c.p |= 4;
+    let n = 0;
+    while (c.pc !== 0xFFF4 && n++ < 2e6) { c.step(); if (c.jam) throw Error(c.jam); }
+    if (c.pc !== 0xFFF4) throw Error('mothership subroutine did not return');
+    c.pc = pc; c.sp = sp; c.p = flags;
+  }
+  // Compare every biased ring, pixel for pixel, using the original's own plotter.
+  const o = boot('c64game', 'trace'), k = boot('game', 'trace');
+  run(o.m, o.hooks, 250); run(k.m, k.hooks, 60);
+  const R = o.m.ram, K = k.m.ram, s = k.p.symbols;
+  const read = k.m.read;
+  k.m.read = function(a) { return a === 0xD012 ? 80 : read.call(this, a); };
+  let same = true, rings = 0;
+  for (const kind of [0x80, 0xFF]) for (let r = 1; r <= (kind === 0x80 ? 0x22 : 0x28); r++) {
+    R.fill(0, 0x63C0, 0x7680); K.fill(0, 0x63C0, 0x7680);
+    const bias = 1 + (r - 1) * (kind === 0x80 ? 3 : 1);
+    R[0x3668] = 1; R[0x3674] = bias;
+    o.m.cpu.x = 0x50; o.m.cpu.y = 0x64; o.m.cpu.a = r;
+    call(o.m, 0x3635, 0xEF6B);
+    K[s.MSRAD] = r; K[s.MSBIAS] = bias; K[s.MSRUN] = 0;
+    call(k.m, s.MSRING); call(k.m, s.MSSTEP);
+    same = same && K[s.MSRUN] === 0 && Buffer.from(R.subarray(0x63C0, 0x7680)).equals(Buffer.from(K.subarray(0x63C0, 0x7680)));
+    rings++;
+  }
+  k.m.read = read;
+  // The opening is drawn by $8F05's nested outlines, then protected by the rings.
+  // Compare the cumulative ship bitmap at every radius, not just an empty ring.
+  k.m.read = function(a) { return a === 0xD012 ? 0 : a === 0xD011 ? 0x80 : read.call(this, a); };
+  let centres = true, centreStages = 0;
+  for (const kind of [0x80, 0xFF]) {
+    R.fill(0, 0x63C0, 0x7680); K.fill(0, 0x63C0, 0x7680);
+    R[0x8F12] = 75; R[0x8F14] = 100; R[0x8F06] = 10; R[0x8F16] = 1; R[0x8F30] = 0;
+    K[s.MSCPEND] = 0;
+    for (let r = 1; r <= (kind === 0x80 ? 0x22 : 0x28); r++) {
+      if (r >= 12) call(o.m, 0x8F05);
+      const bias = 1 + (r - 1) * (kind === 0x80 ? 3 : 1);
+      R[0x3668] = 1; R[0x3674] = bias;
+      o.m.cpu.x = 0x50; o.m.cpu.y = 0x64; o.m.cpu.a = r;
+      call(o.m, 0x3635, 0xEF6B);
+      K[s.MSRAD] = r; K[s.MSBIAS] = bias; K[s.MSRUN] = 0;
+      call(k.m, s.MSRING);
+      if (K[s.MSCPEND]) call(k.m, s.MSVB);
+      call(k.m, s.MSSTEP);
+      centres = centres && K[s.MSCPEND] === 0 && Buffer.from(R.subarray(0x63C0, 0x7680)).equals(Buffer.from(K.subarray(0x63C0, 0x7680)));
+      centreStages++;
+    }
+  }
+  k.m.read = read;
+  check(centres, `mothership: growing rectangular centre and rings match the original at all ${centreStages} radii`);
+  check(same, `mothership: all ${rings} friendly/hostile biased rings match the original bitmap exactly`);
+  function originalDuration(kind) {
+    const o = boot('c64game', 'trace'), m = o.m, R = m.ram;
+    run(m, o.hooks, 300);
+    run(m, o.hooks, 300, i => { m.mouse.left = i < 10 || (i >= 150 && i < 160); });
+    m.mouse.left = false; m.dma = true;
+    R[0xE2] = kind === 0x80 ? 1 : 0;
+    R[0xBAD1] = R[0xBACE] = R[0x8C3E] = 0; R[0x89] = 1;
+    R.set([0x4C, 0, 3], 0x300); m.cpu.push(2); m.cpu.push(0xFF); m.cpu.pc = 0x909D;
+    let first = -1, last = -1;
+    const end = kind === 0x80 ? 0x22 : 0x28;
+    for (let f = 0; f < 400; f++) {
+      if (!m.runFrame()) break;
+      if (R[0x43] === 2 && first < 0) first = f;
+      if (R[0x43] === end) { last = f; break; }
+    }
+    if (first < 0 || last < 0) throw Error('original mothership approach did not finish');
+    return last - first;
+  }
+  for (const kind of [0x80, 0xFF]) {
+    const g = boot('game', 'trace'), m = g.m, s = g.p.symbols, K = m.ram;
+    m.dma = true; run(m, g.hooks, 60);
+    const idx = K[s.M_SELY] * 10 + K[s.M_SELX];
+    K[s.M_STATE + idx] = kind; K[s.M_COUNT + idx] = 0;
+    const hp = Buffer.from(K.subarray(s.SYSHP, s.SYSHP + 8)), protons = Buffer.from(K.subarray(0x485A, 0x485C));
+    call(m, s.SECTORIN);
+    check(K[s.MSKIND] === kind && K[s.MSSTATE] === 1 && K[s.APPR] === 0 && K[s.shpj] === 0x20,
+      `mothership: entering ${kind === 0x80 ? 'enemy' : 'friendly'} sector arms the approach without fighters`);
+    let late = 0, first = -1, last = -1, prev = 0, growth = [], message = '';
+    for (let f = 0; f < 450; f++) {
+      m.runFrame();
+      if (f === 1) message = String.fromCharCode(...K.subarray(s.LRROW, s.LRROW + 39)).replace(/[@`]/g, ' ').trim();
+      if (K[s.MSRAD] !== prev) { if (K[s.MSRAD] === 2) first = f; last = f; growth.push(K[s.MSRAD]); prev = K[s.MSRAD]; }
+      const v = m.vicLog;
+      for (let i = 0; i < v.length; i += 4) if ((v[i + 2] === 0x20 || v[i + 2] === 0x21) &&
+        ((v[i] >= 50 && v[i] <= 76) || (v[i] >= 230 && v[i] <= 245)) && v[i + 1] >= 16 && v[i + 1] <= 55) late++;
+    }
+    const end = kind === 0x80 ? 0x22 : 0x28;
+    check(message === (kind === 0x80 ? 'GORGANITOR BASESTAR DETECTED' : 'ENTERING BASE SECTOR'), `mothership: original entry message: ${message}`);
+    check(K[s.MSSTATE] === 4 && K[s.MSRAD] === end && growth.every((v,i) => v === i + 1),
+      `mothership: ${kind === 0x80 ? 'enemy' : 'friendly'} approach grows continuously to $${end.toString(16)}`);
+    const reference = originalDuration(kind);
+    check(Math.abs(last - first - reference) <= 10, `mothership: DMA growth ${last - first} frames, original ${reference} frames (frame-locked approximation)`);
+    check(late === 0 && K[s.OVRUN] === 0, `mothership: DMA approach has ${late} late split writes, ${K[s.OVRUN]} overruns`);
+    check(Buffer.from(K.subarray(s.SYSHP, s.SYSHP + 8)).equals(hp) && Buffer.from(K.subarray(0x485A, 0x485C)).equals(protons) && K[s.M_STATE + idx] === kind,
+      'mothership: no deferred repair, enemy torpedo or mothership destruction runs');
+    const centreAddress = 0x6000 + (100 >> 3) * 320 + (85 >> 2) * 8 + (100 & 7);
+    check(((K[centreAddress] >> ((3 - (85 & 3)) * 2)) & 3) === 2 && K[0x44A0] === 0x11 && K[s.MSCPEND] === 0,
+      'mothership: the completed opening is filled with white bitmap pixels');
+    snap(m, kind === 0x80 ? 'mothership-enemy' : 'mothership-friendly');
+    call(m, s.SECTORIN);                 // approach under firing/steering load
+    let stressLate = 0;
+    for (let f = 0; f < 200; f++) {
+      m.mouse.left = true; m.moveMouse(f % 20 < 10 ? 3 : -3, f % 16 < 8 ? 2 : -2);
+      m.runFrame();
+      const v = m.vicLog;
+      for (let i = 0; i < v.length; i += 4) if ((v[i + 2] === 0x20 || v[i + 2] === 0x21) &&
+        ((v[i] >= 50 && v[i] <= 76) || (v[i] >= 230 && v[i] <= 245)) && v[i + 1] >= 16 && v[i + 1] <= 55) stressLate++;
+    }
+    m.mouse.left = false;
+    check(K[s.MSRAD] >= 12 && K[s.OVRUN] === 0 && stressLate === 0,
+      `mothership: steering and phasors during approach: radius ${K[s.MSRAD]}, ${stressLate} late writes, ${K[s.OVRUN]} overruns`);
+    m.setKey(7, 4, true); run(m, g.hooks, 2); m.setKey(7, 4, false); run(m, g.hooks, 90);
+    check(K[s.MSSTATE] === 4 && K[s.M_STATE + idx] === kind && K[0x485B] === protons[1] - 1,
+      'mothership: SPACE launches a proton and its blast ends the approach without destroying the base');
+    K[s.M_STATE + idx] = 0; call(m, s.SECTORIN);
+    check(K[s.MSSTATE] === 0 && K[s.shpj] === 0x2C && K[s.gplmode + 1] === (s.MAPSHOWN & 255) && K[s.vv2 + 1] === (s.STARS & 255) && K[s.vv2 + 2] === (s.STARS >> 8), 'mothership: leaving restores the idle hooks');
+  }
 }
 
 console.log(failures ? failures + ' check(s) failed' : 'all checks passed');

@@ -48,7 +48,7 @@ MAPCODE = 0xA500         # provisional: assemble() puts the map right after the 
 VDCDATA = 0x2900
 GLUE = 0x5300            # game.asm's code and data (after the master copy at $5000)
 HIGH2 = 0xE000           # more code, under the KERNAL too: loaded at HIGH2SRC (the view's bitmap)
-HIGH2SRC = 0x63C0        # packed (lz_pack), unpacked by GAMEINIT: code to $E7FF, then data
+HIGH2SRC = 0x6200        # packed image; overlaps type-1 slots restored by GINIT2
 HIGH = 0xC000            # game.asm's code in the RAM under the KERNAL (MMU $3E)
 OUT = os.path.join(HERE, 'sentinel-c128-game.prg')
 
@@ -311,7 +311,7 @@ def main():
     chunks, symbols = assemble()
     if set(chunks) != {ENTRY, CODE2, MAPCODE, GLUE, HIGH, HIGH2}:
         raise SystemExit(f'unexpected assembly chunks: {[hex(c) for c in chunks]}')
-    for start, limit in ((ENTRY, VDCDATA), (CODE2, MAPCODE), (MAPCODE, 0xC000), (GLUE, 0x6000), (HIGH, 0xD000), (HIGH2, 0xEA00)):
+    for start, limit in ((ENTRY, VDCDATA), (CODE2, MAPCODE), (MAPCODE, 0xC000), (GLUE, 0x6000), (HIGH, 0xD000), (HIGH2, 0xEDC0)):
         if start + len(chunks[start]) > limit:
             raise SystemExit(f'code from ${start:04X} ends at ${start + len(chunks[start]):04X}, past ${limit:04X}')
 
@@ -324,12 +324,17 @@ def main():
         if address != HIGH2:
             p(address, data)
     # the $E000 image: code, the fighters' shape masters by type (type 1's come from
-    # their slots at GAMEINIT), type 2's streams, the torpedo's frames; packed into the
+    # $2900 VDC area), type 2's streams, the torpedo's frames; packed into the
     # 3D view's bitmap, which GAMEINIT unpacks and clears
     ref = os.path.join(ROOT, 'c128-gui', 'ref')
     sprites = open(os.path.join(ref, 'sprites-4800.bin'), 'rb').read()
     order = [b + i for b in (0x20, 0x30, 0x40, 0x60, 0x70) for i in range(16)]
     shape = lambda s: sprites[order.index(s) * 64:order.index(s) * 64 + 64]
+    # The VDC is disabled in the joined game; its data holds type-1 masters.
+    # Unpacking may overlap their live sprite slots; GINIT2 restores them next.
+    assert symbols["TSH1"] == VDCDATA
+    assert chunks[MAPCODE][symbols["M_VDCON"] - MAPCODE] == 0, "TSH1 reuses disabled VDC data"
+    p(symbols["TSH1"], b"".join(shape(s) for s in range(0x20, 0x2F)))
     image = bytearray(chunks[HIGH2])
     def at(name, data):
         off = symbols[name] - HIGH2

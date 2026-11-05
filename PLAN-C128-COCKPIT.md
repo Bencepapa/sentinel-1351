@@ -388,28 +388,107 @@ code is full up to `$C000`, so the new code goes in the glue (`$5300-$5FFF`), or
 
 ### Mothership sequences
 
-How the user remembers them: the motherships are drawn as concentric strange
-circles that grow as the ship closes in; the enemy (orange) mothership fires a
-proton torpedo, a rotating triangular 3D object; the friendly (blue) mothership
-reaches out with a tractor beam (two rays of light from the mothership to the
-player) and repairs the ship. What the code shows so far:
+Approach ported in `MSECTOR` / `MSVIEW` / `MSRING` / `MSSTEP` in
+`c128-game/game.asm`. Enemy STATE `$80` maps to original `$E2=1`; friendly
+STATE `$FF` to `$E2=0` (the port stores the kind in `MSKIND`).
 
-- **The approach** is the loop at `$90F3`: every 128 frames the radius `$43`
-  grows and the mothership is drawn by `$3635` / `$364C` (a routine that takes a
-  radius: the concentric circles). It ends when the radius reaches `$22`.
-- **The enemy torpedo**: on an enemy mothership (`$E2` set) at radius `$19`,
-  `$916C` starts it (`$CF01`). `$CF04`, called every 16 frames, plays a
-  pre-rendered animation: 31 frames of 128 bytes from a table at
-  `$A000-$AF80`, copied into the shapes `$45` / `$46` (`$5140`) and shown as two
-  X-expanded white sprites side by side (sprites 5 and 6, x `$8C` / `$A1`). So the
-  rotating triangle is drawn in advance, not computed. After the 31st frame
-  (about 10 seconds) it hits: five hits at once (`$CF8C`). To find: whether it can
-  be shot down (the hit test's sprite slots) or dodged.
-- **The friendly mothership**: tractor beam and repair, not traced yet; the
-  repair list is at `$932D` ("ENTERING BASE SECTOR" `$3FB9`, see
-  `SHIP-STATUS.md`). The manual: a status report, then repairs, fuel and one proton.
-- Entering a mothership sector: `$FBFB` / `$FC77`; mines `$71-$7C` (`$CCDF`,
-  `$CD27`).
+Original control flow, checked against the unpacked v10 code:
+
+- Sector entry is `$FCE1`, with the mothership branch at `$FD3B`: `$E1=1`.
+  Enemy: `$8C3D=1`, **GORGANITOR BASESTAR DETECTED**, yellow/orange, ten
+  flips at five-frame intervals, and the downward `$0921` sweep. Friendly:
+  `$8C3D=0`, **ENTERING BASE SECTOR**, the same message timing, no entry sweep.
+  `$FBFB` dispatches a negative STATE to `$FC77`, which is map/path work;
+  these addresses alone do not set up the mothership sequence.
+- `$8C3F` / `$8C44` establish the original long-range/pre-approach phase:
+  `$E2=1` only for STATE `$80`, otherwise zero; `$8E8F` and `$8ED1` clear.
+  The distance check at `$8D1C` leads through `$9054` and the `$0F7F` wait,
+  then `$8D56` calls `$909D` if the sector still contains a base. The mines
+  and this preliminary positioning phase remain deferred; the port starts
+  the ring approach after the sector's closing wipe.
+- `$909D` sets the view colours, and `$90D9` resets both circle operands
+  `$3668` / `$3674` to 1. Centre is `$50,$64`, initial radius 1. The
+  callback `$EF6B` plots value 3, preserving existing value-2 pixels.
+  `$8ED2` sets the matrix to `$19` for an enemy and `$1B` for a friend;
+  colour RAM is 2 / 6. The port limits fills to view rows 4-17 and keeps
+  the cockpit/radar intact.
+- `$90F3`: **128 loop passes, not 128 video frames**, between increments
+  of radius `$43`. The second circle operand grows by 3 for an enemy,
+  by 1 for a friend, producing the unusual concentric shapes. From
+  radius 12, `$8F05` also runs with `$8ED1=radius`: this is the central
+  rectangular opening, now ported (`MSCINIT`, `MSVB`). `$8ED2` patches its
+  starting x/y to 75/100, width to 10 and height to 1. At radius r, with
+  n=r-12, x=75-ceil(n/2), y=100-ceil(n/2), width=10+n, height=1+n.
+  `$B39A` includes both endpoints, so the first rectangle is 11 by 2
+  multicolour pixels. Nested outlines fill the rectangle as it grows;
+  no rounded-corner routine is used. Value-2 pixels survive later circles.
+  `$953F` sets matrix `$11` for a friendly base, making the opening white.
+  The port uses this stable palette for both kinds; enemy random colour
+  flickering from `$953F` remains deferred.
+- **Different endpoints:** enemy `$917A` returns at radius `$22`; friendly
+  `$9184` returns at `$28`. `$9162` also returns when our torpedo's blast
+  flag `$BAD1` is set. The port has both radius endpoints and terminates
+  its approach when the player's torpedo reaches its blast phase; it
+  does not clear the base's map cell or award a base kill.
+- With `m.dma=true`, booting the C64 game through its title/difficulty
+  screens and entering `$909D` gives **234 frames enemy / 265 friendly**
+  from radius 2 to the final radius. Growth intervals are roughly 6-10
+  frames, including the drawing time. The frame-locked port measures
+  **229 / 268 frames**, respectively; its cadence is a measured
+  approximation, with rendering allowed to continue across frames.
+  Tests rerun the original measurement, allowing at most ten frames
+  difference, and compare **all 74 rings pixel for pixel**.
+
+Deferred sequences and known exits:
+
+- Enemy `$916C` arms `$CF01` at radius `$19`, clearing `$CF02` repeatedly
+  while the radius stays there. `$CF04`, called every 16 loop passes,
+  copies 31 animation frames backwards from `$AF80` toward `$A000` into
+  `$5140` (shapes `$45/$46`), using two expanded white sprites 5 and 6,
+  x `$8C/$A1`. It uses the same source art as `TORPA`. `$CF8C` applies
+  five hits. The old estimate of ten seconds assumed one loop pass per
+  video frame: in the measured approach the active interval was frames
+  158-201 (about 0.86 seconds). Shoot-down/dodging still needs tracing.
+- On normal completion, `$8D66` calls `$918E`: only a friendly base,
+  with `$BACE`, `$BAD1` and `$8C3E` all zero, runs its two path/ring
+  tractor-beam effect. `$92E3` then skips enemies and enters the friendly
+  status/repair sequence at `$932D`. Neither effect is ported.
+- Mines (`$71-$7C`, `$CCDF/$CD27`), destroying a base and the cleanup at
+  `$8F53` remain later work. No repair/refuel/proton grant runs in this port.
+
+Port integration and limits:
+
+- `SECTORIN` calls `MSECTOR` in the existing three-byte slot. Mothership
+  work switches `shpj` from dormant BIT to JSR; flight/fights retain their
+  former instruction sizes, addresses and idle cost. Star plot/erase
+  operands switch while approaching so stars do not erase the rings.
+  Existing JMP slots `vv2` and `g_vs2` switch from STARS to `MSVB` while
+  in a mothership sector, returning directly to STARS when no opening
+  update is pending. No extra idle-flight/fight instructions are added.
+- New code lives in the `$E000` chunk, ending below `$EDC0`. Type-1
+  masters now occupy `$2900-$2CBF`, reusing the disabled VDC's data area.
+  The build asserts VDC is disabled. The packed image starts at `$6200`;
+  `GINIT2` restores overwritten type-1 sprite slots after unpacking.
+  Standalone cockpit/map programs retain their original memory layouts.
+- Colour fills use one row per frame. Circle work checks raster line 174
+  before each eight-point step, yielding before the gun split; work is deferred
+  altogether when a phasor has already used the slot through line 150.
+  The center is filled a bitmap row at a time at 2 MHz in vertical blank,
+  checking `TLATE` at line 256+16 and replacing stars on those frames.
+  Completed filled rectangles are pixel-equivalent to the original's
+  cumulative nested outlines; the outer circle schedule stays separate. DMA tests
+  record zero late `$D020/$D021` writes in the sensitive split windows
+  and zero `OVRUN` for both approaches. VICE x128 remains the hardware
+  timing reference.
+- Opening/closing the map wipes the bitmap and restarts the approach.
+  The port waits at the final image, allowing navigation; it does not yet
+  perform the original beam/repair, enemy weapon or post-sequence cleanup.
+- Observed in the C64 original (user, VICE): after the sequence the map comes
+  up by itself (a friendly base has repaired the ship; an enemy base is too close
+  and its one proton torpedo has been fired, destroyed or not). The mothership's
+  sector is then the only one the map will not jump straight back to: the
+  player must jump elsewhere first and return to try again. Any other sector
+  can be targeted again whatever is in it. To port with the post-sequence work.
 
 ## Open questions
 
