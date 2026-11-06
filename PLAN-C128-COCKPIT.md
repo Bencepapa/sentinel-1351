@@ -6,7 +6,7 @@ is ported from the C64 code and checked against it.
 
 ## Status
 
-Updated 2026-11-06 (commit `55c6dd6`). Everything below is built into
+Updated 2026-11-06 (working tree; not committed). Everything below is built into
 `c128-game/sentinel-c128-game.prg` and the browser page (`js/dist/sentinel.html`),
 and `node js/test/run.js` ends with "all checks passed".
 
@@ -18,38 +18,33 @@ sector, hyperspace (path, streaks, energy, countdown, meteors, dodging, the
 deflector, the hyperspace cursor), the proton torpedo, the mothership sequences
 (the approach, destroying a base with a proton, the friendly base's tractor beam
 and repair, the automatic map afterwards and the base sector's re-entry lock),
-the map's battle messages on the cockpit's message line.
+the map's battle messages on the cockpit's message line, and the base's preliminary
+positioning on the long range scanner before its rings.
 
 Left, in a suggested order (each with what is already known):
 
-1. **The base on the long range scanner** (user request): arriving in a
-   mothership sector, the long range scanner should show the base's position like
-   a group of fighters, before the ring approach starts. This is the original's
-   preliminary positioning phase `$8C3F` / `$8C44` -> `$8D1C` -> `$9054`, the
-   `$0F7F` wait, then `$8D56` calls `$909D` (the rings). The port skips it and
-   starts the rings after the closing wipe (`MSECTOR`, `MSVIEW`).
-2. **The enemy base's torpedo**: `$916C` arms `$CF01` at radius `$19`; `$CF04`
+1. **The enemy base's torpedo**: `$916C` arms `$CF01` at radius `$19`; `$CF04`
    (every 16 loop passes) copies 31 frames backwards from `$AF80` to `$A000`
    into `$5140` (shapes `$45` / `$46`, the same art as our `TORPA`), expanded
    white sprites 5 / 6 at x `$8C` / `$A1`; `$CF8C` applies five hits. Active for
    about 43 DMA frames in the measured original. Open: can it be shot or dodged?
    After it the map comes up by itself (`MSRETURN`, normal endpoint, locked).
-3. **The minefield** (`$71-$7C`, `$CCDF` / `$CD27`). The user's observations of the
+2. **The minefield** (`$71-$7C`, `$CCDF` / `$CD27`). The user's observations of the
    original: stars only in a horizontal band; the star field cannot be steered
    once the right direction is locked; mines can stay stuck on the screen (an
    original bug).
-4. **Game end**: death (shields / systems), JARALOBA CEASES TO EXIST (the message
+3. **Game end**: death (shields / systems), JARALOBA CEASES TO EXIST (the message
    is shown, game over is not: `$DD`, `$3E7D`, `$F431`), winning, ratings.
-5. **Hyperspace**: the abort (Crsr) and a destroyed hyperspace coordinator.
-6. **What the other destroyed systems disable**, and their messages. So far the
+4. **Hyperspace**: the abort (Crsr) and a destroyed hyperspace coordinator.
+5. **What the other destroyed systems disable**, and their messages. So far the
    scanners, the sequencer and the tracking computer act on their counters.
-7. **Fighters warping in** when lingering in an empty sector (the manual; `$F96B`).
-8. **Thrust** (W, `$FEA7`).
-9. Small: opening and closing the map during an unfinished approach restarts it;
+6. **Fighters warping in** when lingering in an empty sector (the manual; `$F96B`).
+7. **Thrust** (W, `$FEA7`).
+8. Small: opening and closing the map during an unfinished approach restarts it;
    the destruction uses two particle bursts where the original has four; a
    friendly kill also sets the map's DEAD flag (the original `$8E42` only clears
    the cell; check what the original's SURROUND then does on that empty cell).
-10. The C64 patch: the hyperspace cursor (about 90-190 bytes; no room in the
+9. The C64 patch: the hyperspace cursor (about 90-190 bytes; no room in the
     1351 patch yet).
 
 ## Handing the work on (for another agent)
@@ -78,10 +73,17 @@ Left, in a suggested order (each with what is already known):
   230-245, cycles 16-55) and `OVRUN`; both must stay 0. A blanked screen must keep
   the bad lines: use an invalid VIC mode (`$D011 = $7B`, ECM+BMM, black), not
   DEN=0, which removes the line-75 bad line the top split is timed by.
-- **Memory is the bottleneck.** Now: `$E000` code 489 bytes free (to TORPA
-  `$F600`), the packed image 29 bytes before the cockpit art (`$7680`), the glue
+- **Memory is the bottleneck.** Now: `$E000` code 97 bytes free (to TORPA
+  `$F600`), the packed image 41 bytes before the cockpit art (`$7680`), the glue
   1 byte. The `$E000` image is packed (`lz_pack`) at `$5E00` and unpacked by
-  `GUNPK2` at init; a second stream (STR2Y) unpacks over the first one's start.
+  `GUNPK2` at init; a second stream (STR2Y), staged beneath I/O at `$D000-$D051`, unpacks
+  over the first one's start with MMU `$3F` during init only.
+  The preliminary positioning tail is staged beneath I/O at `$D100-$D1F4` and copied
+  into `$E000` after both streams are unpacked, while `$3F` is still selected.
+  (The KERNAL's LOAD ends when the address reaches `$FF00`, so nothing may be
+  staged at `$FF05-$FFF9`; doing so left the KERNAL's jump table in `MSPOS` and
+  froze VICE on arrival.) Torpedo RLE now minimizes each frame, with bounded token
+  sizes; the PRG now ends at `$D1F4`.
   Many small helpers sit in checked padding gaps (see the build's bound list).
   The next feature will likely need another rearrangement (ideas: more data in
   further packed streams unpacked into space that is free after init; sharing
@@ -662,7 +664,7 @@ Memory and integration:
   line-256+16 centre deadline. DMA tests include continuous steering/fire,
   phase changes, successful kills and simultaneous battle messages.
 
-Still deferred: preliminary base positioning, mines `$71-$7C` (`$CCDF/$CD27`),
+Still deferred: mines `$71-$7C` (`$CCDF/$CD27`),
 enemy torpedo `$CF01/$CF04`, game over,
 ratings and other global consequences beyond the base cell/dead flag. The enemy
 animation shares TORPA's 31 frames, copied backwards from `$AF80` toward
@@ -680,3 +682,46 @@ the map during an unfinished approach still restarts that approach.
   tracked fight); the polled schedule is good enough for now.
 
 Ideas beyond the original are [GitHub issues](https://github.com/Bencepapa/sentinel-1351/issues).
+
+
+### Base preliminary positioning ($8C44-$8D56)
+
+Enemy and friendly sectors now keep the hyperspace slot positions and show the
+base on the long range scanner before the rings. `$E000` `MSPOS` runs through
+the existing shape hook; the vertical-blank check is patched only while positioning is active.
+The original fixes the scanner on slot 0: fire still fires the phasor but cannot
+select another group. `$3736` / `$3776` / `$38E8` explicitly skip the cyan fighter
+selection sprite in base mode (`$E1`); the base is a radar mark, with X/Y/Z readings.
+
+The original $8C97 loop advances depth by 6 every pass. Every fourth pass it
+checks alignment ($8E90) and steers unless the latched lock is set. Lock needs
+exact 00 side and 00 up with the base in front; the fighter rush's 00-03 threshold
+and $C848 closing acceleration do not apply. The exit ($8D1C) requires the base
+in front and distance high byte below 6. $9054 then runs 143 x 20 settling passes,
+with drift and scanner updates, resets $0F7F, and waits until it reaches 5 before
+$8D56 calls $909D. Mines remain unported.
+
+With DMA, aligned near/far reference cases reach $909D in about 267/331 frames;
+settling takes 193-194 frames and the five-count wait 67-72 frames. The port uses
+up to five positioning passes/frame (with a raster deadline), 194 settling frames and 70 wait frames, with
+scanner/drift updates during the wait. This is a frame-locked approximation,
+not a cycle-exact translation of the star/mines workload. Tests compare both
+base types, 200 readings/radar positions, exact alignment thresholds and the
+transition timing (within 10 frames), and count late split writes and overruns.
+
+Arrival freeze regression (2026-11-06): the JS loader now applies the native
+C128 KERNAL's `$FF00` limit (C64 loads retain the final page). The old direct
+RAM copy loaded the `$FF05` tail successfully and hid the broken PRG layout.
+Restoring that staging in a temporary build reproduces the failure on the first
+positioning frame with DMA, for both base types and both input devices. The
+fixed build stages the tail at `$D100`, copies it with MMU `$3F`, then restores
+`$3E`. Full `HARRIVE -> SECTORIN -> MSECTOR -> MSPOS` regressions steer an
+off-centre base into lock with joystick and mouse, require rings to start and
+continue for 120 frames, preserve the HUD font, restore the blank hook and MMU,
+and require zero late splits and overruns.
+
+The scanner band's animation now remains active on the route into docking. Its
+regression check requires exact restoration outside the band, valid gray shades
+inside it and identical band rows, rather than the same animation phase. Docking
+advances its report clock before optional noise work; the view noise budget is
+40 iterations, keeping the existing typing, charging and DMA-rate checks intact.

@@ -116,7 +116,12 @@ var C128 = (function () {
 
   P.loadPrg = function (bytes) {
     var load = bytes[0] | (bytes[1] << 8);
-    this.ram.set(bytes.subarray(2), load);
+    // The C128 KERNAL's LOAD ends when the load address reaches $FF00 (its store loop
+    // stops at AEL = $FF), so a PRG cannot place data in the last page. The RAM
+    // beneath I/O is still reachable: the store routine selects MMU $3F for it.
+    var limit = this.model === 'c128' ? 0xFF00 : 0x10000;
+    var n = Math.max(0, Math.min(bytes.length - 2, limit - load));
+    if (n > 0) this.ram.set(bytes.subarray(2, 2 + n), load);
     return load;
   };
 

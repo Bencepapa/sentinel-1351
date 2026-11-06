@@ -926,6 +926,7 @@ for (const name of Object.keys(Profiles)) {
 // ---- the joined program (c128-game): cockpit + map ----
 {
   const { m, hooks, p } = boot('game', 'verify');
+  m.dma = true;
   const s = p.symbols, K = m.ram;
   const tg = () => String.fromCharCode(K[s.TARGETS - 1] - 0x40, K[s.TARGETS] - 0x40);
   // (the processor comes back where it was: the frames run on after the call)
@@ -1017,6 +1018,199 @@ for (const name of Object.keys(Profiles)) {
   report(hooks, 'game');
 }
 
+// ---- game: mothership preliminary scanner positioning, original $8C44-$8D56 ----
+{
+  {   // The C128 KERNAL's LOAD ends when the load address reaches $FF00 (its
+    // store loop stops at AEL = $FF), so the positioning code must be staged
+    // below it. Loading it at $FF05 froze the VICE machine on arrival: the
+    // KERNAL left its jump table there and GUNPK2 copied it over MSPOS.
+    const prg=Buffer.from(PROGRAMS['game'].prg,'base64'), load=prg[0]|(prg[1]<<8);
+    const last=load+prg.length-3;
+    check(last<0xFF00,`game: the PRG ends at $${last.toString(16)} (the KERNAL LOAD stops at $FF00)`);
+  }
+  { // Enforce the native loader boundary without truncating C64 RAM loads.
+    const payload=new Uint8Array(0x102);payload[0]=0xFE;payload[1]=0xFE;payload.fill(0xA5,2);
+    const native=new C128('c128'),c64=new C128('c64');
+    native.loadPrg(payload);c64.loadPrg(payload);
+    check(native.ram[0xFEFF]===0xA5&&native.ram[0xFF00]===0&&c64.ram[0xFF00]===0xA5,
+      'game: C128 LOAD stops at $FF00; C64 loads retain their final page');
+  }
+  function call(m, addr) {
+    const c=m.cpu, pc=c.pc, sp=c.sp, flags=c.p;
+    c.push(0xFF); c.push(0xF3); c.pc=addr; c.p|=4;
+    let n=0;
+    while(c.pc!==0xFFF4 && n++<2e6) { c.step(); if(c.jam) throw Error(c.jam); }
+    if(c.pc!==0xFFF4) throw Error('positioning routine did not return');
+    c.pc=pc; c.sp=sp; c.p=flags;
+  }
+  function late(m) {
+    let n=0,v=m.vicLog;
+    for(let i=0;i<v.length;i+=4) if((v[i+2]===0x20||v[i+2]===0x21)&&
+      ((v[i]>=50&&v[i]<=76)||(v[i]>=230&&v[i]<=245))&&v[i+1]>=16&&v[i+1]<=55)n++;
+    return n;
+  }
+  function original(kind,z) {
+    const g=boot('c64game','trace'),m=g.m,R=m.ram;
+    run(m,g.hooks,300);run(m,g.hooks,300,i=>m.mouse.left=i<10||(i>=150&&i<160));
+    m.mouse.left=false;m.dma=true;
+    R[0xE1]=1;R[0x92]=R[0x93]=0;R[0x033C]=kind;R[0x89]=1;
+    R[0x16]=0xA0;R[0x17]=0x88;R[0x1C]=0x90;R[0x1D]=0x88;R[0x22]=0x90;R[0x23]=z;
+    const start=m.frame,events={};
+    for(const [a,name] of [[0x8D2C,'close'],[0x9097,'settled'],[0x909D,'rings']])
+      m.setBreak(a,true);
+    m.cpu.pc=0x8C44;
+    for(let f=0;f<1000;f++) {
+      m.runFrame();
+      if(m.breakInfo) {
+        const name=m.cpu.pc===0x8D2C?'close':m.cpu.pc===0x9097?'settled':'rings';
+        events[name]=m.frame-start;
+        if(name==='rings')break;
+      }
+    }
+    check(events.rings>events.settled&&events.settled>events.close,
+      `game: original base DMA phases ${kind.toString(16)}/${z.toString(16)}: ${JSON.stringify(events)}`);
+    return events;
+  }
+  const o=boot('c64game','trace'),g=boot('game','trace'),m=g.m,S=g.p.symbols,A=m.ram,R=o.m.ram;
+  run(o.m,o.hooks,250);m.dma=true;run(m,g.hooks,60);
+  // Base mode forces slot zero and deliberately skips $38E8's fighter sprite.
+  R[0xE1]=1;R[0xBA]=0;R[0x98]&=0xEF;call(o.m,0x3736);
+  let same=true,seed=0x12345678;
+  const rnd=()=>{seed=(Math.imul(seed,1664525)+1013904223)>>>0;return seed>>>24;};
+  A[S.GSEL]=0;A[S.GSIZE]=1;A[S.LRMODE]=1;
+  call(m,S.RADMODE);
+  [R[0x307C],R[0x3089],R[0x30B7],R[0x30C4]]=[1,0xFE,1,0xFE];R[0xD3]=0x80;R[0xC593]=1;
+  for(let t=0;t<200;t++) {
+    for(const [a,b] of [[0x16,S.ENX],[0x1C,S.ENY],[0x22,S.ENZ]]) {
+      R[a]=A[b]=rnd();R[a+1]=A[b+1]=2+rnd()%250;
+    }
+    R[0x3051]=A[S.RSLOT]=1;R[0x3A]=A[S.SYSHP+1]=1;
+    call(o.m,0x305F);call(m,S.RADAR);
+    call(o.m,0x3776);call(m,S.MSPREAD);
+    same &&= Buffer.from(R.subarray(0x57A1,0x57B6)).equals(Buffer.from(A.subarray(S.LRROW+9,S.LRROW+30))) &&
+      R[0x3058]===A[S.RBX]&&R[0x305B]===A[S.RBY];
+  }
+  check(same,'game: base readings and radar blip match the original in 200 positions (fixed slot 0)');
+  // Packing changed to make room: exercise the real decoder, all 4096 bytes.
+  const torpedo=fs.readFileSync(path.join(ROOT,'../c128-gui/ref/torpedo-a000.bin'));
+  const decodeRead=m.read;
+  m.read=function(a){return a===0xD012?0:a===0xD011?0x80:decodeRead.call(this,a);};
+  A[S.TPSRC]=S.TORPA&255;A[S.TPSRC+1]=S.TORPA>>8;
+  let animation=true;
+  for(let frame=0;frame<32;frame++) {
+    A[S.TPO]=0;call(m,S.TDEC);
+    animation &&= A[S.TPO]===128&&Buffer.from(A.subarray(0x7CC0,0x7D40)).equals(torpedo.subarray(frame*128,frame*128+128));
+  }
+  m.read=decodeRead;
+  check(animation,'game: repacked torpedo decodes all 32 original frames exactly');
+  // The original's steering lock is exact 00/00, latched, and only in front.
+  let locks=true;
+  const read=m.read;m.read=function(a){return a===0xD012?80:read.call(this,a);};
+  for(const digit of [0x70,0x71,0x73]) {
+    R[0x16]=A[S.ENX]=0xA0;R[0x17]=A[S.ENX+1]=0x88;
+    R[0x1C]=A[S.ENY]=0x90;R[0x1D]=A[S.ENY+1]=0x88;
+    R[0x22]=A[S.ENZ]=0x90;R[0x23]=A[S.ENZ+1]=0x94;
+    R.fill(0x70,0x372C,0x3730);A.fill(0x70,S.LRDIG,S.LRDIG+4);
+    R[0x372D]=A[S.LRDIG+1]=digit;R[0x8E8F]=A[S.FLATCH]=0;
+    A[S.MSROW]=1;A[S.APCNT]=8;A[S.JOY]=0xFF;
+    call(o.m,0x8E90);call(m,S.MSPOS);
+    locks &&= !!R[0x8E8F]===!!A[S.FLATCH];
+  }
+  m.read=read;
+  check(locks,'game: base steering locks at exactly 00/00, unlike the fighter rush at 00-03');
+  // The base occupies one hyperspace slot even when its strategic COUNT is 0.
+  for(const kind of [0x80,0xFF]) {
+    const g=boot('game','trace'),m=g.m,S=g.p.symbols,A=m.ram;
+    m.dma=true;run(m,g.hooks,60);
+    A[S.M_SELX]=A[S.M_SELY]=A[S.HTGTX]=A[S.HTGTY]=0;
+    A[S.M_STATE]=kind;A[S.M_COUNT]=0;
+    call(m,S.HSCANGO);
+    for(let f=0;f<4&&A[S.LYACT];f++)call(m,S.LYSTEP);
+    call(m,S.HSCANF);
+    A[S.JOY]=0xFB;call(m,S.HJPOS);
+    const slots=Buffer.from(A.subarray(S.ENX,S.ENX+18));
+    call(m,S.HARRIVE);
+    check(A[S.MSSTATE]===1&&Buffer.from(A.subarray(S.ENX,S.ENX+18)).equals(slots),
+      `game: ${kind.toString(16)} base has a hyperspace slot and preserves its steered position on arrival`);
+  }
+  {
+    const g=boot('game','trace'),m=g.m,S=g.p.symbols,A=m.ram;
+    m.dma=true;run(m,g.hooks,60);A[S.M_STATE+24]=0x80;call(m,S.SECTORIN);
+    A[S.ENX+1]=0x90;A[S.ENZ+1]=0x94;
+    const x=A[S.ENX+1];let writes=0,sawShot=false,moved=false;
+    for(let f=0;f<100;f++) {
+      m.joy2=f<50?4:8;m.mouse.left=true;m.runFrame();writes+=late(m);
+      sawShot ||= !!A[S.SHOTON];
+      moved ||= A[S.ENX+1]!==x;
+      if(f===60)snap(m,'base-scanner-steering');
+    }
+    check(sawShot&&A[S.GSEL]===0&&A[S.MSSTATE]===16&&moved,
+      'game: steering moves the base while fire shoots without cycling scanner targets');
+    check(writes===0&&A[S.OVRUN]===0,`game: base steering/fire DMA load: ${writes} late writes, ${A[S.OVRUN]} overruns`);
+    m.joy2=0;m.mouse.left=false;A[S.ENZ+1]=0x84;A[S.FLATCH]=0;
+    run(m,g.hooks,20);
+    check(A[S.MSSTATE]===16&&A[S.MSROW]===1,'game: a base behind the ship cannot start the rings');
+  }
+  // Exercise the whole arrival route, then align through actual input, rather
+  // than entering SECTORIN with a pre-aligned base and calling MSPOS directly.
+  for(const kind of [0x80,0xFF]) for(const input of ['joystick','mouse']) {
+    const g=boot('game','trace'),m=g.m,S=g.p.symbols,A=m.ram;
+    m.dma=true;run(m,g.hooks,60);
+    const font=Buffer.from(A.subarray(0x4000,0x4400));
+    A[S.M_SELX]=A[S.M_SELY]=A[S.HTGTX]=A[S.HTGTY]=0;
+    A[S.M_STATE]=kind;A[S.M_COUNT]=0;call(m,S.HSCANGO);
+    for(let f=0;f<4&&A[S.LYACT];f++)call(m,S.LYSTEP);
+    call(m,S.HSCANF);
+    A[S.ENX]=0x90;A[S.ENX+1]=0x84;
+    A[S.ENY]=0x90;A[S.ENY+1]=0x88;A[S.ENZ]=0x90;A[S.ENZ+1]=0x94;
+    call(m,S.HARRIVE);
+    let rings=false,locked=false,moved=false,writes=0,frames=0;
+    for(;frames<900&&!rings;frames++) {
+      if(A[S.MSSTATE]===16&&!A[S.FLATCH]) {
+        if(input==='joystick')m.joy2=4;
+        else m.moveMouse(-4,0);
+      } else m.joy2=0;
+      if(!m.runFrame())break;
+      writes+=late(m);locked ||= !!A[S.FLATCH];
+      moved ||= A[S.MSSTATE]===16&&A[S.ENX+1]!==0x84;
+      rings=A[S.MSSTATE]===2;
+    }
+    m.joy2=0;
+    const continued=run(m,g.hooks,120,()=>{writes+=late(m);});
+    check(rings&&locked&&moved&&continued&&!m.stopped,
+      `game: ${kind.toString(16)} ${input} steers into lock through HARRIVE and reaches running rings (${frames} frames)`);
+    check(writes===0&&A[S.OVRUN]===0&&m.mmuCR===0x3E&&
+      Buffer.from(A.subarray(0x4000,0x4400)).equals(font)&&
+      A[S.HVBR+1]===(S.HYPON&255)&&A[S.HVBR+2]===(S.HYPON>>8),
+      `game: ${kind.toString(16)} ${input} arrival preserves font, MMU and blank hook; ${writes} late splits, ${A[S.OVRUN]} overruns`);
+  }
+  for(const kind of [0x80,0xFF]) for(const z of [0x88,0x94]) {
+    const reference=original(kind,z),g=boot('game','trace'),m=g.m,S=g.p.symbols,A=m.ram;
+    m.dma=true;run(m,g.hooks,60);
+    const font=Buffer.from(A.subarray(0x4000,0x4400));
+    A[S.M_STATE+24]=kind;call(m,S.SECTORIN);
+    A[S.ENX]=0xA0;A[S.ENX+1]=0x88;A[S.ENY]=0x90;A[S.ENY+1]=0x88;A[S.ENZ]=0x90;A[S.ENZ+1]=z;
+    let frames=-1,writes=0,scanner=false,message='';
+    for(let f=0;f<600;f++) {
+      m.runFrame();writes+=late(m);
+      if(f===0) message=String.fromCharCode(...A.subarray(S.LRROW,S.LRROW+39)).replace(/[@`]/g,' ').trim();
+      scanner ||= A[S.LRMODE]===1&&A[S.RBON]===1&&A[S.LRROW+9]===0x7B&&!A[S.BLIPON];
+      if(A[S.MSSTATE]===2){frames=f;break;}
+    }
+    check(scanner&&message===(kind===0x80?'GORGANITOR BASESTAR DETECTED':'ENTERING BASE SECTOR'),
+      'game: base entry message precedes scanner readings and radar mark, with no fighter-selection sprite');
+    check(frames>=0&&Math.abs(frames-reference.rings)<=10,
+      `game: ${kind.toString(16)}/${z.toString(16)} frames to rings: port ${frames}, original ${reference.rings}`);
+    check(writes===0&&A[S.OVRUN]===0,`game: preliminary base positioning: ${writes} late split writes, ${A[S.OVRUN]} overruns`);
+    check(frames>=0&&!m.stopped&&Buffer.from(A.subarray(0x4000,0x4400)).equals(font),
+      `game: ${kind.toString(16)}/${z.toString(16)} arrival keeps running with the HUD font intact`);
+    run(m,g.hooks,120);
+    check(!m.stopped&&A[S.OVRUN]===0&&Buffer.from(A.subarray(0x4000,0x4400)).equals(font),
+      `game: ${kind.toString(16)}/${z.toString(16)} rings continue after the arrival`);
+    if(z===0x94)snap(m,kind===0x80?'base-scanner-enemy':'base-scanner-friendly');
+  }
+}
+
 // ---- mothership approach -----------------------------------------------------
 {
   function call(m, addr, plot) {
@@ -1099,11 +1293,13 @@ for (const name of Object.keys(Profiles)) {
     call(m, s.SECTORIN);
     check(K[s.MSKIND] === kind && K[s.MSSTATE] === 1 && K[s.APPR] === 0 && K[s.shpj] === 0x20,
       `mothership: entering ${kind === 0x80 ? 'enemy' : 'friendly'} sector arms the approach without fighters`);
-    let late = 0, first = -1, last = -1, prev = 0, growth = [], message = '';
+    // This block measures the existing rings. The scanner phase has its own
+    // original/port timing and split checks above.
+    for (let f = 0; f < 500 && (K[s.MSSTATE] === 1 || K[s.MSSTATE] === 16); f++) m.runFrame();
+    let late = 0, first = -1, last = -1, prev = 0, growth = [];
     for (let f = 0; f < 450; f++) {
       m.runFrame();
       if (f === 0) { K[s.MSPHASE] = 1; K[s.MSPCOUNT] = 255; K[s.MSPCOLOR] = 0x11; }
-      if (f === 1) message = String.fromCharCode(...K.subarray(s.LRROW, s.LRROW + 39)).replace(/[@`]/g, ' ').trim();
       if (K[s.MSRAD] !== prev) { if (K[s.MSRAD] === 2) first = f; last = f; growth.push(K[s.MSRAD]); prev = K[s.MSRAD]; }
       const v = m.vicLog;
       for (let i = 0; i < v.length; i += 4) if ((v[i + 2] === 0x20 || v[i + 2] === 0x21) &&
@@ -1111,7 +1307,6 @@ for (const name of Object.keys(Profiles)) {
       if (K[s.MSSTATE] === 4) break;
     }
     const end = kind === 0x80 ? 0x22 : 0x28;
-    check(message === (kind === 0x80 ? 'GORGANITOR BASESTAR DETECTED' : 'ENTERING BASE SECTOR'), `mothership: original entry message: ${message}`);
     check(K[s.MSSTATE] === 4 && K[s.MSRAD] === end && growth.every((v,i) => v === i + 1),
       `mothership: ${kind === 0x80 ? 'enemy' : 'friendly'} approach grows continuously to $${end.toString(16)}`);
     const reference = originalDuration(kind);
@@ -1132,6 +1327,7 @@ for (const name of Object.keys(Profiles)) {
     check(K[s.MAPSHOWN] === 1 && !K[s.HYPON], 'mothership: firing on the just-completed base sector keeps the map open');
     call(m, s.MAPCLOSE); run(m, g.hooks, 20);
     call(m, s.SECTORIN);                 // approach under firing/steering load
+    for (let f = 0; f < 500 && (K[s.MSSTATE] === 1 || K[s.MSSTATE] === 16); f++) m.runFrame();
     let stressLate = 0;
     for (let f = 0; f < 200; f++) {
       m.mouse.left = true; m.moveMouse(f % 20 < 10 ? 3 : -3, f % 16 < 8 ? 2 : -2);
@@ -1151,7 +1347,7 @@ for (const name of Object.keys(Profiles)) {
     check(K[s.MSSTATE] === 3 && !K[s.MSKILLED] && K[s.MSRAD] > beforeMissRadius && K[s.M_STATE + idx] === kind && K[0x485B] === beforeMissProtons - 1,
       'mothership: a phase-off SPACE shot misses and the approach keeps growing');
     K[s.M_STATE + idx] = 0; call(m, s.SECTORIN);
-    check(K[s.MSSTATE] === 0 && K[s.shpj] === 0x2C && K[s.gplmode + 1] === (s.MAPSHOWN & 255) && K[s.vv2 + 1] === (s.STARS & 255) && K[s.vv2 + 2] === (s.STARS >> 8), 'mothership: leaving restores the idle hooks');
+    check(K[s.MSSTATE] === 0 && K[s.shpj] === 0x2C && K[s.gplmode + 1] === (s.MAPSHOWN & 255) && K[s.vv2 + 1] === (s.STARS & 255) && K[s.vv2 + 2] === (s.STARS >> 8) && K[s.HVBR + 1] === (s.HYPON & 255) && K[s.HVBR + 2] === (s.HYPON >> 8), 'mothership: leaving restores the idle hooks');
   }
   // Original $BB81 truth table, including the hidden friendly phase and early shots.
   let blastRules = true;
@@ -1206,7 +1402,7 @@ for (const name of Object.keys(Profiles)) {
     A[S.M_SELX] = index % 10; A[S.M_SELY] = Math.floor(index / 10);
     A[S.M_STATE + index] = kind;
     call(m, S.SECTORIN);
-    for (let n = 0; n < 200 && A[S.MSSTATE] !== 3; n++) m.runFrame();
+    for (let n = 0; n < 600 && A[S.MSSTATE] !== 3; n++) m.runFrame();
     return { ...g, S, A, index };
   }
   function lateWrites(m) {
@@ -1399,7 +1595,13 @@ for (const name of Object.keys(Profiles)) {
       `friendly repair: whole DMA sequence has ${late} late split writes, ${A[S.OVRUN]} overruns; cockpit intact`);
     check(A[S.MAPSHOWN]&&A[S.MSLOCK]&&[...originalSlots].every(([a,b])=>Buffer.from(A.subarray(a,a+b.length)).equals(b)),
       'friendly repair: map/re-entry lock and every temporary code slot restored');
-    check(protectedRanges.every(([a,b],i)=>Buffer.from(A.subarray(a,b)).equals(protectedBefore[i]))&&Buffer.from(m.colorRam.subarray(720,920)).equals(artColours),
+    // The scanner band cycles: compare its valid shades and matching rows,
+    // while requiring exact restoration everywhere else.
+    const paletteRestored=[...m.colorRam.subarray(720,920)].every((v,i)=> {
+      const band=i<160&&i%40>=12&&i%40<=27;
+      return band ? [0,1,11,12,15].includes(v)&&v===m.colorRam[720+i%40] : v===artColours[i];
+    });
+    check(protectedRanges.every(([a,b],i)=>Buffer.from(A.subarray(a,b)).equals(protectedBefore[i]))&&paletteRestored,
       'repair fixes: every sprite, font, fighter/shot master and colour master preserved; cockpit palette restored');
     check(reportMode&&blocks&&noiseColours.size>=10&&scanSound,
       'repair fixes: full text report without radar/guns, two solid random-colour block rows and damaged-scan beeps');

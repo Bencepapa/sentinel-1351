@@ -323,21 +323,29 @@ def lz_pack(data):
 
 def torp_frames(raw):
     """The torpedo's 32 frames of 128 bytes, each packed on its own (TORPA): $80 + n
-    zero bytes, or n literal bytes."""
+    zero bytes, or n literal bytes. Minimize each frame with dynamic programming;
+    short zero runs may be cheaper inside literals. The runtime format is unchanged."""
     out = bytearray()
     for f in range(32):
-        b, i = raw[f * 128:f * 128 + 128], 0
-        while i < len(b):
+        b = raw[f * 128:f * 128 + 128]
+        costs, choices = [0] * 129, [None] * 128
+        for i in range(127, -1, -1):
+            n = min(range(1, min(48, 128 - i) + 1), key=lambda n: n + 1 + costs[i + n])
+            costs[i], choices[i] = n + 1 + costs[i + n], (n, False)
             if b[i] == 0:
-                n = 0
-                while i < len(b) and b[i] == 0 and n < 127:
-                    i += 1; n += 1
-                out.append(0x80 | n)
-            else:
-                j = i
-                while j < len(b) and b[j] != 0 and j - i < 127:
-                    j += 1
-                out.append(j - i); out.extend(b[i:j]); i = j
+                z = 1
+                while i + z < 128 and z < 61 and b[i + z] == 0:
+                    z += 1
+                for n in range(1, z + 1):
+                    if 1 + costs[i + n] < costs[i]:
+                        costs[i], choices[i] = 1 + costs[i + n], (n, True)
+        i = 0
+        while i < 128:
+            n, zero = choices[i]
+            out.append(0x80 | n if zero else n)
+            if not zero:
+                out.extend(b[i:i + n])
+            i += n
     return bytes(out)
 
 
@@ -424,18 +432,33 @@ def main():
     p(symbols['STR2X'], open(os.path.join(ref, 'streams2-0600.bin'), 'rb').read())
     at('TORPA', torp_frames(open(os.path.join(ref, 'torpedo-a000.bin'), 'rb').read()))
     at('TSHOT', shape(0x67) + shape(0x68))
+    # Init-only tail: staged beneath I/O with the second stream. (The KERNAL's
+    # LOAD stops when the address reaches $FF00, so it cannot be loaded there.)
+    # GUNPK2 copies it into $E000 after decoding both streams; no live code moves.
+    tail_start, tail_end = symbols['MSPOS'], symbols['MSPOSEND']
+    tail = bytes(image[tail_start - HIGH2:tail_end - HIGH2])
+    assert len(tail) == 245 and 0xD100 + len(tail) <= 0xE000
+    assert tail_start + len(tail) <= 0xF600
+    p(0xD100, tail)
+    image[tail_start - HIGH2:tail_end - HIGH2] = bytes(len(tail))
     end = HIGH2 + len(image)
     assert end <= 0xFF00, f'the $E000 image ends at ${end:04X}'
     assert end & 255 == 0, 'GUNPK2 relies on the first stream ending at a page'
     packed = bytes((end & 255, end >> 8)) + lz_pack(bytes(image))
     # The second stream: STR2Y, unpacked over the packed data's start once it is read.
     assert symbols['STR2Y'] == HIGH2SRC and HIGH2SRC + len(packed) >= HIGH2SRC + 512
-    packed += bytes((0x00, (HIGH2SRC + 512) >> 8)) + lz_pack(open(os.path.join(ref, 'streams2-8100.bin'), 'rb').read())
+    second = bytes((0x00, (HIGH2SRC + 512) >> 8)) + lz_pack(open(os.path.join(ref, 'streams2-8100.bin'), 'rb').read())
+    # Init-only RAM beneath I/O; MSUNPACK temporarily selects MMU $3F to read it.
+    assert 0xD000 + len(second) <= 0xD100
+    p(0xD000, second)
     assert HIGH2SRC + len(packed) <= 0x7680, f'the packed $E000 image ({len(packed)} bytes) overlaps the cockpit art'
     p(HIGH2SRC, packed)
     # master copy of the colour matrix's view rows for MAPCLOSE (game.asm)
     p(symbols['MMAT'], bytes(body[0x4478 - LOAD:0x4478 - LOAD + 600]))
 
+    # The KERNAL's LOAD stops at $FF00 (its store loop ends when AEL reaches $FF),
+    # so nothing may be placed there: the tail above is staged beneath I/O instead.
+    assert LOAD + len(body) <= 0xFF00, f'the PRG ends at ${LOAD + len(body) - 1:04X}, past the KERNAL LOAD limit'
     with open(OUT, 'wb') as f:
         f.write(bytes((LOAD & 255, LOAD >> 8)) + body)
     ends = ', '.join(f'${a:04X}-${a + len(c) - 1:04X}' for a, c in sorted(chunks.items()))

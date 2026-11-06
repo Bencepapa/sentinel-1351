@@ -1012,10 +1012,10 @@ SECTORIN:
         LDA #$00
         LDY M_STATE,X
         BEQ g_sin1      ; empty
-        BMI g_sin1      ; a mothership: not ported yet
+        BMI g_sin1      ; a mothership: scanner and rings, no squadron
         LDA M_COUNT,X
 g_sin1: STA SQCOUNT
-        JMP ARRIVE
+        JMP MSARRIVE
 
 ; A kill ($3CD9): the map's COUNT follows; at 0 the squadron is gone ($3CDE).
 SECKILL:STX SKX
@@ -1243,12 +1243,12 @@ g_up9:  INC CDST
         RTS
 UPEND:  .BYTE 0,0
 GSEED:  .BYTE 0
-; A second stream follows the first: STR2Y, unpacked over the packed data's own
+; STR2Y is staged beneath I/O ($D000) and unpacked over the first stream's
 ; start ($5E00, read already), so the $E000 code may run up to TORPA.
 GUNPK2: JSR GUNPACK
         LDA #>STR2Y     ; (CDST's low byte is 0: the first stream ends at a page)
         STA CDST+1
-        JMP g_upb
+        JMP MSUNPACK
 HIGH2   = $E000
 PACKSRC = $5E00
 
@@ -1404,8 +1404,9 @@ HSCANGO:JSR HMINIT
         LDA #$00
         LDY M_STATE,X
         BEQ g_sg1       ; empty
-        BMI g_sg1       ; a mothership: not ported yet
-        LDA M_COUNT,X
+        NOP
+        NOP
+        JSR MSCOUNT
 g_sg1:  STA SQCOUNT
         LDA #$00
         STA GSEL
@@ -3120,7 +3121,8 @@ HDH:    .BYTE 0
 
 ; ---------------- more code: the RAM under the KERNAL at $E000 ----------------
 ; Loaded packed at $5E00 (restored sprite slots and the view, wiped before shown)
-; and moved here by GAMEINIT: a program cannot load across $D000-$DFFF (I/O).
+; and moved here by GAMEINIT; the second stream and the positioning tail are
+; staged beneath I/O and read under MMU $3F during init only.
         * = $E000
 TSH1    = $2900         ; type-1 masters (15 shapes), restored to live slots at init
 TSH2    = $3800         ; type-2 masters (7), reclaimed duplicate map address tables
@@ -3327,7 +3329,7 @@ g_td1:  LDX TPO
         BCS g_td9
         BCC g_td2
 g_tdview:LDA $D012
-        CMP #142        ; longest token is 61 zero / 33 literal bytes
+        CMP #142        ; longest token is 61 zero / 48 literal bytes
         BCS g_td9
 g_td2:
         LDY #$00
@@ -4202,6 +4204,7 @@ MSECTOR:
         BMI g_ms0
         JMP GSQTYPE
 MSOFF:
+        JSR MSPOSOFF
         LDA #$20
         STA mscent
         LDA #$01
@@ -4229,6 +4232,7 @@ MSOFF:
         STA shpj
         RTS
 g_ms0:  STA MSKIND
+        JSR MSPOSON
         LDA #<MSVB
         STA vv2+1
         STA g_vs2+1
@@ -4256,6 +4260,10 @@ MSVIEW: LDA $D012       ; a phasor can consume the view slot: defer heavy work
         BCC g_mstime
         RTS
 g_mstime:LDA MSSTATE
+        CMP #16
+        BNE g_msnormal
+        JMP MSPOS
+g_msnormal:
         CMP #$04
         BCC g_msactive
         JMP MSFINISH
@@ -4290,7 +4298,7 @@ g_mvgo: LDA MSSTATE
         LDA #$01
         STA MSRAD
         STA MSBIAS
-        LDA #$02
+        LDA #16
         STA MSSTATE
         LDA #$87
         STA MSGCOL
@@ -4352,7 +4360,15 @@ g_msc3: STA (CDST),Y
         JMP MSRING
 
 g_msv3: JSR MSPSTEP
-g_msclock:INC MSCLOCK
+; The enemy entry sweep formerly overlapped the rings. After positioning it has
+; ended; reserve one frame in sixteen to retain the original DMA growth rate.
+g_msclock:LDA MSKIND
+        ASL A
+        BNE g_msclocktick
+        LDA EFRM
+        AND #$0F
+        BEQ g_msret
+g_msclocktick:INC MSCLOCK
         LDA MSRUN
         BNE g_msd
         LDX MSRAD
@@ -4453,7 +4469,7 @@ g_msdone:LDA #$00
         STA MSRUN
 g_msout:RTS
 
-MSSTATE:.BYTE 0         ; 0 idle, 1 init, 2 colours, 3 approach, 4 end, 5 wipe, 6 death
+MSSTATE:.BYTE 0         ; 0 idle, 1 init, 2 colours, 3 rings, 4 end, 5 wipe, 6 death; 16 scanner
 MSKIND: .BYTE 0         ; $80 hostile ($E2=1), $FF friendly ($E2=0)
 MSROW:  .BYTE 0
 MSRAD:  .BYTE 1
@@ -4914,8 +4930,8 @@ MRVIEW:LDA $D012
         CMP #11
         BCC g_mrrun
         JMP MRCLEAN
-g_mrrun:JSR MRNOISE
-        JMP MRREPAIR
+g_mrrun:JSR MRREPAIR    ; advance the frame clock before optional noise work
+        JMP MRNOISE
 g_mrout:RTS
 MBEAM:  JSR MBDEAD
         CMP #168
@@ -5283,6 +5299,176 @@ g_mrflfill:STA (CDST),Y
 g_mrflout:RTS
 MREND:
 
+
+; Original $8C44-$8D56 preliminary positioning. Five loop passes/frame,
+; $9054 settling ~194 DMA frames, then $0F7F's five-count wait ~70 frames.
+; Both init-only load streams are staged beneath I/O; the KERNAL's LOAD cannot
+; reach $FF00-$FFFF (its store loop ends when the address reaches $FF), so the
+; positioning tail is copied from $D100 while the RAM beneath I/O is selected.
+MSPOSSRC = $D100
+MSUNPACK:
+        LDA #$00
+        STA CSRC
+        LDA #$D0
+        STA CSRC+1
+        LDA #$3F        ; second stream and the tail: RAM beneath I/O, init only
+        STA $FF00
+        JSR g_upb
+        LDX #$00
+mp_copy:LDA MSPOSSRC,X
+        STA MSPOS,X
+        INX
+        CPX #245
+        BNE mp_copy
+        LDA #$3E
+        STA $FF00
+        RTS
+MSCOUNT:LDA M_STATE,X
+        BMI mp_basecount
+        LDA M_COUNT,X
+        RTS
+mp_basecount:LDA #$01
+        RTS
+MSPOSON:LDA #<MSSTATE
+        STA HVBR+1
+        LDA #>MSSTATE
+        STA HVBR+2
+        RTS
+MSPOSOFF:LDA #<HYPON
+        STA HVBR+1
+        LDA #>HYPON
+        STA HVBR+2
+        LDA #$00
+        RTS
+MSPREAD:JMP lr7
+MSPDRIFT:
+        SEC
+        JSR EDRIFT
+        JMP MSPREAD
+MSARRIVE:
+        JSR ARRIVE
+        LDA MSSTATE
+        BEQ mp_return
+        LDA HSCAN
+        BEQ mp_default
+        LDX #17
+mp_restore:LDA HSLOT,X
+        STA ENX,X
+        DEX
+        BPL mp_restore
+        RTS
+mp_default:
+        LDA #$88
+        STA ENX+1
+        STA ENY+1
+        LDA #$94
+        STA ENZ+1
+mp_return:RTS
+
+MSPOS:  LDA MAPSHOWN
+        ORA WIPE
+        ORA HYPON
+        BNE mp_return
+        LDA MSROW
+        BNE mp_run
+        INC MSROW
+        LDA #$01
+        STA LRMODE
+        STA GSIZE
+        JSR RADMODE
+        JSR APINIT
+        LDA EVIS
+        AND #$EF
+        STA EVIS
+        LDA #$00
+        STA BLIPON
+        STA MSCLOCK
+        STA MSRUN
+        STA APCNT
+        STA FLATCH
+        RTS
+mp_run: CMP #$02
+        BCS mp_wait
+        LDA #$05
+        STA MSRUN
+mp_pass:LDA $D012
+        CMP #140
+        BCS mp_return
+        DEC APCNT
+        LDA APCNT
+        AND #$1F
+        BNE mp_steer
+        JSR MSPDRIFT
+mp_steer:
+        LDA APCNT
+        AND #$03
+        BNE mp_depth
+        LDA FLATCH
+        BNE mp_depth
+        LDX #$00
+        JSR DIST
+        BMI mp_unlocked
+        LDA #$01
+        STA INFRONT
+        LDA LRDIG
+        ORA LRDIG+1
+        ORA LRDIG+2
+        ORA LRDIG+3
+        CMP #$70
+        BNE mp_unlocked
+        INC FLATCH
+        LDA #$07
+        STA HUDBRD
+        BNE mp_depth
+mp_unlocked:
+        JSR STEER
+mp_depth:
+        JSR ZSTEP
+        LDX #$00
+        JSR DIST
+        BMI mp_next
+        LDA DSTH
+        CMP #$06
+        BCS mp_next
+        INC MSROW
+        LDA #194
+        STA MSCLOCK
+        RTS
+mp_next:DEC MSRUN
+        BNE mp_pass
+        RTS
+mp_wait:LDA MSCLOCK
+        AND #$03
+        BNE mp_waittick
+        JSR MSPDRIFT
+mp_waittick:DEC MSCLOCK
+        BEQ mp_expire
+        RTS
+mp_expire:
+        INC MSROW
+        LDA #70
+        STA MSCLOCK
+        LDA MSROW
+        CMP #$04
+        BCS mp_done
+        RTS
+mp_done:LDA #$00
+        STA MSROW
+        JSR MSPOSOFF
+        STA GSIZE
+        STA ENZ+1
+        STA LRMODE
+        STA MSRUN
+        LDA EVIS
+        AND #$EF
+        STA EVIS
+        JSR HRADCLR
+        JSR RADMODE
+        LDA #$02
+        STA MSSTATE
+        RTS
+
+MSPOSEND:
         * = $3D60
 MRCHARGE:LDA MREN
         BNE g_mrcout
@@ -5351,7 +5537,7 @@ MRNBUDGET:LDA FAST
         TYA
         STA MRNCOUNT
 g_mnbret:RTS
-g_mnbview:LDA #36
+g_mnbview:LDA #40
         STA MRNCOUNT
         CLC
         RTS
