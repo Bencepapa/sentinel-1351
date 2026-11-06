@@ -1489,9 +1489,67 @@ for (const name of Object.keys(Profiles)) {
     K[s.MSKILLED] = 0; K[s.TPF] = 2;
     call(k.m, s.MSBLAST);
     blastRules = blastRules && !!R[0x8C3E] === !!K[s.MSKILLED] &&
-      (base && !R[0x8C3E] ? K[s.TPF] === 6 : K[s.TPF] === 2);
+      (base && !R[0x8C3E] ? K[s.TPF] === 0 : K[s.TPF] === 2);
   }
   check(blastRules, 'mothership destruction: blast gate matches original $BB81 for every sector/centre/phase combination');
+
+  // Issue #16: run the original blast loop with DMA, observing every video frame.
+  // Misses never arm $BAD1; hits paint orange once and leave it until scene cleanup.
+  // The port deliberately spreads that same fill over its available blank slots.
+  const blastTrace = [];
+  for (const kind of [0xFF, 0x80]) for (const phase of [0, 1]) for (const radius of [5, 12]) {
+    const ref = boot('c64game', 'trace'); run(ref.m, ref.hooks, 300);
+    const rm = ref.m, B = rm.ram, hit = phase === 1 && radius >= 12;
+    rm.dma = true;
+    B[0xE1] = 1; B[0xE2] = kind === 0x80 ? 1 : 0;
+    B[0x8ED1] = radius >= 12 ? radius : 0; B[0x953E] = phase;
+    B[0xBAD1] = B[0x8C3E] = B[0x160A] = 0;
+    rm.colorRam.fill(kind === 0xFF ? 6 : 2, 0xA0, 0x2A8);
+    const initial = Buffer.from(rm.colorRam.subarray(0xA0, 0x2A8));
+    const border = rm.vic[0x20], background = rm.vic[0x21];
+    call(rm, 0xBB70);
+    // JSR $BBE4 / JMP $0300: only the blast, with IRQs masked, as direct callers use it.
+    B.set([0x20,0xE4,0xBB,0x4C,0,3],0x300); rm.cpu.pc = 0x300; rm.cpu.p |= 4;
+    const frames = []; let referenceOK = true;
+    for (let f = 0; f < 24; f++) {
+      rm.runFrame();
+      const colour = Buffer.from(rm.colorRam.subarray(0xA0,0x2A8));
+      frames.push({frame:f, colour:[...colour], border:rm.vic[0x20], background:rm.vic[0x21], blast:B[0xBAD1]});
+      referenceOK &&= hit ? colour.every(x => x === 8) : colour.equals(initial);
+      referenceOK &&= rm.vic[0x20] === border && rm.vic[0x21] === background;
+    }
+    check(referenceOK && !!B[0x8C3E] === hit,
+      `game: original ${kind===0xFF?'friendly':'enemy'} radius ${radius} phase ${phase}: every blast frame ${hit?'orange':'unchanged'}, border/background unchanged`);
+
+    const g = scene(kind), {m,S,A} = g;
+    A[S.MSRAD] = radius; A[S.MSPHASE] = phase; A[S.MSPCOUNT] = 255;
+    A[S.MSKILLED] = 0; A[S.TPF] = 2; A[S.TPKX] = 3; A[S.torpj] = 0x20;
+    m.colorRam.fill(kind === 0xFF ? 6 : 2,0xA0,0x2A8);
+    call(m,S.MSBLAST);
+    let portOK = true, late = 0, orangeFrame = -1;
+    const portFrames = [];
+    for (let f = 0; f < 120 && (f < 12 || A[S.TPF]); f++) {
+      m.runFrame(); late += lateWrites(m);
+      const colour = Buffer.from(m.colorRam.subarray(0xA0,0x2A8));
+      const view = [m.vicStart[0x20],m.vicStart[0x21]], v = m.vicLog;
+      for (let i=0;i<v.length;i+=4) if (v[i]<=100 && (v[i+2]===0x20 || v[i+2]===0x21)) view[v[i+2]-0x20]=v[i+3];
+      portFrames.push({frame:f, colour:[...colour], border:view[0], background:view[1], blast:A[S.TPF]});
+      portOK &&= view[0] === border && view[1] === background;
+      // Compare every cell with the original; allow the existing bounded row-fill latency.
+      portOK &&= hit ? colour.every((x,i) => x === frames[Math.min(f,frames.length-1)].colour[i] || (orangeFrame < 0 && x === initial[i])) : colour.equals(Buffer.from(frames[Math.min(f,frames.length-1)].colour));
+      if (hit && colour.every(x => x === 8) && orangeFrame < 0) orangeFrame = f;
+    }
+    check(portOK && (hit ? orangeFrame >= 0 && orangeFrame <= 6 && A[S.TPF] === 0 : A[S.TPF] === 0 && !A[S.MSKILLED]),
+      `game: ${kind===0xFF?'friendly':'enemy'} radius ${radius} phase ${phase}: frame palettes match original${hit?' after bounded fill':''}`);
+    check(late===0 && A[S.OVRUN]===0, `game: base blast has ${late} late splits, ${A[S.OVRUN]} overruns`);
+    blastTrace.push({kind,phase,radius,hit,original:frames,port:portFrames});
+  }
+  fs.writeFileSync(path.join(OUT,'base-blast-colour-trace.json'),JSON.stringify(blastTrace));
+
+  K[s.MSSTATE] = 0; K[s.MSKILLED] = 1; K[s.TPF] = 5; K[s.TPCR] = 13;
+  call(k.m,s.MSBLEND);
+  check(K[s.TPF] === 5 && K[s.TPCR] === 0,
+    'game: a previous base kill does not suppress the next ordinary proton colour restoration');
 
   // The original toggles after 25 calls; random colour is restricted to enemy phase 0.
   let phaseRules = true;

@@ -38,7 +38,7 @@ It is the browser page's default program.
   points rush to three places with a sound (`$1AF2`), three fighters appear there,
   the warning sounds and the dogfight starts. A squadron of fewer than 3 becomes 3,
   as in the original.
-- In mothership sectors the long range scanner first shows the base's position and X/Y/Z readings. Steering moves it; exact 00 side and 00 up in front locks steering, and depth closes at the original base loop's rate. Fire still shoots, but does not select another target. As in the original, the base is a radar mark without the cyan animated fighter-selection sprite. Near enough in front, the ship settles for about 194 frames, then waits about 70 frames before the rings and rectangular opening grow as in the original. Enemy bases flicker and turn white in alternating phases; friendly bases stay white but share the same hidden phase. A proton destroys a base only if its opening has appeared and the phase is on when the torpedo arrives; a miss only flashes and the approach continues. A kill shows BASESTAR DESTROYED CAPTAIN, a burst and expanding erasing rings, then clears the sector. Every base sequence returns to the map; that sector cannot be selected straight back until you jump elsewhere. A surviving friendly base draws its white tractor rays, types the full-screen eight-system report with coloured scanning blocks and repair beeps, recharges energy, repairs the ship and grants one proton before the map returns. Tractor rays reach the guns; docking restores the cockpit and all sprite shapes for the next fight. An enemy base fires a white incoming proton at radius 25: it cannot be shot down or dodged, takes five shield/system hits, then returns to the map with the same re-entry lock. Friendly bases never fire. Mines are still to come. Opening and closing the map before the sequence ends restarts the approach.
+- In mothership sectors the long range scanner first shows the base's position and X/Y/Z readings. Steering moves it; exact 00 side and 00 up in front locks steering, and depth closes at the original base loop's rate. Fire still shoots, but does not select another target. As in the original, the base is a radar mark without the cyan animated fighter-selection sprite. Near enough in front, the ship settles for about 194 frames, then waits about 70 frames before the rings and rectangular opening grow as in the original. Enemy bases flicker and turn white in alternating phases; friendly bases stay white but share the same hidden phase. A proton destroys a base only if its opening has appeared and the phase is on when the torpedo arrives; a miss preserves the base's colours and the approach continues. A kill shows BASESTAR DESTROYED CAPTAIN, a burst and expanding erasing rings, then clears the sector. Every base sequence returns to the map; that sector cannot be selected straight back until you jump elsewhere. A surviving friendly base draws its white tractor rays, types the full-screen eight-system report with coloured scanning blocks and repair beeps, recharges energy, repairs the ship and grants one proton before the map returns. Tractor rays reach the guns; docking restores the cockpit and all sprite shapes for the next fight. An enemy base fires a white incoming proton at radius 25: it cannot be shot down or dodged, takes five shield/system hits, then returns to the map with the same re-entry lock. Friendly bases never fire. Mines are still to come. Opening and closing the map before the sequence ends restarts the approach.
 - Strategic warnings (a mothership engaged/destroyed, JARALOBA surrounded/lost) now appear on the cockpit message line even with VDC off.
 - The ship (systems, shields, hits, difficulty) is one: the cockpit's model.
 - The second display (VDC) is off in this program for now: its updates take more
@@ -94,7 +94,7 @@ radar mark and frames to the ring start for friendly and enemy bases. The port
 uses a frame-locked approximation of the original loop's rate (up to five passes/frame, with a raster deadline),
 including its exact 00/00 lock and in-front/distance-below-$0600 exit.
 
-Memory left: 0 bytes before TORPA `$F6F9`, 66 bytes in the packed image,
+Memory left: 0 bytes before TORPA `$F6F9`, 68 bytes in the packed image,
 1 byte in the glue. The unchanged 1927-byte animation ends at TSHOT `$FE80`.
 Init-only staging uses `$D000` (STR2Y), `$D100` (positioning tail), `$D200`
 (third packed enemy-proton stream, bounded below `$D400`) and `$D400-$D48D`
@@ -143,3 +143,22 @@ frames, radius stays within one step and the phase countdown within four calls
 (about eight frames); this retains the existing frame-locked approximation.
 Endpoint-during-flight checks cover both base kinds. VICE x128 visual confirmation
 remains with the user.
+
+
+Friendly-base proton colour correction (2026-11-06, issue #16): `$BB81` leaves
+`$BAD1=0` on any miss (phase 0 or no opening), and `$BBE4` immediately returns.
+Neither friendly nor enemy misses change any of the 520 colour RAM cells in
+rows 4-16, the border or background. Phase-1 hits with an opening paint those
+cells orange (8), leaving border/background unchanged; the blast routine itself
+does not restore their colour. The port incorrectly invented an orange flash
+and restoration on misses. MSBLAST now clears TPF on a miss; the legacy MSFLASH
+path is no longer entered. Padding preserves the saved-state entry addresses.
+Successful base blasts now also skip the fighter blast's white restoration,
+matching the original orange palette until scene cleanup.
+DMA regression tests call the original directly, record every frame in
+`js/test/out/base-blast-colour-trace.json`, and compare both kinds, phases and
+pre-opening/opening radii. Hits retain the port's bounded row-fill latency
+(up to seven frames), rather than the original's immediate whole-view fill.
+Outside-$E000 symbol addresses are unchanged, and every build bound remains.
+Current memory left: 0 high-code bytes, 68 packed bytes and 1 glue byte.
+VICE x128 visual confirmation remains with the user.

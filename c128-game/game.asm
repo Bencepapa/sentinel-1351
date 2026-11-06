@@ -3535,7 +3535,7 @@ g_tn1:  LDA #$05        ; over: the view's colours back (TCOL)
         STA TPF
         LDA #$01
         STA HCOLV
-        JMP TCOL0
+        JMP MSBLEND
 TRING0: LDA TPR         ; x = r, y = 0, d = 1 - r
         STA TRX
         LDA #$00
@@ -4680,30 +4680,25 @@ MSBLAST:LDA MSSTATE
         LDA #$00
         STA MSCPEND
         RTS
-g_msbmiss:LDA #$06
+g_msbmiss:LDA #$00      ; $BB81/$BBE4: a miss does not arm the blast or paint colours
         STA TPF
-        LDA #$08
-        STA HCOLV
-        JMP TCOL0
+        RTS
+        ; Keep downstream entry points fixed for existing saved-state replays.
+        .BYTE $EA,$EA,$EA,$EA,$EA,$EA,$EA
 g_msbout:RTS
-MSFLASH:LDA TPF
-        PHA
-        JSR TCOL
-        PLA
-        LDX TPF
-        BNE g_msfout
-        CMP #$06
-        BNE g_msfout
-        LDA #$07
+MSFLASH:JMP TCOL        ; legacy dispatch target; misses now finish at MSBLAST
+; $BC48 ends a successful base blast without restoring colour RAM.
+MSBLEND:LDA MSSTATE
+        CMP #$04        ; only the live base-kill sequence; old kill flags can persist
+        BNE g_msblnormal
+        LDA #$00
         STA TPF
-        LDA #$06
-        LDX MSKIND
-        CPX #$80
-        BNE g_msfc
-        LDA #$02
-g_msfc: STA HCOLV
-        JMP TCOL0
-g_msfout:RTS
+        RTS
+g_msblnormal:JMP TCOL0
+        ; Preserve every subsequent entry point, including saved-state ETSPR.
+        .BYTE $EA,$EA,$EA,$EA,$EA,$EA,$EA,$EA
+        .BYTE $EA,$EA,$EA,$EA,$EA,$EA,$EA,$EA
+        .BYTE $EA,$EA,$EA,$EA,$EA
 
 ; Finish states: 4 wait for proton, 5 wipe, 6 erasing rings; 7+ friendly docking.
 MSFINISH:LDA TPF

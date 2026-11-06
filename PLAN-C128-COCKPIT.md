@@ -69,7 +69,7 @@ Left, in a suggested order (each with what is already known):
   the bad lines: use an invalid VIC mode (`$D011 = $7B`, ECM+BMM, black), not
   DEN=0, which removes the line-75 bad line the top split is timed by.
 - **Memory is the bottleneck.** Now: `$E000` code 0 bytes free (to TORPA
-  `$F6F9`), packed image 66 bytes before cockpit art `$7680`, glue 1 byte.
+  `$F6F9`), packed image 68 bytes before cockpit art `$7680`, glue 1 byte.
   TORPA's 1927 bytes end exactly at TSHOT `$FE80`; its decoded art is unchanged.
   The main image is packed at `$5E00`. STR2Y is staged at `$D000-$D051`, the
   245-byte positioning tail at `$D100-$D1F4`, and a third packed enemy-proton
@@ -487,8 +487,9 @@ Proton rule and phase (destroying either kind of base):
 - A miss leaves `$BAD1=0`: the approach continues. This includes shots before
   radius 12 and friendly-base shots in the hidden phase 0. The user confirmed
   repeated misses followed by friendly repair in VICE. `MSBLAST` implements
-  this truth table; `MSFLASH` flashes/restores colour RAM without erasing the
-  base or ending its approach. Phase/radius are sampled on arrival, not launch.
+  this truth table; a miss ends the proton immediately, preserving colour RAM,
+  border and background and continuing the approach. Phase/radius are sampled
+  on arrival, not launch.
 - `$953F` runs every 32 passes, toggling `$953E` after 25 calls. `$8ED2` starts
   the phase randomly and the first period randomly in 1-64 calls. Enemy phase
   0 sets a random `$1x` matrix colour every call; phase 1 uses `$11`. Friendly
@@ -773,3 +774,22 @@ frames, radius stays within one step and the phase countdown within four calls
 (about eight frames); this retains the existing frame-locked approximation.
 Endpoint-during-flight checks cover both base kinds. VICE x128 visual confirmation
 remains with the user.
+
+
+Friendly-base proton colour correction (2026-11-06, issue #16): `$BB81` leaves
+`$BAD1=0` on any miss (phase 0 or no opening), and `$BBE4` immediately returns.
+Neither friendly nor enemy misses change any of the 520 colour RAM cells in
+rows 4-16, the border or background. Phase-1 hits with an opening paint those
+cells orange (8), leaving border/background unchanged; the blast routine itself
+does not restore their colour. The port incorrectly invented an orange flash
+and restoration on misses. MSBLAST now clears TPF on a miss; the legacy MSFLASH
+path is no longer entered. Padding preserves the saved-state entry addresses.
+Successful base blasts now also skip the fighter blast's white restoration,
+matching the original orange palette until scene cleanup.
+DMA regression tests call the original directly, record every frame in
+`js/test/out/base-blast-colour-trace.json`, and compare both kinds, phases and
+pre-opening/opening radii. Hits retain the port's bounded row-fill latency
+(up to seven frames), rather than the original's immediate whole-view fill.
+Outside-$E000 symbol addresses are unchanged, and every build bound remains.
+Current memory left: 0 high-code bytes, 68 packed bytes and 1 glue byte.
+VICE x128 visual confirmation remains with the user.
