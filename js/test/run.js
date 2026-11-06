@@ -1230,17 +1230,27 @@ for (const name of Object.keys(Profiles)) {
   A[S.MSKIND]=0x80;m.sidLog.length=0;call(m,S.ETSTEP);const launch=sid(m);
   R[0xCF01]=25;R[0xCF02]=0;R[0xFD]=0;R.fill(100,0x39,0x41);R[0x844F]=40;R[0xF432]=R[0xF433]=0;
   A.fill(100,S.SYSHP,S.SYSHP+8);const hp=A.subarray(S.SYSHP,S.SYSHP+8).reduce((a,b)=>a+b),hits=A[S.HITS];
-  let pixels=true,positions=true,launchMatches=false;
+  const player=boot('game','trace');run(player.m,player.hooks,60);
+  const P=player.m.ram,PS=player.p.symbols;
+  // Decode the matching player frame independently through the player's decoder.
+  player.m.read=function(a){return a===0xD012?0:C128.prototype.read.call(this,a);};
+  let pixels=true,positions=true,playerPixels=true,launchMatches=false;
   for(let i=0;i<31;i++) {
     o.m.sidLog.length=0;m.sidLog.length=0;call(o.m,0xCF04);
     if(i===0)launchMatches=launch===sid(o.m);
     if(i){A[S.MSRAD]=26;A[S.ETACC]=255;call(m,S.ETSTEP);}call(m,S.ETSPR);
     pixels&&=Buffer.from(A.subarray(0x6000,0x6080)).equals(Buffer.from(R.subarray(0x5140,0x51C0)));
-    positions&&=m.vic[0x00A]===R[0xF2]&&m.vic[0x00C]===R[0xF4]&&m.vic[0x00B]===0xA0&&m.vic[0x00D]===0xA0;
+    P[PS.TPSRC]=A[S.ETLO+31-i];P[PS.TPSRC+1]=A[S.ETHI+31-i];P[PS.TPO]=0;
+    call(player.m,PS.TDEC);
+    playerPixels&&=Buffer.from(A.subarray(0x6000,0x603F)).equals(Buffer.from(P.subarray(0x7CC0,0x7CFF)))&&
+      Buffer.from(A.subarray(0x6040,0x607F)).equals(Buffer.from(P.subarray(0x7D00,0x7D3F)));
+    // Original shadows are X/Y pairs, not Y/X. The shapes stack vertically.
+    positions&&=A[S.SPRPTR+5]===0x80&&A[S.SPRPTR+6]===0x81&&
+      m.vic[0x00A]===R[0xF1]&&m.vic[0x00C]===R[0xF3]&&m.vic[0x00B]===R[0xF2]&&m.vic[0x00D]===R[0xF4];
   }
-  check(pixels,'game: all 31 enemy proton frames exactly match original reverse $AF80-$A080 art');
+  check(pixels&&playerPixels,'game: all 31 enemy proton frames match original and player sprite shape bytes');
   check(positions&&m.vic[0x02C]===1&&m.vic[0x02D]===1&&(m.vic[0x01D]&0x60)===0x60&&!(m.vic[0x017]&0x60),
-    'game: original white sprites 5/6 at $8C/$A1,$A0, horizontal expansion only');
+    'game: original white sprites 5/6 stacked at $A0,$8C/$A1, horizontal expansion only');
   check(launchMatches,'game: enemy proton launch SID writes match original $BBB2 exactly');
   check(sid(m)===sid(o.m),'game: enemy proton impact SID writes match original $3350 exactly');
   check(A[S.ETSTATE]===2&&A[S.HITS]-hits===5&&A[S.SHLD]===35&&R[0xF432]===5&&R[0x844F]===35&&
@@ -1253,6 +1263,30 @@ for (const name of Object.keys(Profiles)) {
   // $FD guards damage in the original; the deflector key is available only in hyperspace.
   R[0xFD]=1;R[0xCF01]=1;R[0xCF02]=1;R[0xCF03]=1;R[0x5D]=0x80;R[0x5E]=0xA0;call(o.m,0xCF04);
   check(R[0xF432]===5,'game: original forced deflector flag suppresses all five damage calls');
+  // Replay the reported VICE setup with DMA, overlaying only the same-size fix:
+  // save states contain the old program bytes as well as the game state.
+  const saved=JSON.parse(fs.readFileSync(path.join(ROOT,'../briefs/img-torpedo/before-torpedo.state.json'),'utf8'));
+  const replay=boot('game','trace'),sm=replay.m,SA=sm.ram;
+  sm.loadState(sm.stateFromText(JSON.stringify(saved.state)));sm.dma=true;
+  SA.set(A.subarray(S.ETSPR,S.ETSOUND),S.ETSPR);
+  const trace=[];let replayArt=true,replayLayout=true;
+  const raw=fs.readFileSync(path.join(ROOT,'../c128-gui/ref/torpedo-a000.bin'));
+  for(let f=0;f<150;f++) {
+    sm.runFrame();
+    if(SA[S.ETSTATE]!==1)continue;
+    const n=SA[S.ETN]+1,bytes=Buffer.from(SA.subarray(0x6000,0x6080));
+    trace.push({frame:f,artFrame:n,pointers:Array.from(SA.subarray(S.SPRPTR+5,S.SPRPTR+7)),
+      xy:[sm.vic[10],sm.vic[11],sm.vic[12],sm.vic[13]],expandX:sm.vic[29],expandY:sm.vic[23],bytes:bytes.toString('hex')});
+    replayArt&&=bytes.equals(raw.subarray(n*128,(n+1)*128));
+    // Activation occurs in the blank; the next view hook installs the sprites.
+    if(trace.length>1)replayLayout&&=SA[S.SPRPTR+5]===0x80&&SA[S.SPRPTR+6]===0x81&&
+      sm.vic[10]===0xA0&&sm.vic[12]===0xA0&&sm.vic[11]===0x8C&&sm.vic[13]===0xA1&&
+      (sm.vic[29]&0x60)===0x60&&!(sm.vic[23]&0x60);
+    if(n===12)snap(sm,'enemy-proton-saved-state');
+  }
+  fs.writeFileSync(path.join(OUT,'enemy-proton-saved-state-trace.json'),JSON.stringify(trace,null,2));
+  check(trace.length>30&&replayArt&&replayLayout,
+    'game: saved-state DMA replay preserves shape bytes and vertical sprite layout every attack frame');
   // Measure the original's actual loop with DMA, including its repeated $19 re-arming.
   const ref=boot('c64game','trace'),rm=ref.m,RR=rm.ram;run(rm,ref.hooks,300);
   run(rm,ref.hooks,300,i=>{rm.mouse.left=i<10||(i>=150&&i<160);});

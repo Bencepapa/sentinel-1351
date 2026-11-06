@@ -663,8 +663,8 @@ Ported. The original arms at ring radius `$19`, only for an enemy base, and
 repeatedly clears `$CF02` while still at that radius. Each subsequent `$CF04`
 therefore restarts `$BBB2`'s launch noise and the largest animation frame until
 the ring grows. Then 31 frames run backwards, `$AF80` through `$A080` inclusive
-(not `$A000`), into shapes `$45/$46`. Sprites 5/6 are white at x `$8C/$A1`,
-y `$A0`, expanded horizontally only, single colour and in front of the bitmap.
+(not `$A000`), into shapes `$45/$46`. Sprites 5/6 are white at x `$A0`,
+y `$8C/$A1`, expanded horizontally only, single colour and in front of the bitmap.
 The endpoint sets the ship-hit flash, plays `$3350` and calls `$84D7` five times:
 five shield points and five random working-system points. The base survives;
 the rings finish, the map opens automatically, and immediate base re-entry locks.
@@ -747,3 +747,14 @@ regression check requires exact restoration outside the band, valid gray shades
 inside it and identical band rows, rather than the same animation phase. Docking
 advances its report clock before optional noise work; the view noise budget is
 40 iterations, keeping the existing typing, charging and DMA-rate checks intact.
+
+Enemy-proton layout correction (2026-11-06): original shadows `$F1/$F2` and
+`$F3/$F4` are X/Y pairs. Sprites 5/6 both use X `$A0`, with Y `$8C`/`$A1`:
+the two 21-row shapes stack vertically. The previous port transposed X/Y,
+placing the lower half beside the upper half. ETSPR now writes the correct
+registers with identical code size/cycles; decode order, pointers, art and
+horizontal-only expansion are unchanged. Regression checks compare all 31
+frames with original `$CF04` and player TDEC, and replay the supplied pre-launch
+save state with DMA, dumping per-frame pointers, bytes, X/Y and expansion to
+`js/test/out/enemy-proton-saved-state-trace.json`. Memory margins remain 0 high,
+64 packed and 1 glue byte; all bounds remain enabled.

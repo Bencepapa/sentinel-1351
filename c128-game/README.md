@@ -117,3 +117,14 @@ player proton) and 50 under continuous steering/fire because its approach drawin
 restart its launch twice in one frame; the port restarts once per frame while
 the ring remains at radius 25. Please compare animation, hit flash/sound and
 the following map in VICE x128.
+
+Enemy-proton layout correction (2026-11-06): original shadows `$F1/$F2` and
+`$F3/$F4` are X/Y pairs. Sprites 5/6 both use X `$A0`, with Y `$8C`/`$A1`:
+the two 21-row shapes stack vertically. The previous port transposed X/Y,
+placing the lower half beside the upper half. ETSPR now writes the correct
+registers with identical code size/cycles; decode order, pointers, art and
+horizontal-only expansion are unchanged. Regression checks compare all 31
+frames with original `$CF04` and player TDEC, and replay the supplied pre-launch
+save state with DMA, dumping per-frame pointers, bytes, X/Y and expansion to
+`js/test/out/enemy-proton-saved-state-trace.json`. Memory margins remain 0 high,
+64 packed and 1 glue byte; all bounds remain enabled.

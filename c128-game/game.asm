@@ -5604,13 +5604,13 @@ et_show:LDA #$80
         STA SPRPTR+5
         LDA #$81
         STA SPRPTR+6
-        LDA #$8C
-        STA $D00A
-        LDA #$A1
-        STA $D00C
-        LDA #$A0
+        LDA #$8C        ; original $F1/$F2 are X/Y: two vertically stacked shapes
         STA $D00B
+        LDA #$A1
         STA $D00D
+        LDA #$A0
+        STA $D00A
+        STA $D00C
         LDA #1
         STA $D02C
         STA $D02D
