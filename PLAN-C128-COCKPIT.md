@@ -18,33 +18,28 @@ sector, hyperspace (path, streaks, energy, countdown, meteors, dodging, the
 deflector, the hyperspace cursor), the proton torpedo, the mothership sequences
 (the approach, destroying a base with a proton, the friendly base's tractor beam
 and repair, the automatic map afterwards and the base sector's re-entry lock),
+the enemy base's incoming proton (animation, launch restarts, five hits and return),
 the map's battle messages on the cockpit's message line, and the base's preliminary
 positioning on the long range scanner before its rings.
 
 Left, in a suggested order (each with what is already known):
 
-1. **The enemy base's torpedo**: `$916C` arms `$CF01` at radius `$19`; `$CF04`
-   (every 16 loop passes) copies 31 frames backwards from `$AF80` to `$A000`
-   into `$5140` (shapes `$45` / `$46`, the same art as our `TORPA`), expanded
-   white sprites 5 / 6 at x `$8C` / `$A1`; `$CF8C` applies five hits. Active for
-   about 43 DMA frames in the measured original. Open: can it be shot or dodged?
-   After it the map comes up by itself (`MSRETURN`, normal endpoint, locked).
-2. **The minefield** (`$71-$7C`, `$CCDF` / `$CD27`). The user's observations of the
+1. **The minefield** (`$71-$7C`, `$CCDF` / `$CD27`). The user's observations of the
    original: stars only in a horizontal band; the star field cannot be steered
    once the right direction is locked; mines can stay stuck on the screen (an
    original bug).
-3. **Game end**: death (shields / systems), JARALOBA CEASES TO EXIST (the message
+2. **Game end**: death (shields / systems), JARALOBA CEASES TO EXIST (the message
    is shown, game over is not: `$DD`, `$3E7D`, `$F431`), winning, ratings.
-4. **Hyperspace**: the abort (Crsr) and a destroyed hyperspace coordinator.
-5. **What the other destroyed systems disable**, and their messages. So far the
+3. **Hyperspace**: the abort (Crsr) and a destroyed hyperspace coordinator.
+4. **What the other destroyed systems disable**, and their messages. So far the
    scanners, the sequencer and the tracking computer act on their counters.
-6. **Fighters warping in** when lingering in an empty sector (the manual; `$F96B`).
-7. **Thrust** (W, `$FEA7`).
-8. Small: opening and closing the map during an unfinished approach restarts it;
+5. **Fighters warping in** when lingering in an empty sector (the manual; `$F96B`).
+6. **Thrust** (W, `$FEA7`).
+7. Small: opening and closing the map during an unfinished approach restarts it;
    the destruction uses two particle bursts where the original has four; a
    friendly kill also sets the map's DEAD flag (the original `$8E42` only clears
    the cell; check what the original's SURROUND then does on that empty cell).
-9. The C64 patch: the hyperspace cursor (about 90-190 bytes; no room in the
+8. The C64 patch: the hyperspace cursor (about 90-190 bytes; no room in the
     1351 patch yet).
 
 ## Handing the work on (for another agent)
@@ -73,21 +68,19 @@ Left, in a suggested order (each with what is already known):
   230-245, cycles 16-55) and `OVRUN`; both must stay 0. A blanked screen must keep
   the bad lines: use an invalid VIC mode (`$D011 = $7B`, ECM+BMM, black), not
   DEN=0, which removes the line-75 bad line the top split is timed by.
-- **Memory is the bottleneck.** Now: `$E000` code 97 bytes free (to TORPA
-  `$F600`), the packed image 41 bytes before the cockpit art (`$7680`), the glue
-  1 byte. The `$E000` image is packed (`lz_pack`) at `$5E00` and unpacked by
-  `GUNPK2` at init; a second stream (STR2Y), staged beneath I/O at `$D000-$D051`, unpacks
-  over the first one's start with MMU `$3F` during init only.
-  The preliminary positioning tail is staged beneath I/O at `$D100-$D1F4` and copied
-  into `$E000` after both streams are unpacked, while `$3F` is still selected.
-  (The KERNAL's LOAD ends when the address reaches `$FF00`, so nothing may be
-  staged at `$FF05-$FFF9`; doing so left the KERNAL's jump table in `MSPOS` and
-  froze VICE on arrival.) Torpedo RLE now minimizes each frame, with bounded token
-  sizes; the PRG now ends at `$D1F4`.
-  Many small helpers sit in checked padding gaps (see the build's bound list).
-  The next feature will likely need another rearrangement (ideas: more data in
-  further packed streams unpacked into space that is free after init; sharing
-  tables; generating data in code). Keep every bound check in `build.py`.
+- **Memory is the bottleneck.** Now: `$E000` code 0 bytes free (to TORPA
+  `$F6F9`), packed image 64 bytes before cockpit art `$7680`, glue 1 byte.
+  TORPA's 1927 bytes end exactly at TSHOT `$FE80`; its decoded art is unchanged.
+  The main image is packed at `$5E00`. STR2Y is staged at `$D000-$D051`, the
+  245-byte positioning tail at `$D100-$D1F4`, and a third packed enemy-proton
+  stream at `$D200` (bounded below `$D400`). MSUNPACK reads these with MMU `$3F`.
+  After all decoding, 142 bytes staged at `$D400-$D48D` replace the now-dead
+  GUNPACK decoder with frame pointers, mothership state and MSDELAY. UPEND,
+  GSEED and GUNPK2 remain intact. Init uses 2 MHz for these extra streams and
+  restores 1 MHz / MMU `$3E` before returning.
+  The PRG ends at `$D48D`, inside the C128 KERNAL LOAD range (below `$FF00`).
+  Never stage anything at `$FF05-$FFF9`: the KERNAL does not load it. Keep all
+  build bounds, including staging overlaps and reclaimed decoder size.
 - Assembler (`mouse/tools/asm.py`): no `label+n` for forward labels, no long
   branches (use JMP), labels are global (prefix them: `g_xx`, `mt_`, `mr`).
 - Workflow with the user: they test every build in VICE x128 (and the C64
@@ -664,20 +657,49 @@ Memory and integration:
   line-256+16 centre deadline. DMA tests include continuous steering/fire,
   phase changes, successful kills and simultaneous battle messages.
 
-Still deferred: mines `$71-$7C` (`$CCDF/$CD27`),
-enemy torpedo `$CF01/$CF04`, game over,
-ratings and other global consequences beyond the base cell/dead flag. The enemy
-animation shares TORPA's 31 frames, copied backwards from `$AF80` toward
-`$A000` into `$5140` (shapes `$45/$46`) by `$CF04` every 16 loop passes. It
-uses expanded white sprites 5/6 at x `$8C/$A1`, fires at radius `$19`, and
-`$CF8C` applies five hits. In the measured original it was active for roughly 43 frames, not
-ten seconds (the old estimate mistook loop passes for frames). Friendly beam
-requires no active proton, blast or killed flag before repair. Opening/closing
-the map during an unfinished approach still restarts that approach.
+### Enemy base proton ($916C / $CF04 / $CF8C)
+
+Ported. The original arms at ring radius `$19`, only for an enemy base, and
+repeatedly clears `$CF02` while still at that radius. Each subsequent `$CF04`
+therefore restarts `$BBB2`'s launch noise and the largest animation frame until
+the ring grows. Then 31 frames run backwards, `$AF80` through `$A080` inclusive
+(not `$A000`), into shapes `$45/$46`. Sprites 5/6 are white at x `$8C/$A1`,
+y `$A0`, expanded horizontally only, single colour and in front of the bitmap.
+The endpoint sets the ship-hit flash, plays `$3350` and calls `$84D7` five times:
+five shield points and five random working-system points. The base survives;
+the rings finish, the map opens automatically, and immediate base re-entry locks.
+
+There is no incoming-proton hitbox or steering/collision test: phasors cannot
+shoot it down and steering cannot dodge it. `$FD` suppresses damage if forced
+nonzero, but normal controls enable the deflector only in hyperspace. The port's
+HDEF guard has the same forced-state effect; the normal base approach clears it.
+A destroyed base does not launch or continue an attack. Friendly bases never fire.
+
+Measured by running the original's `$909D` loop with DMA: active 43 frames,
+including its radius-25 restarts. The port frame-locks the original pass counts:
+43 DMA frames normally, 50 under sustained phasor/steering load (the ring takes
+longer to grow past 25). It restarts once per frame while at 25, rather than the
+original's variable loop-pass cadence (occasionally twice in a frame). Launch
+and impact SID register sequences and every decoded frame match exactly.
+
+ETSPR uses the mothership view hook and a SPRCROSS sprite wrapper (also through
+HTSPR during the player proton), and installs ETVB only at radius 25; the decoder runs in the blank alongside MSVB. Flight/fight idle hooks and
+all existing code/symbol addresses outside `$E000` remain unchanged. If the player proton overlaps, the blank skips the stars
+while both jobs run to preserve the split budget. The enemy borrows `$6000-$607F`, independent of the player's proton slots, invalidates
+SHLT/SHLK, and the next squadron reloads all fighter shapes from their masters.
+DMA tests cover neutral and steering/fire runs, exact art/positions/SID/hits,
+forced deflector, destroyed/friendly gates, protected sprite regions, full shape
+reload, simultaneous player/enemy protons, map/lock, sprite visibility through
+phasor work and zero late writes / OVRUN. Arrival test injections are synchronized between completed frames so they do not add cycles to a suspended
+RADSTEP in mid-blank; timing checks themselves are unchanged.
+
+Still deferred: mines `$71-$7C` (`$CCDF/$CD27`), game over, ratings and other
+global consequences beyond the base cell/dead flag. Friendly beam requires no
+active proton, blast or killed flag before repair. Opening/closing the map
+during an unfinished approach still restarts that approach.
 
 ## Open questions
 
-- Can the enemy mothership's torpedo be shot down or dodged?
 - A raster IRQ for the lower strip would remove its last late frames (about 0.2% in a
   tracked fight); the polled schedule is good enough for now.
 

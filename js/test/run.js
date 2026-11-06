@@ -1211,6 +1211,97 @@ for (const name of Object.keys(Profiles)) {
   }
 }
 
+// ---- game: enemy base proton, original $916C/$CF04 ----------------------------
+{
+  function call(m,a) {
+    const c=m.cpu,pc=c.pc,sp=c.sp,p=c.p;c.push(255);c.push(243);c.pc=a;c.p|=4;
+    let n=0;while(c.pc!==0xFFF4&&n++<2e6){c.step();if(c.jam)throw Error(c.jam);}
+    if(n>=2e6)throw Error('enemy proton call did not return');c.pc=pc;c.sp=sp;c.p=p;
+  }
+  const sid=m=>m.sidLog.filter((_,i)=>i%3!==0).join();
+  const late=m=>{let n=0,v=m.vicLog;for(let i=0;i<v.length;i+=4)
+    if((v[i+2]===0x20||v[i+2]===0x21)&&((v[i]>=50&&v[i]<=76)||(v[i]>=230&&v[i]<=245))&&v[i+1]>=16&&v[i+1]<=55)n++;return n;};
+  const o=boot('c64game','trace'),g=boot('game','trace'),m=g.m,A=m.ram,S=g.p.symbols,R=o.m.ram;
+  run(o.m,o.hooks,300);m.dma=o.m.dma=true;run(m,g.hooks,60);
+  A[S.MSKIND]=0x80;A[S.MSRAD]=24;call(m,S.ETSTEP);
+  check(!A[S.ETSTATE],'game: enemy proton waits for ring radius $19');
+  A[S.MSKIND]=0xFF;A[S.MSRAD]=25;call(m,S.ETSTEP);
+  check(!A[S.ETSTATE],'game: friendly bases never arm an enemy proton');
+  A[S.MSKIND]=0x80;m.sidLog.length=0;call(m,S.ETSTEP);const launch=sid(m);
+  R[0xCF01]=25;R[0xCF02]=0;R[0xFD]=0;R.fill(100,0x39,0x41);R[0x844F]=40;R[0xF432]=R[0xF433]=0;
+  A.fill(100,S.SYSHP,S.SYSHP+8);const hp=A.subarray(S.SYSHP,S.SYSHP+8).reduce((a,b)=>a+b),hits=A[S.HITS];
+  let pixels=true,positions=true,launchMatches=false;
+  for(let i=0;i<31;i++) {
+    o.m.sidLog.length=0;m.sidLog.length=0;call(o.m,0xCF04);
+    if(i===0)launchMatches=launch===sid(o.m);
+    if(i){A[S.MSRAD]=26;A[S.ETACC]=255;call(m,S.ETSTEP);}call(m,S.ETSPR);
+    pixels&&=Buffer.from(A.subarray(0x6000,0x6080)).equals(Buffer.from(R.subarray(0x5140,0x51C0)));
+    positions&&=m.vic[0x00A]===R[0xF2]&&m.vic[0x00C]===R[0xF4]&&m.vic[0x00B]===0xA0&&m.vic[0x00D]===0xA0;
+  }
+  check(pixels,'game: all 31 enemy proton frames exactly match original reverse $AF80-$A080 art');
+  check(positions&&m.vic[0x02C]===1&&m.vic[0x02D]===1&&(m.vic[0x01D]&0x60)===0x60&&!(m.vic[0x017]&0x60),
+    'game: original white sprites 5/6 at $8C/$A1,$A0, horizontal expansion only');
+  check(launchMatches,'game: enemy proton launch SID writes match original $BBB2 exactly');
+  check(sid(m)===sid(o.m),'game: enemy proton impact SID writes match original $3350 exactly');
+  check(A[S.ETSTATE]===2&&A[S.HITS]-hits===5&&A[S.SHLD]===35&&R[0xF432]===5&&R[0x844F]===35&&
+    hp-A.subarray(S.SYSHP,S.SYSHP+8).reduce((a,b)=>a+b)===5&&A[S.HITFL]&&!A[S.OWNHIT],
+    'game: original five system/shield hits, enemy-hit flash and completed attack');
+  A[S.ETSTATE]=1;A[S.ETN]=1;A[S.ETACC]=255;A[S.HDEF]=1;call(m,S.ETSTEP);
+  check(A[S.HITS]-hits===5,'game: forced port deflector flag also suppresses all five damage calls');
+  A[S.HDEF]=0;A[S.ETSTATE]=0;A[S.MSKILLED]=1;A[S.MSRAD]=25;call(m,S.ETSTEP);
+  check(!A[S.ETSTATE],'game: a destroyed base cannot arm its proton');
+  // $FD guards damage in the original; the deflector key is available only in hyperspace.
+  R[0xFD]=1;R[0xCF01]=1;R[0xCF02]=1;R[0xCF03]=1;R[0x5D]=0x80;R[0x5E]=0xA0;call(o.m,0xCF04);
+  check(R[0xF432]===5,'game: original forced deflector flag suppresses all five damage calls');
+  // Measure the original's actual loop with DMA, including its repeated $19 re-arming.
+  const ref=boot('c64game','trace'),rm=ref.m,RR=rm.ram;run(rm,ref.hooks,300);
+  run(rm,ref.hooks,300,i=>{rm.mouse.left=i<10||(i>=150&&i<160);});
+  rm.mouse.left=false;rm.dma=true;RR[0xE2]=1;RR[0xBAD1]=RR[0xBACE]=RR[0x8C3E]=0;RR[0x89]=1;
+  RR.set([0x4C,0,3],0x300);rm.cpu.push(2);rm.cpu.push(255);rm.cpu.pc=0x909D;
+  let refFirst=-1,refLast=-1;
+  for(let f=0;f<400;f++){rm.runFrame();if(RR[0xCF01]&&refFirst<0)refFirst=f;if(refFirst>=0&&!RR[0xCF01]){refLast=f;break;}}
+  const refFrames=refLast-refFirst;
+  check(refFirst>=0&&refFrames===43,'game: original enemy proton measured at 43 DMA frames, including radius-$19 restarts');
+  // Exercise real scheduling, player input, and the normal endpoint, without bypassing rings.
+  for(const stress of [false,true,'proton']) {
+    const k=boot('game','trace'),m=k.m,A=m.ram,S=k.p.symbols;m.dma=true;run(m,k.hooks,60);
+    A[S.M_STATE+24]=0x80;call(m,S.SECTORIN);
+    const protonDigit=A[0x485B];
+    const protectedRegions=[[0x6080,0x63C0],[0x7CC0,0x8000],[0x2900,0x2CC0],[0x3800,0x3BC0],[0x4000,0x4400]];
+    const assets=protectedRegions.map(([a,b])=>Buffer.from(A.subarray(a,b)));
+    let first=-1,last=-1,writes=0,shots=false,launches=0,protonAt=-1,visible=0;
+    for(let f=0;f<1100;f++) {
+      if(stress===true&&A[S.MSSTATE]===3){m.mouse.left=true;m.joy2=4;}
+      if(stress==='proton'&&A[S.MSSTATE]===3&&A[S.MSRAD]>=26&&protonAt<0){
+        A[S.MSPHASE]=0;A[S.MSPCOUNT]=255;m.setKey(7,4,true);protonAt=f;
+      }
+      if(protonAt>=0&&f===protonAt+2)m.setKey(7,4,false);
+      m.runFrame();writes+=late(m);shots ||= !!A[S.SHOTON];
+      for(let i=0;i<m.sidLog.length;i+=3)if(m.sidLog[i+1]===1&&m.sidLog[i+2]===10)launches++;
+      if(A[S.ETSTATE]===1&&first<0)first=f;
+      if(first>=0&&f===first+12)snap(m,stress==='proton'?'enemy-proton-overlap':stress?'enemy-proton-fire':'enemy-proton-active');
+      if(first>=0&&A[S.ETSTATE]===2&&last<0)last=f;
+      if(A[S.ETSTATE]===1&&m.vicLog.some((v,i)=>i%4===2&&v===0x15&&(m.vicLog[i+1]&0x60)===0x60))visible++;
+      if(last>=0&&A[S.MAPSHOWN])break;
+    }
+    check(first>=0&&Math.abs(last-first-refFrames)<=10&&launches>=2&&A[S.HITS]===5&&(stress!==true||shots),
+      `game: enemy proton lasts ${last-first} DMA frames (original ${refFrames}), five hits with ${stress==='proton'?'overlapping player proton':stress?'steering/fire':'neutral input'}`);
+    check(visible>=last-first-1,'game: incoming sprites stay visible through phasor and overlapping proton work');
+    check(A[S.MAPSHOWN]&&A[S.MSLOCK]&&!A[S.MSSTATE], 'game: enemy endpoint returns to map and locks base re-entry');
+    check(A[S.sprcj+1]===(S.SPRCROSS&255)&&A[S.sprcj+2]===(S.SPRCROSS>>8)&&A[S.HTSPR+1]===(S.SPRCROSS&255)&&A[S.HTSPR+2]===(S.SPRCROSS>>8),
+      'game: enemy endpoint restores both crosshair hooks with zero idle enemy work');
+    check(writes===0&&A[S.OVRUN]===0,`game: full enemy proton DMA sequence: ${writes} late splits, ${A[S.OVRUN]} overruns`);
+    check(protectedRegions.every(([a,b],i)=>Buffer.from(A.subarray(a,b)).equals(assets[i])),
+      'game: enemy proton preserves other sprite slots, masters, planet and HUD font');
+    if(stress==='proton')check(protonAt>=0&&A[0x485B]===protonDigit-1,'game: player proton uses separate shapes and cannot intercept the enemy proton');
+    snap(m,stress?'enemy-proton-stress-end':'enemy-proton-end');
+    const read=m.read;m.read=function(a){return a===0xD012?80:read.call(this,a);};
+    A[S.SQTYPE]=1;for(let i=0;i<15;i++)call(m,S.GSHLOAD);m.read=read;
+    check(A[S.SHLT]===1&&Buffer.from(A.subarray(0x6000,0x63C0)).equals(Buffer.from(A.subarray(S.TSH1,S.TSH1+960))),
+      'game: next squadron reloads every fighter shape after the enemy proton borrows two slots');
+  }
+}
+
 // ---- mothership approach -----------------------------------------------------
 {
   function call(m, addr, plot) {
@@ -1312,8 +1403,8 @@ for (const name of Object.keys(Profiles)) {
     const reference = originalDuration(kind);
     check(Math.abs(last - first - reference) <= 10, `mothership: DMA growth ${last - first} frames, original ${reference} frames (frame-locked approximation)`);
     check(late === 0 && K[s.OVRUN] === 0, `mothership: DMA approach has ${late} late split writes, ${K[s.OVRUN]} overruns`);
-    check(Buffer.from(K.subarray(s.SYSHP, s.SYSHP + 8)).equals(hp) && Buffer.from(K.subarray(0x485A, 0x485C)).equals(protons) && K[s.M_STATE + idx] === kind,
-      'mothership: no deferred repair, enemy torpedo or mothership destruction runs');
+    check((kind===0x80 ? K[s.HITS]===5 : Buffer.from(K.subarray(s.SYSHP,s.SYSHP+8)).equals(hp)) && Buffer.from(K.subarray(0x485A,0x485C)).equals(protons) && K[s.M_STATE+idx]===kind,
+      'mothership: enemy proton hits five times; friendly approach preserves ship, protons and base');
     const centreAddress = 0x6000 + (100 >> 3) * 320 + (85 >> 2) * 8 + (100 & 7);
     check(((K[centreAddress] >> ((3 - (85 & 3)) * 2)) & 3) === 2 && K[0x44A0] === 0x11 && K[s.MSCPEND] === 0,
       'mothership: the completed opening is filled with white bitmap pixels');
@@ -1326,6 +1417,11 @@ for (const name of Object.keys(Profiles)) {
     call(m, s.M_SELECT); call(m, s.MAPIN);
     check(K[s.MAPSHOWN] === 1 && !K[s.HYPON], 'mothership: firing on the just-completed base sector keeps the map open');
     call(m, s.MAPCLOSE); run(m, g.hooks, 20);
+    // Inject between completed frames, rather than adding a subroutine's cycles
+    // to a RADSTEP already suspended halfway through its vertical-blank work.
+    m.setBreak(s.frame,true);let boundary;
+    while((boundary=m.run())!=='break'&&boundary!=='stopped');
+    m.setBreak(s.frame,false);
     call(m, s.SECTORIN);                 // approach under firing/steering load
     for (let f = 0; f < 500 && (K[s.MSSTATE] === 1 || K[s.MSSTATE] === 16); f++) m.runFrame();
     let stressLate = 0;

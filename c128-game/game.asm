@@ -20,7 +20,7 @@
 ; ships is approached group by group (the cockpit's long range scanner), each
 ; kill lowers the map's COUNT, the last one empties the sector on the map.
 ; Motherships (STATE $80 / $FF) approach as biased concentric rings (MSECTOR).
-; Friendly docking/repair and proton destruction follow the approach; mines and enemy weapons are later work.
+; Friendly repair, proton destruction and the enemy proton follow; mines are later work.
 
 HUDSEC  = $4865         ; the HUD's sector digits (row 2, column 21)
 MATRIX  = $4400         ; the bitmap's colour matrix
@@ -3129,7 +3129,7 @@ TSH2    = $3800         ; type-2 masters (7), reclaimed duplicate map address ta
 TSH3    = $39C0         ; type-3 masters (8), ending at $3BC0
 STR2X   = $3E00         ; type-2 X streams (512), reclaimed disabled-VDC system names
 STR2Y   = $5E00         ; type-2 Y streams (512): the second packed stream (GUNPK2)
-TORPA   = $F600         ; packed proton frames ($A000-$AFFF in the original)
+TORPA   = $F6F9         ; packed proton frames ($A000-$AFFF in the original)
 TSHOT   = $FE80         ; original shot shapes $67/$68, borrowed by the proton
 
 ; ---------------- the proton torpedo ($BAD4-$BC86) ----------------
@@ -3233,26 +3233,8 @@ g_tp9:  DEC $485B       ; one less ($8450, $849E)
         LDA #$79
         STA $485A
         DEC MRPHUND
-g_tpa:  LDA #$0A        ; the launch ($BBB2): noise on voices 1 and 2
-        STA $D401
-        LDA #$80
-        STA $D404
-        STA $D40B
-        LDA #$04
-        STA $D408
-        LDA #$0F
-        STA $D418
-        LDA #$89
-        STA $D405
-        LDA #$6B
-        STA $D40C
-        LDA #$00
-        STA $D406
-        STA $D40D
-        LDA #$81
-        STA $D404
-        STA $D40B
-        LDA #$01        ; the flight
+g_tpa:  JSR ETSOUND
+ETPLAYER:LDA #$01        ; the flight
         STA TPF
         LDA #32
         STA TPN
@@ -4190,7 +4172,7 @@ g_cu1:  LDA HTEST
 H2END:
 
 ; Mothership sector ($FD3B, $8C44); work in the view through shpj, no idle cost.
-; Fighter masters and STR2X use lower RAM; new code fits below TORPA ($F600).
+; Fighter masters and STR2X use lower RAM; new code fits below TORPA ($F6F9).
 MSECTOR:
         LDA #<MAPCLOSE
         STA g_mi8+1
@@ -4204,6 +4186,12 @@ MSECTOR:
         BMI g_ms0
         JMP GSQTYPE
 MSOFF:
+        LDA #<SPRCROSS
+        STA sprcj+1
+        STA HTSPR+1
+        LDA #>SPRCROSS
+        STA sprcj+2
+        STA HTSPR+2
         JSR MSPOSOFF
         LDA #$20
         STA mscent
@@ -4218,6 +4206,7 @@ MSOFF:
         LDA #$00
         STA MSSTATE
         STA MSCPEND
+        STA ETSTATE
         LDA #<MAPSHOWN
         STA gplmode+1
         STA germode+1
@@ -4365,6 +4354,7 @@ g_msv3: JSR MSPSTEP
 g_msclock:LDA MSKIND
         ASL A
         BNE g_msclocktick
+        JSR ETSPR
         LDA EFRM
         AND #$0F
         BEQ g_msret
@@ -4469,23 +4459,22 @@ g_msdone:LDA #$00
         STA MSRUN
 g_msout:RTS
 
-MSSTATE:.BYTE 0         ; 0 idle, 1 init, 2 colours, 3 rings, 4 end, 5 wipe, 6 death; 16 scanner
-MSKIND: .BYTE 0         ; $80 hostile ($E2=1), $FF friendly ($E2=0)
-MSROW:  .BYTE 0
-MSRAD:  .BYTE 1
-MSBIAS: .BYTE 1         ; original operand $3674: +3 hostile, +1 friendly
-MSCLOCK:.BYTE 0
-MSRUN:  .BYTE 0
-MSRX:   .BYTE 0
-MSRY:   .BYTE 0
-MSD:    .BYTE 0
-MSD1:   .BYTE 0
-MSD2:   .BYTE 0
-MSABS:  .BYTE 0
+MSSTATE = GUNPACK+68
+MSKIND = GUNPACK+69
+MSROW = GUNPACK+70
+MSRAD = GUNPACK+71
+MSBIAS = GUNPACK+72
+MSCLOCK = GUNPACK+73
+MSRUN = GUNPACK+74
+MSRX = GUNPACK+75
+MSRY = GUNPACK+76
+MSD = GUNPACK+77
+MSD1 = GUNPACK+78
+MSD2 = GUNPACK+79
+MSABS = GUNPACK+80
 ; DMA-enabled original: growth intervals ~6 frames initially, ~9 at full size.
-; Torpedo animation's extra time is excluded (not part of this task).
-MSDELAY:.BYTE 6,6,6,6,6,6,6,6,6,6,6,6,6,6,7,6,7,6,7,6
-        .BYTE 7,7,7,7,7,8,7,8,7,8,8,8,8,8,9,8,8,9,8,9,9
+; Enemy decoding runs in the blank; rings retain their original frame cadence.
+MSDELAY = GUNPACK+95
 MSFRIEND:.BYTE $40,$40,$40,$40,$40,$40,$40,$40,$40,$40
         .BYTE $45,$4E,$54,$45,$52,$49,$4E,$47,$40,$42,$41,$53,$45,$40,$53,$45,$43,$54,$4F,$52,$40,$FF
 MSHOSTILE:.BYTE $40,$40,$40,$40,$40,$40
@@ -4599,13 +4588,13 @@ g_mcveol:INC MSCROW
         LDA #$00
         STA MSCPEND
         RTS
-MSCPEND:.BYTE 0
-MSCLEFT:.BYTE 0
-MSCRIGHT:.BYTE 0
-MSCROW: .BYTE 0
-MSCEND: .BYTE 0
-MSCOFF: .BYTE 0
-MSCN:   .BYTE 0
+MSCPEND = GUNPACK+83
+MSCLEFT = GUNPACK+84
+MSCRIGHT = GUNPACK+85
+MSCROW = GUNPACK+86
+MSCEND = GUNPACK+87
+MSCOFF = GUNPACK+88
+MSCN = GUNPACK+89
 MSCENDCODE:
 
 ; $953F every 32 passes: four calls per radius interval, frame-locked.
@@ -4864,13 +4853,13 @@ GBTEXT: LDY GBTOUT
         JMP SNDSIREN
 GBTLO:  .BYTE <GBMSG1,<GBMSG2,<GBMSG3,<GBMSG4
 GBTHI:  .BYTE >GBMSG1,>GBMSG2,>GBMSG3,>GBMSG4
-MSPHASE:.BYTE 0
-MSPCOUNT:.BYTE 1
-MSPACC: .BYTE 0
-MSPCOLOR:.BYTE $11
-MSPROW: .BYTE 14
-MSKILLED:.BYTE 0
-MSLOCK: .BYTE 0
+MSPHASE = GUNPACK+81
+MSPCOUNT = GUNPACK+82
+MSPACC = GUNPACK+90
+MSPCOLOR = GUNPACK+91
+MSPROW = GUNPACK+92
+MSKILLED = GUNPACK+93
+MSLOCK = GUNPACK+94
 GBTCOUNT:.BYTE 0
 GBTIN:  .BYTE 0
 GBTOUT: .BYTE 0
@@ -5243,12 +5232,12 @@ g_mrnormal:LDA MRNORMAL,X
         STA LAUNCHD
         JMP MSRETURN
 ; Original report: rows 4,6,..18, name column 0, status column 29.
-MRPHUND:.BYTE 0         ; hundreds of the byte-wide proton supply (HUD shows last two digits)
-MRINDEX:.BYTE 0
-MRSIDE: .BYTE 0
-MRCLOCK:.BYTE 0
-MRCOL:  .BYTE 0
-MROFF:  .BYTE 0
+MRPHUND = GUNPACK+136
+MRINDEX = GUNPACK+137
+MRSIDE = GUNPACK+138
+MRCLOCK = GUNPACK+139
+MRCOL = GUNPACK+140
+MROFF = GUNPACK+141
 MRACC:  .BYTE 0
 MREN:   .BYTE 0
 MRTMP:  .BYTE 0
@@ -5307,6 +5296,7 @@ MREND:
 ; positioning tail is copied from $D100 while the RAM beneath I/O is selected.
 MSPOSSRC = $D100
 MSUNPACK:
+        INC FAST        ; init only: START selected 1 MHz; restore after the streams
         LDA #$00
         STA CSRC
         LDA #$D0
@@ -5320,8 +5310,24 @@ mp_copy:LDA MSPOSSRC,X
         INX
         CPX #245
         BNE mp_copy
+        LDA #<ETFRAME
+        STA CDST
+        LDA #>ETFRAME
+        STA CDST+1
+        LDA #0
+        STA CSRC
+        LDA #$D2
+        STA CSRC+1
+        JSR g_upb
+        LDX #141
+et_table:LDA $D400,X
+        STA GUNPACK,X
+        DEX
+        CPX #$FF
+        BNE et_table
         LDA #$3E
         STA $FF00
+        DEC FAST
         RTS
 MSCOUNT:LDA M_STATE,X
         BMI mp_basecount
@@ -5469,6 +5475,191 @@ mp_done:LDA #$00
         RTS
 
 MSPOSEND:
+
+ETFRAME:JSR SPRCROSS
+        JMP ETSPR
+
+ETVB:   JSR ETSTEP
+        LDA TPF
+        BEQ et_vbstars
+        RTS             ; two proton jobs: leave the stars for the next blank
+et_vbstars:JMP MSVB
+
+; Enemy proton ($916C, $CF04): independent of aim, phasor and player proton.
+; Borrow two fighter slots, invalidating the cache so GSQTYPE reloads them.
+; At $19 the original repeatedly clears $CF02: restart sound/art each frame
+; until the ring grows. Thereafter $D8/256 steps/frame approximates its loop.
+; ETVB is installed only at $19; idle flight/fights retain their STARS jumps.
+ETSTEP: LDA MAPSHOWN
+        ORA WIPE
+        ORA MSKILLED
+        BEQ et_ready
+        RTS
+et_ready:LDA MSKIND
+        CMP #$80
+        BEQ et_kind
+        RTS
+et_kind:LDA ETSTATE
+        LSR A
+        BEQ et_live
+        RTS
+et_live:LDA MSRAD
+        CMP #$19
+        BEQ et_arm
+        LDA ETSTATE
+        BNE et_run
+        RTS
+et_arm:LDA #1
+        STA ETSTATE
+        JSR ETSOUND
+        LDA #31
+        STA ETN
+        LDA #$28
+        STA ETACC
+        LDA #0
+        STA SHLT
+        STA SHLK
+et_run: LDA ETACC
+        CLC
+        ADC #$D8
+        STA ETACC
+        BCC et_out
+        LDX ETN
+        LDA ETLO,X
+        STA CSRC
+        LDA ETHI,X
+        STA CSRC+1
+        LDX #0
+et_token:LDY #0
+        LDA (CSRC),Y
+        STA ETC
+        BMI et_zeros
+        INY
+et_bytes:LDA (CSRC),Y
+        STA $6000,X
+        INY
+        INX
+        DEC ETC
+        BNE et_bytes
+        BEQ et_advance
+et_zeros:INY
+        AND #$7F
+        STA ETC
+        LDA #0
+et_zero:STA $6000,X
+        INX
+        DEC ETC
+        BNE et_zero
+et_advance:TYA
+        CLC
+        ADC CSRC
+        STA CSRC
+        BCC et_next
+        INC CSRC+1
+et_next:CPX #128
+        BNE et_token
+        DEC ETN
+        BNE et_out
+        INC ETSTATE
+        LDA VICENA
+        AND #$9F
+        STA VICENA
+        JSR HITSND
+        LSR OWNHIT
+        LDA HDEF
+        BNE et_out
+        LDA #5
+        STA ETC
+et_hits:JSR SHIPHIT
+        DEC ETC
+        BNE et_hits
+et_out: RTS
+ETSPR:  LDA MSKILLED
+        BEQ et_alive
+        RTS
+et_alive:LDA MSRAD
+        CMP #$19
+        BNE et_spritecheck
+        LDA #<ETVB
+        STA vv2+1
+        STA g_vs2+1
+        LDA #>ETVB
+        STA vv2+2
+        STA g_vs2+2
+        LDA #<ETFRAME
+        STA HTSPR+1
+        LDA #>ETFRAME
+        STA HTSPR+2
+        LDA TPF
+        BNE et_spritecheck
+        LDA #<ETFRAME
+        STA sprcj+1
+        LDA #>ETFRAME
+        STA sprcj+2
+et_spritecheck:LDA ETSTATE
+        LSR A
+        BCS et_show
+        RTS
+et_show:LDA #$80
+        STA SPRPTR+5
+        LDA #$81
+        STA SPRPTR+6
+        LDA #$8C
+        STA $D00A
+        LDA #$A1
+        STA $D00C
+        LDA #$A0
+        STA $D00B
+        STA $D00D
+        LDA #1
+        STA $D02C
+        STA $D02D
+        LDA $D010
+        AND #$9F
+        STA $D010
+        LDA $D01C
+        AND #$9F
+        STA $D01C
+        LDA $D017
+        AND #$9F
+        STA $D017
+        LDA $D01B
+        AND #$9F
+        STA $D01B
+        LDA $D01D
+        ORA #$60
+        STA $D01D
+        LDA VICENA
+        ORA #$60
+        STA VICENA
+        RTS
+ETSTATE = GUNPACK+64
+ETN = GUNPACK+65
+ETACC = GUNPACK+66
+ETC = GUNPACK+67
+ETLO = GUNPACK
+ETHI = GUNPACK+32
+ETSOUND:LDA #$0A        ; the launch ($BBB2): noise on voices 1 and 2
+        STA $D401
+        LDA #$80
+        STA $D404
+        STA $D40B
+        LDA #$04
+        STA $D408
+        LDA #$0F
+        STA $D418
+        LDA #$89
+        STA $D405
+        LDA #$6B
+        STA $D40C
+        LDA #$00
+        STA $D406
+        STA $D40D
+        LDA #$81
+        STA $D404
+        STA $D40B
+        RTS
+ETEND:
         * = $3D60
 MRCHARGE:LDA MREN
         BNE g_mrcout

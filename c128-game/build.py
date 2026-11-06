@@ -325,8 +325,9 @@ def torp_frames(raw):
     """The torpedo's 32 frames of 128 bytes, each packed on its own (TORPA): $80 + n
     zero bytes, or n literal bytes. Minimize each frame with dynamic programming;
     short zero runs may be cheaper inside literals. The runtime format is unchanged."""
+    assert len(raw) % 128 == 0
     out = bytearray()
-    for f in range(32):
+    for f in range(len(raw) // 128):
         b = raw[f * 128:f * 128 + 128]
         costs, choices = [0] * 129, [None] * 128
         for i in range(127, -1, -1):
@@ -367,7 +368,7 @@ def main():
     chunks, symbols = assemble()
     if set(chunks) != {ENTRY, CODE2, MAPCODE, GLUE, HIGH, HIGH2, 0x3D60, 0x3BD8, 0x3768, 0x3BC0, 0x2CDE, 0x2FEE, 0x33E8, 0x28D7, 0xBFC3, 0x3BD1, 0x3681}:
         raise SystemExit(f'unexpected assembly chunks: {[hex(c) for c in chunks]}')
-    for start, limit in ((ENTRY, 0x28D7), (CODE2, MAPCODE), (MAPCODE, 0xBFC3), (GLUE, HIGH2SRC), (HIGH, 0xD000), (HIGH2, 0xF600), (0x3D60, 0x3E00), (0x3BD8, 0x3C00), (0x3768, 0x3800), (0x3BC0, 0x3BD8), (0x2CDE, 0x2D00), (0x2FEE, 0x3000), (0x33E8, 0x3400), (0x28D7, 0x2900), (0xBFC3, 0xC000), (0x3BD1, 0x3BD8), (0x3681, 0x3690)):
+    for start, limit in ((ENTRY, 0x28D7), (CODE2, MAPCODE), (MAPCODE, 0xBFC3), (GLUE, HIGH2SRC), (HIGH, 0xD000), (HIGH2, 0xF6F9), (0x3D60, 0x3E00), (0x3BD8, 0x3C00), (0x3768, 0x3800), (0x3BC0, 0x3BD8), (0x2CDE, 0x2D00), (0x2FEE, 0x3000), (0x33E8, 0x3400), (0x28D7, 0x2900), (0xBFC3, 0xC000), (0x3BD1, 0x3BD8), (0x3681, 0x3690)):
         if start + len(chunks[start]) > limit:
             raise SystemExit(f'code from ${start:04X} ends at ${start + len(chunks[start]):04X}, past ${limit:04X}')
 
@@ -432,15 +433,54 @@ def main():
     p(symbols['STR2X'], open(os.path.join(ref, 'streams2-0600.bin'), 'rb').read())
     at('TORPA', torp_frames(open(os.path.join(ref, 'torpedo-a000.bin'), 'rb').read()))
     at('TSHOT', shape(0x67) + shape(0x68))
+    frames = open(os.path.join(ref, 'torpedo-a000.bin'), 'rb').read()
+    addresses = []
+    offset = symbols['TORPA']
+    for i in range(32):
+        addresses.append(offset)
+        # Same per-frame encoding as the player stream.
+        offset += len(torp_frames(frames[i*128:(i+1)*128]))
+    assert offset <= symbols['TSHOT']
+    # Once all streams have returned, the decoder becomes read/write tables.
+    # UPEND/GSEED and GUNPK2 stay intact; no sprite region is reclaimed here.
+    assert symbols['ETLO'] == symbols['GUNPACK']
+    assert symbols['ETHI'] == symbols['ETLO'] + 32
+    runtime = bytearray(bytes(a & 255 for a in addresses) + bytes(a >> 8 for a in addresses))
+    defaults = [('ETSTATE', 0), ('ETN', 0), ('ETACC', 0), ('ETC', 0),
+                ('MSSTATE', 0), ('MSKIND', 0), ('MSROW', 0), ('MSRAD', 1),
+                ('MSBIAS', 1), ('MSCLOCK', 0), ('MSRUN', 0), ('MSRX', 0),
+                ('MSRY', 0), ('MSD', 0), ('MSD1', 0), ('MSD2', 0), ('MSABS', 0),
+                ('MSPHASE', 0), ('MSPCOUNT', 1), ('MSCPEND', 0), ('MSCLEFT', 0),
+                ('MSCRIGHT', 0), ('MSCROW', 0), ('MSCEND', 0), ('MSCOFF', 0),
+                ('MSCN', 0), ('MSPACC', 0), ('MSPCOLOR', 0x11), ('MSPROW', 14),
+                ('MSKILLED', 0), ('MSLOCK', 0)]
+    for name, value in defaults:
+        assert symbols[name] == symbols['GUNPACK'] + len(runtime)
+        runtime.append(value)
+    assert symbols['MSDELAY'] == symbols['GUNPACK'] + len(runtime)
+    runtime.extend((6,6,6,6,6,6,6,6,6,6,6,6,6,6,7,6,7,6,7,6,
+                   7,7,7,7,7,8,7,8,7,8,8,8,8,8,9,8,8,9,8,9,9))
+    for name in ('MRPHUND', 'MRINDEX', 'MRSIDE', 'MRCLOCK', 'MRCOL', 'MROFF'):
+        assert symbols[name] == symbols['GUNPACK'] + len(runtime)
+        runtime.append(0)
+    assert len(runtime) == 142  # MSUNPACK's exact backwards copy
+    assert symbols['GUNPACK'] + len(runtime) <= symbols['UPEND']
+    p(0xD400, runtime)
     # Init-only tail: staged beneath I/O with the second stream. (The KERNAL's
     # LOAD stops when the address reaches $FF00, so it cannot be loaded there.)
-    # GUNPK2 copies it into $E000 after decoding both streams; no live code moves.
+    # MSUNPACK copies it into $E000 after the first two streams.
     tail_start, tail_end = symbols['MSPOS'], symbols['MSPOSEND']
     tail = bytes(image[tail_start - HIGH2:tail_end - HIGH2])
     assert len(tail) == 245 and 0xD100 + len(tail) <= 0xE000
-    assert tail_start + len(tail) <= 0xF600
+    assert tail_start + len(tail) <= 0xF6F9
     p(0xD100, tail)
     image[tail_start - HIGH2:tail_end - HIGH2] = bytes(len(tail))
+    et_start, et_end = symbols['ETFRAME'], symbols['ETEND']
+    third = bytes((et_end & 255, et_end >> 8)) + lz_pack(bytes(image[et_start-HIGH2:et_end-HIGH2]))
+    assert 0xD200 + len(third) <= 0xE000
+    assert 0xD200 + len(third) <= 0xD400, 'third stream overlaps staged frame pointers'
+    p(0xD200, third)
+    image[et_start-HIGH2:et_end-HIGH2] = bytes(et_end-et_start)
     end = HIGH2 + len(image)
     assert end <= 0xFF00, f'the $E000 image ends at ${end:04X}'
     assert end & 255 == 0, 'GUNPK2 relies on the first stream ending at a page'
@@ -462,7 +502,7 @@ def main():
     with open(OUT, 'wb') as f:
         f.write(bytes((LOAD & 255, LOAD >> 8)) + body)
     ends = ', '.join(f'${a:04X}-${a + len(c) - 1:04X}' for a, c in sorted(chunks.items()))
-    print(f'memory left: high {0xF600 - HIGH2 - len(chunks[HIGH2])} bytes, packed {0x7680 - HIGH2SRC - len(packed)} bytes, glue {HIGH2SRC - GLUE - len(chunks[GLUE])} bytes')
+    print(f'memory left: high {0xF6F9 - HIGH2 - len(chunks[HIGH2])} bytes, packed {0x7680 - HIGH2SRC - len(packed)} bytes, glue {HIGH2SRC - GLUE - len(chunks[GLUE])} bytes')
     print(f'wrote {OUT} (${LOAD:04X}-${LOAD + len(body) - 1:04X}, code {ends}, entry ${symbols["START"]:04X})')
     return symbols
 

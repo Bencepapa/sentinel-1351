@@ -38,7 +38,7 @@ It is the browser page's default program.
   points rush to three places with a sound (`$1AF2`), three fighters appear there,
   the warning sounds and the dogfight starts. A squadron of fewer than 3 becomes 3,
   as in the original.
-- In mothership sectors the long range scanner first shows the base's position and X/Y/Z readings. Steering moves it; exact 00 side and 00 up in front locks steering, and depth closes at the original base loop's rate. Fire still shoots, but does not select another target. As in the original, the base is a radar mark without the cyan animated fighter-selection sprite. Near enough in front, the ship settles for about 194 frames, then waits about 70 frames before the rings and rectangular opening grow as in the original. Enemy bases flicker and turn white in alternating phases; friendly bases stay white but share the same hidden phase. A proton destroys a base only if its opening has appeared and the phase is on when the torpedo arrives; a miss only flashes and the approach continues. A kill shows BASESTAR DESTROYED CAPTAIN, a burst and expanding erasing rings, then clears the sector. Every base sequence returns to the map; that sector cannot be selected straight back until you jump elsewhere. A surviving friendly base draws its white tractor rays, types the full-screen eight-system report with coloured scanning blocks and repair beeps, recharges energy, repairs the ship and grants one proton before the map returns. Tractor rays reach the guns; docking restores the cockpit and all sprite shapes for the next fight. Mines and enemy torpedoes are still to come. Opening and closing the map before the sequence ends restarts the approach.
+- In mothership sectors the long range scanner first shows the base's position and X/Y/Z readings. Steering moves it; exact 00 side and 00 up in front locks steering, and depth closes at the original base loop's rate. Fire still shoots, but does not select another target. As in the original, the base is a radar mark without the cyan animated fighter-selection sprite. Near enough in front, the ship settles for about 194 frames, then waits about 70 frames before the rings and rectangular opening grow as in the original. Enemy bases flicker and turn white in alternating phases; friendly bases stay white but share the same hidden phase. A proton destroys a base only if its opening has appeared and the phase is on when the torpedo arrives; a miss only flashes and the approach continues. A kill shows BASESTAR DESTROYED CAPTAIN, a burst and expanding erasing rings, then clears the sector. Every base sequence returns to the map; that sector cannot be selected straight back until you jump elsewhere. A surviving friendly base draws its white tractor rays, types the full-screen eight-system report with coloured scanning blocks and repair beeps, recharges energy, repairs the ship and grants one proton before the map returns. Tractor rays reach the guns; docking restores the cockpit and all sprite shapes for the next fight. An enemy base fires a white incoming proton at radius 25: it cannot be shot down or dodged, takes five shield/system hits, then returns to the map with the same re-entry lock. Friendly bases never fire. Mines are still to come. Opening and closing the map before the sequence ends restarts the approach.
 - Strategic warnings (a mothership engaged/destroyed, JARALOBA surrounded/lost) now appear on the cockpit message line even with VDC off.
 - The ship (systems, shields, hits, difficulty) is one: the cockpit's model.
 - The second display (VDC) is off in this program for now: its updates take more
@@ -82,7 +82,7 @@ jump into a squadron's sector (the approach begins, TARGETS), the HUD's sector,
 the view's colours back, kills emptying the sector, C= closing the map, the right
 button, fire on the ship's own sector, a squadron coming in, the splits' timing.
 
-Not yet: hyperspace's abort, thrust (W), mothership mines, enemy torpedoes and
+Not yet: hyperspace's abort, thrust (W), mothership mines and
 the second display while flying, game over, and the destroyed-system messages.
 
 
@@ -94,12 +94,26 @@ radar mark and frames to the ring start for friendly and enemy bases. The port
 uses a frame-locked approximation of the original loop's rate (up to five passes/frame, with a raster deadline),
 including its exact 00/00 lock and in-front/distance-below-$0600 exit.
 
-Memory left after this feature: 97 bytes before `$F600`, 41 bytes in the packed
-image, 1 byte in the glue. A checked init-only tail at `$D100-$D1F4` is copied to
-`$E000` after unpacking with MMU `$3F`. The previous `$FF05-$FFF9` staging
-was beyond the C128 KERNAL LOAD limit (`$FF00`), so VICE loaded no positioning
-code there and arrival copied invalid instructions into `$E000`, freezing play.
-The PRG now ends at `$D1F4`; the build asserts that it stays below `$FF00`.
-The STR2Y stream is staged at `$D000-$D051` beneath I/O and read with MMU `$3F`
-during init, then MMU `$3E` is restored. Existing runtime addresses outside `$E000` stay fixed. Torpedo frame packing
-uses dynamic programming with bounded tokens; its decoded animation is unchanged.
+Memory left: 0 bytes before TORPA `$F6F9`, 64 bytes in the packed image,
+1 byte in the glue. The unchanged 1927-byte animation ends at TSHOT `$FE80`.
+Init-only staging uses `$D000` (STR2Y), `$D100` (positioning tail), `$D200`
+(third packed enemy-proton stream, bounded below `$D400`) and `$D400-$D48D`
+(frame pointers and mothership state/timing tables). After unpacking with MMU
+`$3F`, the last table replaces 142 bytes of the dead GUNPACK decoder; live
+UPEND/GSEED/GUNPK2 stay intact. Init briefly uses 2 MHz, then restores 1 MHz
+and MMU `$3E`. All earlier bounds remain checked; the PRG ends at `$D48D`,
+below the KERNAL LOAD limit `$FF00`. Runtime code outside `$E000` stays fixed.
+The temporary SPRCROSS/HTSPR wrapper keeps incoming sprites visible even when phasor work defers the view hook; MSOFF
+restores both hooks.
+
+Incoming-proton decoding runs in the blank, armed through existing mothership
+hooks at radius 25, with zero additional work in idle flight/fights. Its two
+shapes borrow `$6000-$607F`; the next squadron reloads every fighter shape.
+Tests compare all 31 reverse frames, sprite positions/expansion, launch and impact
+SID writes, five hits, forced deflector and friendly/destroyed gates, protected
+assets, map return/re-entry lock, and DMA split timing. The measured original
+attack lasts 43 frames; the port takes 43 normally (also with an overlapping
+player proton) and 50 under continuous steering/fire because its approach drawing is frame-locked. The original can
+restart its launch twice in one frame; the port restarts once per frame while
+the ring remains at radius 25. Please compare animation, hit flash/sound and
+the following map in VICE x128.
