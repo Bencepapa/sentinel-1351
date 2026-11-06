@@ -6,20 +6,91 @@ is ported from the C64 code and checked against it.
 
 ## Status
 
-Done: the cockpit and its raster schedule, the phasor shot, type-1 fighters, steering,
-hits and explosions, enemy fire and the ship being hit, the approach with the long range
-scanner, the tracking computer, the message row, the voice 1 sweeps, the map in the 3D
-view, a squadron coming into the ship's sector.
+Updated 2026-11-06 (commit `55c6dd6`). Everything below is built into
+`c128-game/sentinel-c128-game.prg` and the browser page (`js/dist/sentinel.html`),
+and `node js/test/run.js` ends with "all checks passed".
 
-Left, in a suggested order:
+Done: the cockpit and its raster schedule, the phasor shot, fighters of all three
+squadron types, steering, hits and explosions, enemy fire and the ship being hit,
+the approach with the long range scanner, the tracking computer, the message row,
+the voice 1 sweeps, the map in the 3D view, a squadron coming into the ship's
+sector, hyperspace (path, streaks, energy, countdown, meteors, dodging, the
+deflector, the hyperspace cursor), the proton torpedo, the mothership sequences
+(the approach, destroying a base with a proton, the friendly base's tractor beam
+and repair, the automatic map afterwards and the base sector's re-entry lock),
+the map's battle messages on the cockpit's message line.
 
-1. **Hyperspace** (see below): the phases, streaking stars, energy, countdown, the path plotted on the map, the map's erase, the border's pulse, the engine sound, the long range scanner, positioning, meteors, dodging and the deflector are in (`HYPSTART`, `HYPVB`, `HYPVIEW` in `c128-game/game.asm`, code at `$C000`); the abort and a destroyed coordinator are next.
-2. **Proton torpedoes**: done (`GTORP`, `TSTEP`, `TKILL`, `TBLAST`, `HTSPR` in `c128-game/game.asm`): SPACE / both buttons, 32 animation frames unpacked a step at a time from `TORPA` into the shot's slots `$F3` / `$F4`, the kill of every fighter in view, the orange rings. The `$E000` code and data are packed into the 3D view's bitmap and unpacked by GAMEINIT (`lz_pack`, `GUNPACK`). Still: thrust (W, `$FEA7`).
-3. **Squadron types 2 and 3**: done (`GSQTYPE`, `GSHLOAD`, `GTYPE`, `GESHP`, `GSTRX` / `GSTRY`, `GCOLCYC` in `c128-game/game.asm`): the type's shapes are copied into the fighters' sprite slots a shape a frame from masters at `$E600`, type 2 flies its own streams (the original's `$0600` / `$8100`), types 2 and 3 are multicoloured and twice as wide, their colours step, white on the last hit.
-4. **Mothership and base sequences**, mines, docking.
-5. **What the other destroyed systems disable**, their messages, and game over. So far
-   the scanners, the sequencer and the tracking computer act on their counters.
-6. **Fighters warping in** when lingering in an empty sector (the manual; `$F96B`).
+Left, in a suggested order (each with what is already known):
+
+1. **The base on the long range scanner** (user request): arriving in a
+   mothership sector, the long range scanner should show the base's position like
+   a group of fighters, before the ring approach starts. This is the original's
+   preliminary positioning phase `$8C3F` / `$8C44` -> `$8D1C` -> `$9054`, the
+   `$0F7F` wait, then `$8D56` calls `$909D` (the rings). The port skips it and
+   starts the rings after the closing wipe (`MSECTOR`, `MSVIEW`).
+2. **The enemy base's torpedo**: `$916C` arms `$CF01` at radius `$19`; `$CF04`
+   (every 16 loop passes) copies 31 frames backwards from `$AF80` to `$A000`
+   into `$5140` (shapes `$45` / `$46`, the same art as our `TORPA`), expanded
+   white sprites 5 / 6 at x `$8C` / `$A1`; `$CF8C` applies five hits. Active for
+   about 43 DMA frames in the measured original. Open: can it be shot or dodged?
+   After it the map comes up by itself (`MSRETURN`, normal endpoint, locked).
+3. **The minefield** (`$71-$7C`, `$CCDF` / `$CD27`). The user's observations of the
+   original: stars only in a horizontal band; the star field cannot be steered
+   once the right direction is locked; mines can stay stuck on the screen (an
+   original bug).
+4. **Game end**: death (shields / systems), JARALOBA CEASES TO EXIST (the message
+   is shown, game over is not: `$DD`, `$3E7D`, `$F431`), winning, ratings.
+5. **Hyperspace**: the abort (Crsr) and a destroyed hyperspace coordinator.
+6. **What the other destroyed systems disable**, and their messages. So far the
+   scanners, the sequencer and the tracking computer act on their counters.
+7. **Fighters warping in** when lingering in an empty sector (the manual; `$F96B`).
+8. **Thrust** (W, `$FEA7`).
+9. Small: opening and closing the map during an unfinished approach restarts it;
+   the destruction uses two particle bursts where the original has four; a
+   friendly kill also sets the map's DEAD flag (the original `$8E42` only clears
+   the cell; check what the original's SURROUND then does on that empty cell).
+10. The C64 patch: the hyperspace cursor (about 90-190 bytes; no room in the
+    1351 patch yet).
+
+## Handing the work on (for another agent)
+
+- Read first: `README.md`, `c128-game/README.md`, this file, `MAP-LOGIC.md`,
+  `FINDINGS.md`, `SHIP-STATUS.md`. The task briefs in `briefs/` show the expected
+  form of a task (goal, how to read the original, constraints, tests, handover).
+- Build: `python c128-map/build.py`, `python c128-game/build.py` (prints the memory
+  left), `python js/build.py`, `python js/bundle.py`. Test: `node js/test/run.js`
+  (several minutes; must end with "all checks passed").
+- Reading the original: boot `c64game` in Node as `js/test/run.js` does; call
+  routines directly with chosen inputs; `m.dma = true` for any timing (without it
+  every rate is too fast); `m.vicLog` / `m.sidLog` per frame; `m.setBreak`,
+  `m.wpAt`, `m.setKey(row, col, down)`, `m.mouse`; `SentinelDisasm.one(peek, pc)`.
+  The original's loops count passes, not frames: measure in frames with DMA.
+  The browser page can export a save state (JSON); `m.loadState(m.stateFromText(...))`
+  loads one in Node, which is the fastest way to reproduce what the user sees.
+- **Do not move code** in the glue (`$5300`), the cockpit's chunks or the map: a
+  shift of a few bytes moves page crossings and breaks the fight's split timing.
+  Compare symbol addresses outside `$E000` before and after (only same-size
+  patches in `build.py` there). New code goes in the `$E000` chunk, reached
+  through self-modifying JSR / BIT / JMP slots (`sprcj`, `shpj`, `torpj`, `vv2` /
+  `g_vs2`, `VBWORK`), with zero cost in flight and fights when idle.
+- Heavy work runs in pieces with raster checks (`TLATE`, `MSSTEP`, `MSVB`,
+  `MRARTSTEP`). Tests count late split writes (`$D020` / `$D021` at lines 50-76 /
+  230-245, cycles 16-55) and `OVRUN`; both must stay 0. A blanked screen must keep
+  the bad lines: use an invalid VIC mode (`$D011 = $7B`, ECM+BMM, black), not
+  DEN=0, which removes the line-75 bad line the top split is timed by.
+- **Memory is the bottleneck.** Now: `$E000` code 489 bytes free (to TORPA
+  `$F600`), the packed image 29 bytes before the cockpit art (`$7680`), the glue
+  1 byte. The `$E000` image is packed (`lz_pack`) at `$5E00` and unpacked by
+  `GUNPK2` at init; a second stream (STR2Y) unpacks over the first one's start.
+  Many small helpers sit in checked padding gaps (see the build's bound list).
+  The next feature will likely need another rearrangement (ideas: more data in
+  further packed streams unpacked into space that is free after init; sharing
+  tables; generating data in code). Keep every bound check in `build.py`.
+- Assembler (`mouse/tools/asm.py`): no `label+n` for forward labels, no long
+  branches (use JMP), labels are global (prefix them: `g_xx`, `mt_`, `mr`).
+- Workflow with the user: they test every build in VICE x128 (and the C64
+  original for reference) and want behaviour faithful to the original; commit and
+  push only when they ask.
 
 ## How the work goes now
 
@@ -396,8 +467,9 @@ Original findings, checked against the unpacked C64 v10 routines:
 
 - Entry is `$FCE1`, mothership branch `$FD3B`, setting `$E1=1` for either kind.
   Enemy: GORGANITOR BASESTAR DETECTED, downward `$0921` sweep; friendly:
-  ENTERING BASE SECTOR, no entry sweep. Both use yellow/orange, ten flips
-  every five frames. `$FBFB/$FC77` are map/path dispatch, not the full setup.
+  ENTERING BASE SECTOR, no entry sweep. Both use yellow/orange, ten flips;
+  the original's rate 5 is in loop passes: every 20 frames in the measured entry
+  (after two quick flips), which the port uses. `$FBFB/$FC77` are map/path dispatch, not the full setup.
 - `$8C3F/$8C44` perform preliminary long-range positioning; `$8D1C` reaches
   `$9054`, waits for `$0F7F`, then `$8D56` calls `$909D`. The port still starts
   the ring approach after the closing wipe, without this preliminary phase.
@@ -521,8 +593,14 @@ Friendly beam and repair (`MRSTART` / `MBEAM` / `MRREPAIR`):
   radar sprites. All 152 ring stages are compared against the original through
   y=183, including the cockpit. Clean cockpit art has no pixel value 1 (asserted
   by the build), so removing only 01 pixels restores its exact pre-beam bitmap.
+- The report starts black (`$D011 = $7B`, an invalid mode) while the old rows
+  are cleared, and only then turns its text on (`MRTEXTON`), so an earlier
+  report never shows. The radar's sweep (`RADSTEP`, both `JSR`s at `VBWORK`) is
+  off during the report: it paints the radar box's colour RAM, which in text
+  mode lies under the computer's blocks.
 - Completion first enters state 11. Like the original `$8D7C-$8DB0`, it blanks
-  the lower display before preparing the map; it never exposes the old base in
+  the lower display (the same invalid mode, keeping the split timing) before
+  preparing the map; the cockpit art is restored 64 bytes a call; it never exposes the old base in
   the repaired palette. Raster-budgeted jobs clear the view, erase beam-only
   pixels from cockpit art, restore cockpit colour RAM, and restore the block
   glyph. Only then do the original bitmap/input slots return and `MSRETURN`
@@ -541,9 +619,8 @@ Friendly beam and repair (`MRSTART` / `MBEAM` / `MRREPAIR`):
   padding gaps at `$28D7`, `$2CDE`, `$2FEE`, `$33E8`, `$3681`, `$3768`, `$3BC0`,
   `$3BD1`, `$3BD8`, `$3D60`, `$BFC3`. No glue/cockpit/map instruction moves.
   Only repair data and the MRDELAY helper move relative to the previous build.
-- Memory: high code ends exactly at STR2Y `$F400` (0 bytes spare), packed image
-  has 67 bytes spare before `$7680`, glue has 12 bytes. All new gaps and asset
-  bounds are checked. The previous shortest-token LZ format/decoder is unchanged.
+- Memory: see "Handing the work on" above (STR2Y now unpacks to `$5E00`, the
+  `$E000` code may run to TORPA `$F600`). All gaps and asset bounds are checked.
 - Original minefield observation (not ported here): stars appear only in a
   horizontal band, the star field cannot be steered once direction is locked,
   and mines can remain stuck on the screen (original bug).
@@ -566,7 +643,7 @@ Strategic battle messages:
 
 Memory and integration:
 
-- New high code remains at `$E000`, below STR2Y `$F400`; small repair helpers also use checked padding gaps. Glue/cockpit/map code sizes
+- New high code remains at `$E000`, below TORPA `$F600`; small repair helpers also use checked padding gaps. Glue/cockpit/map code sizes
   and positions are unchanged. Existing BIT/JSR and JMP slots provide the hooks,
   with no additional idle flight/fight-frame cost.
 - The map shares the cockpit's YLO/YHI/XLO/XHI tables at `$2D00/$2E00/$2F00/$2F28`.
@@ -586,7 +663,7 @@ Memory and integration:
   phase changes, successful kills and simultaneous battle messages.
 
 Still deferred: preliminary base positioning, mines `$71-$7C` (`$CCDF/$CD27`),
-enemy torpedo `$CF01/$CF04`, friendly beam `$918E`, repair `$932D`, game over,
+enemy torpedo `$CF01/$CF04`, game over,
 ratings and other global consequences beyond the base cell/dead flag. The enemy
 animation shares TORPA's 31 frames, copied backwards from `$AF80` toward
 `$A000` into `$5140` (shapes `$45/$46`) by `$CF04` every 16 loop passes. It
