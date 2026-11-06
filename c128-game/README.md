@@ -94,7 +94,7 @@ radar mark and frames to the ring start for friendly and enemy bases. The port
 uses a frame-locked approximation of the original loop's rate (up to five passes/frame, with a raster deadline),
 including its exact 00/00 lock and in-front/distance-below-$0600 exit.
 
-Memory left: 0 bytes before TORPA `$F6F9`, 64 bytes in the packed image,
+Memory left: 0 bytes before TORPA `$F6F9`, 66 bytes in the packed image,
 1 byte in the glue. The unchanged 1927-byte animation ends at TSHOT `$FE80`.
 Init-only staging uses `$D000` (STR2Y), `$D100` (positioning tail), `$D200`
 (third packed enemy-proton stream, bounded below `$D400`) and `$D400-$D48D`
@@ -127,4 +127,19 @@ horizontal-only expansion are unchanged. Regression checks compare all 31
 frames with original `$CF04` and player TDEC, and replay the supplied pre-launch
 save state with DMA, dumping per-frame pointers, bytes, X/Y and expansion to
 `js/test/out/enemy-proton-saved-state-trace.json`. Memory margins remain 0 high,
-64 packed and 1 glue byte; all bounds remain enabled.
+66 packed and 1 glue byte; all bounds remain enabled.
+
+Player proton/base overlap (2026-11-06, issue #15): ring work, centre drawing
+and palette painting previously gated on any nonzero TPF, freezing the approach
+behind an unfinished ring. These gates now allow flight (TPF=1); decoding keeps
+its persistent source/output separately, while post-flight blast/flash (TPF>=2)
+still excludes shared drawing scratch. Radius/phase cadence is unchanged. Two
+small branch/comparison rewrites pay for the gates, keeping high code the same
+size and all build bounds enabled. Memory left: 0 high, 66 packed, 1 glue byte.
+The game tests replay the supplied C64 in-flight state with DMA and record radius
+($43, loaded at $90F3), bias, phase countdown ($953D), phase ($953E), kill flag
+($8C3E), flight and SID activity alongside the port. In the 18 remaining reference flight
+frames, radius stays within one step and the phase countdown within four calls
+(about eight frames); this retains the existing frame-locked approximation.
+Endpoint-during-flight checks cover both base kinds. VICE x128 visual confirmation
+remains with the user.

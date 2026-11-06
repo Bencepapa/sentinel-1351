@@ -1573,6 +1573,33 @@ for (const name of Object.keys(Profiles)) {
     `mothership destruction: enemy palette visibly flickers (${flickerColours.size} colours), then returns to white`);
   check(flickerLate===0&&fg.A[fg.S.OVRUN]===0,'mothership destruction: real flicker/centre updates fit the DMA budget');
 
+  // Replay the supplied in-flight C64 state with stolen VIC cycles enabled.
+  // $90F3 is the radius load instruction; its live counter is zero-page $43.
+  for (const kind of [0x80, 0xFF]) {
+    const ref=boot('c64game','trace'), saved=JSON.parse(fs.readFileSync(path.join(ROOT,'../briefs/ref/c64-proton-in-flight-mothership.state.json'),'utf8'));
+    ref.m.loadState(ref.m.stateFromText(JSON.stringify(saved.state)));ref.m.dma=true;
+    const R=ref.m.ram;R[0xE2]=kind===0x80?1:0;
+    const g=scene(kind),{m,S,A}=g;
+    A[S.MSRAD]=R[0x43];A[S.MSBIAS]=R[0x3674];A[S.MSCLOCK]=0;
+    A[S.MSPCOUNT]=R[0x953D];A[S.MSPHASE]=R[0x953E];A[S.MSPACC]=0;
+    call(m,S.MSRING);A[S.TREQ]=1;call(m,S.GTORP);
+    const trace=[], colours=new Set();let late=0,same=true;
+    for(let f=0;f<18;f++) {
+      ref.m.runFrame();m.runFrame();late+=lateWrites(m);colours.add(A[0x44A0]);
+      trace.push({f,original:{radius:R[0x43],bias:R[0x3674],count:R[0x953D],phase:R[0x953E],killed:R[0x8C3E],flight:R[0xBACF],sidWrites:ref.m.sidLog.length/3},port:{radius:A[S.MSRAD],count:A[S.MSPCOUNT],phase:A[S.MSPHASE],flight:A[S.TPF]}});
+      same=same&&Math.abs(A[S.MSRAD]-R[0x43])<=1&&Math.abs(A[S.MSPCOUNT]-R[0x953D])<=4&&A[S.MSPHASE]===R[0x953E];
+    }
+    fs.writeFileSync(path.join(OUT,`mothership-flight-${kind.toString(16)}-trace.json`),JSON.stringify(trace,null,2));
+    check(same&&A[S.MSRAD]>trace[0].port.radius,`game: ${kind.toString(16)} proton flight radius/phase follow original per frame (one radius/four phase-call tolerance)`);
+    check(kind!==0x80||colours.size>=2,'game: enemy base visibly flickers during player proton flight');
+    check(late===0&&A[S.OVRUN]===0,`game: proton/base overlap has ${late} late splits, ${A[S.OVRUN]} overruns`);
+    // Finish a ring near the endpoint while flight is still active.
+    A[S.MSRAD]=kind===0x80?0x22:0x28;A[S.MSCLOCK]=254;A[S.MSRUN]=0;
+    m.runFrame();m.runFrame();
+    check(A[S.MSSTATE]===4&&A[S.TPF]===1,'game: base reaches ring endpoint during flight and waits for proton result');
+
+  }
+
   for(const kind of [0x80,0xFF]) {
     const g=scene(kind), {m,S,A,index}=g;
     for(let n=0;n<200&&A[S.MSRAD]<12;n++) m.runFrame();

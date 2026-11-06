@@ -4385,9 +4385,10 @@ g_msgrow:
         INC MSBIAS
         INC MSBIAS
 g_msnew:JMP MSRING
-g_msd:  LDA TPF         ; do not interfere with the player's torpedo's scratch
+g_msd:  LDA TPF         ; flight decoding uses CSRC/TPO, not the ring scratch
+        LSR A           ; only post-flight blast/flash work shares it (TPF >= 2)
         BEQ g_msd1
-        RTS
+g_msdout:RTS
 g_msd1: JMP MSSTEP
 
 MSRING:
@@ -4405,8 +4406,7 @@ mscent: JSR MSCINIT
 ; Two octants through TPLOT4, centre $50/$64, value 3, brown pixels preserved.
 MSSTEP: LDA $D012
         CMP #174
-        BCC g_msstep
-        RTS
+        BCS g_msdout
 g_msstep:CLC
         LDA MSD
         ADC MSRY
@@ -4520,10 +4520,11 @@ g_mcinit:SEC
 ; Centre updates replace stars for a blank; deadline leaves the radar its time.
 MSVB:   LDA MSCPEND
         BEQ g_mcvpalette
-        LDA MAPSHOWN
+        LDA TPF
+        LSR A           ; flight can share the blank; blast/flash must finish first
+        ORA MAPSHOWN
         ORA WIPE
         ORA HYPON
-        ORA TPF
         BEQ g_mcvrow
         JMP STARS
 g_mcvpalette:LDA MSPROW
@@ -4581,10 +4582,9 @@ g_mcvfull:LDA MSCN
         TAY
         JMP g_mcvfull
 g_mcveol:INC MSCROW
-        LDA MSCROW
-        CMP MSCEND
-        BCC g_mcvrow
-        BEQ g_mcvrow
+        LDA MSCEND
+        CMP MSCROW
+        BCS g_mcvrow
         LDA #$00
         STA MSCPEND
         RTS
@@ -4636,6 +4636,7 @@ g_mpset:CMP MSPCOLOR
         STA MSPROW
 g_mpout:RTS
 MSPAINT:LDA TPF
+        LSR A           ; TPF=1 is independent animation decoding
         ORA MAPSHOWN
         ORA WIPE
         ORA HYPON
