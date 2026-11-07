@@ -22,6 +22,9 @@ $3800-$3FFF (c128-map/build.py):
   $2900  type-1 masters (VDC is disabled); $3800-$3BBF type-2/3 masters,
          $3E00-$3FFF type-2 X streams. The map shares the cockpit address tables.
   $5E00  packed $E000 image, after glue and over sprite slots restored at init
+  $0C60  resident mothership/message/repair code; original RAM saved at $D200
+  $D000  init-only packed STR2Y; $D100 low-code stream; $DF00 runtime tables
+  $EA16  3299 free high bytes to TORPA, available in every gameplay mode
   $xx00  the map's code: right after the cockpit's second chunk
   $5300  the glue (game.asm), CPU RAM the VIC-IIe cannot use
   $C000  more of the glue, in the RAM under the KERNAL (MMU $3E: the game calls no
@@ -29,6 +32,7 @@ $3800-$3FFF (c128-map/build.py):
 """
 
 import os
+import json
 import re
 import sys
 
@@ -126,6 +130,8 @@ MAP_EXTRA = ""
 PATCHES_COCKPIT = [
     ('        JSR SECSTART    ; a squadron in the sector (c128-game: the map\'s start sector)\n',
      '        JSR GAMEINIT    ; (game) the world and the start sector\n'),
+    ('        LDA SAVFAST\n        STA FAST\n        LDA SAVMMU\n',
+     '        JSR GREXIT      ; restore borrowed low RAM before BASIC/IRQs\n        NOP\n        NOP\n        NOP\n        LDA SAVMMU\n'),
     # SPACE is the proton torpedo (TSPACE, game.asm GTORP), RUN/STOP leaves (the same
     # bytes as before: the code after keeps its addresses); C= opens and closes the map
     ('        LDA CIA1PB\n        AND #$10\n        BNE nospace\n        JMP EXIT\nnospace:LDA #$BF        ; port 2 pots for the next frame\n',
@@ -298,6 +304,8 @@ def lz_pack(data):
                 n += 1
             if n > best:
                 best, distance = n, i - j
+                if best == min(130, size - i):
+                    break
         matches.append((best, distance))
         where.setdefault(key, []).append(i)
     costs, choices = [0] * (size + 1), [None] * size
@@ -366,11 +374,28 @@ def repair_assets():
 
 def main():
     chunks, symbols = assemble()
-    if set(chunks) != {ENTRY, CODE2, MAPCODE, GLUE, HIGH, HIGH2, 0x3D60, 0x3BD8, 0x3768, 0x3BC0, 0x2CDE, 0x2FEE, 0x33E8, 0x28D7, 0xBFC3, 0x3BD1, 0x3681}:
+    # Baseline taken before the low-RAM rearrangement: existing lower code,
+    # tables and constants must never drift when extending the high chunk.
+    with open(os.path.join(HERE, 'fixed-symbols.json'), encoding='ascii') as f:
+        fixed = json.load(f)
+    for name, address in fixed.items():
+        assert symbols.get(name) == address, f'fixed symbol {name} moved from ${address:04X}'
+    if set(chunks) != {ENTRY, CODE2, MAPCODE, GLUE, HIGH, HIGH2, 0x0C60, 0xE960, 0x3D60, 0x3BD8, 0x3768, 0x3BC0, 0x2CDE, 0x2FEE, 0x33E8, 0x28D7, 0xBFC3, 0x3BD1, 0x3681}:
         raise SystemExit(f'unexpected assembly chunks: {[hex(c) for c in chunks]}')
     for start, limit in ((ENTRY, 0x28D7), (CODE2, MAPCODE), (MAPCODE, 0xBFC3), (GLUE, HIGH2SRC), (HIGH, 0xD000), (HIGH2, 0xF6F9), (0x3D60, 0x3E00), (0x3BD8, 0x3C00), (0x3768, 0x3800), (0x3BC0, 0x3BD8), (0x2CDE, 0x2D00), (0x2FEE, 0x3000), (0x33E8, 0x3400), (0x28D7, 0x2900), (0xBFC3, 0xC000), (0x3BD1, 0x3BD8), (0x3681, 0x3690)):
         if start + len(chunks[start]) > limit:
             raise SystemExit(f'code from ${start:04X} ends at ${start + len(chunks[start]):04X}, past ${limit:04X}')
+    assert HIGH2 + len(chunks[HIGH2]) == 0xE960
+    assert 0xE960 + len(chunks[0xE960]) == symbols['MINEFREE']
+    assert symbols['MINEEND'] - symbols['MINEFREE'] >= 3072
+    assert symbols['LOWSTART'] == 0x0C60
+    assert symbols['LOWEND'] == symbols['LOWSTART'] + len(chunks[0x0C60]) == 0x19F9
+    assert len(chunks[0x0C60]) == symbols['LOWPAGES'] * 256 + symbols['LOWTAIL']
+    assert symbols['MSPOSEND'] - symbols['MSPOS'] == 245
+    assert symbols['ETEND'] == symbols['LOWEND']
+    assert symbols['LOWBACK'] == 0xD200 and symbols['LOWTEMP'] == 0x6000
+    assert symbols['LOWBACK'] + len(chunks[0x0C60]) <= 0xE000
+    assert symbols['LOWTEMP'] + len(chunks[0x0C60]) <= 0x7680
 
     body = bytearray(cockpit_build.basic_stub())
     p = lambda address, data: put(body, address, data)
@@ -378,7 +403,7 @@ def main():
     map_build.place_assets(p, VDC=VDCDATA, PL5=0x7FC0)   # (the planet's fifth frame: pointer $FF, behind the bottom strip)
     cockpit_build.place_assets(p)                   # the cockpit's picture wins where they meet
     for address, data in chunks.items():
-        if address != HIGH2:
+        if address not in (HIGH2, 0xE960, 0x0C60):
             p(address, data)
     # The packed $E000 image: code, torpedo frames and borrowed shot shapes.
     # Fighter masters / STR2X are loaded directly into reclaimed lower RAM.
@@ -424,6 +449,7 @@ def main():
     p(symbols['MRWORDS'], repair[158:188])
     p(symbols['MBLEFT'], repair[188:340])
     image = bytearray(chunks[HIGH2])
+    image.extend(chunks[0xE960])
     def at(name, data):
         off = symbols[name] - HIGH2
         image.extend(bytes(max(0, off + len(data) - len(image))))
@@ -463,24 +489,15 @@ def main():
     for name in ('MRPHUND', 'MRINDEX', 'MRSIDE', 'MRCLOCK', 'MRCOL', 'MROFF'):
         assert symbols[name] == symbols['GUNPACK'] + len(runtime)
         runtime.append(0)
-    assert len(runtime) == 142  # MSUNPACK's exact backwards copy
+    assert len(runtime) == 142  # GINIT3's exact backwards copy
     assert symbols['GUNPACK'] + len(runtime) <= symbols['UPEND']
-    p(0xD400, runtime)
-    # Init-only tail: staged beneath I/O with the second stream. (The KERNAL's
-    # LOAD stops when the address reaches $FF00, so it cannot be loaded there.)
-    # MSUNPACK copies it into $E000 after the first two streams.
-    tail_start, tail_end = symbols['MSPOS'], symbols['MSPOSEND']
-    tail = bytes(image[tail_start - HIGH2:tail_end - HIGH2])
-    assert len(tail) == 245 and 0xD100 + len(tail) <= 0xE000
-    assert tail_start + len(tail) <= 0xF6F9
-    p(0xD100, tail)
-    image[tail_start - HIGH2:tail_end - HIGH2] = bytes(len(tail))
-    et_start, et_end = symbols['ETFRAME'], symbols['ETEND']
-    third = bytes((et_end & 255, et_end >> 8)) + lz_pack(bytes(image[et_start-HIGH2:et_end-HIGH2]))
-    assert 0xD200 + len(third) <= 0xE000
-    assert 0xD200 + len(third) <= 0xD400, 'third stream overlaps staged frame pointers'
-    p(0xD200, third)
-    image[et_start-HIGH2:et_end-HIGH2] = bytes(et_end-et_start)
+    p(0xDF00, runtime)
+    # Third stream: the complete relocated block, including positioning and
+    # enemy-proton code. Everything loaded is below the KERNAL's $FF00 limit.
+    low_end = symbols['LOWEND']
+    low_stream = bytes((low_end & 255, low_end >> 8)) + lz_pack(bytes(chunks[0x0C60]))
+    assert 0xD100 + len(low_stream) <= 0xDF00, 'low stream overlaps staged runtime tables'
+    p(0xD100, low_stream)
     end = HIGH2 + len(image)
     assert end <= 0xFF00, f'the $E000 image ends at ${end:04X}'
     assert end & 255 == 0, 'GUNPK2 relies on the first stream ending at a page'
@@ -488,7 +505,7 @@ def main():
     # The second stream: STR2Y, unpacked over the packed data's start once it is read.
     assert symbols['STR2Y'] == HIGH2SRC and HIGH2SRC + len(packed) >= HIGH2SRC + 512
     second = bytes((0x00, (HIGH2SRC + 512) >> 8)) + lz_pack(open(os.path.join(ref, 'streams2-8100.bin'), 'rb').read())
-    # Init-only RAM beneath I/O; MSUNPACK temporarily selects MMU $3F to read it.
+    # Init-only RAM beneath I/O; GINIT3 selects MMU $3F to read it.
     assert 0xD000 + len(second) <= 0xD100
     p(0xD000, second)
     assert HIGH2SRC + len(packed) <= 0x7680, f'the packed $E000 image ({len(packed)} bytes) overlaps the cockpit art'
@@ -502,7 +519,7 @@ def main():
     with open(OUT, 'wb') as f:
         f.write(bytes((LOAD & 255, LOAD >> 8)) + body)
     ends = ', '.join(f'${a:04X}-${a + len(c) - 1:04X}' for a, c in sorted(chunks.items()))
-    print(f'memory left: high {0xF6F9 - HIGH2 - len(chunks[HIGH2])} bytes, packed {0x7680 - HIGH2SRC - len(packed)} bytes, glue {HIGH2SRC - GLUE - len(chunks[GLUE])} bytes')
+    print(f'memory left: high {symbols["MINEEND"] - symbols["MINEFREE"]} bytes (${symbols["MINEFREE"]:04X}-${symbols["MINEEND"]-1:04X}, all modes), packed {0x7680 - HIGH2SRC - len(packed)} bytes, glue {HIGH2SRC - GLUE - len(chunks[GLUE])} bytes; low stream {len(low_stream)} bytes')
     print(f'wrote {OUT} (${LOAD:04X}-${LOAD + len(body) - 1:04X}, code {ends}, entry ${symbols["START"]:04X})')
     return symbols
 

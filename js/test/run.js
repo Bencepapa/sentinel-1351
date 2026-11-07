@@ -33,6 +33,7 @@ fs.mkdirSync(OUT, { recursive: true });
 
 let failures = 0;
 function check(cond, msg) { console.log((cond ? 'ok   ' : 'FAIL ') + msg); if (!cond) failures++; }
+const freeMemoryRuns = [];
 
 function boot(name, mode) {
   const p = PROGRAMS[name];
@@ -41,6 +42,23 @@ function boot(name, mode) {
   const hooks = new Hooks(m, p.symbols);
   const ported = Native.install(hooks, mode);
   m.start(p.entry);
+  if (name === 'game') {
+    const s=p.symbols, record={armed:false, intact:true, frames:0};
+    m.freeMemoryRecord=record;
+    freeMemoryRuns.push(record);
+    const frame=m.runFrame.bind(m);
+    m.runFrame=function() {
+      const result=frame();
+      if (!record.armed && m.mmuCR===0x3E && m.ram[s.GUNPACK]===(s.TORPA&255)) {
+        m.ram.fill(0xA5,s.MINEFREE,s.MINEEND);
+        record.armed=true;
+      } else if (record.armed) {
+        for(let a=s.MINEFREE;a<s.MINEEND;a++) if(m.ram[a]!==0xA5) record.intact=false;
+        record.frames++;
+      }
+      return result;
+    };
+  }
   return { m, hooks, ported, p };
 }
 
@@ -1018,6 +1036,43 @@ for (const name of Object.keys(Profiles)) {
   report(hooks, 'game');
 }
 
+// ---- game: permanent low-RAM relocation and BASIC workspace restoration -------
+{
+  const g=boot('game','trace'),m=g.m,A=m.ram,S=g.p.symbols;
+  const fixed=JSON.parse(fs.readFileSync(path.join(ROOT,'../c128-game/fixed-symbols.json'),'utf8'));
+  check(Object.entries(fixed).every(([name,address])=>S[name]===address),
+    'memory: every pre-existing symbol below $E000 retains its address');
+  check(S.MINEEND-S.MINEFREE>=3072,'memory: at least 3 KB of resident high RAM free in every mode');
+  const original=Buffer.alloc(S.LOWEND-S.LOWSTART);
+  for(let i=0;i<original.length;i++) original[i]=(i*73+(i>>8)*19+0x37)&255;
+  A.set(original,S.LOWSTART);
+  A[S.LOWSTART-1]=0x6B;A[S.LOWEND]=0xB6;
+  // Independent decoder for the third stream, before init consumes its staging.
+  let src=0xD100,end=A[src]|A[src+1]<<8;src+=2;
+  const decoded=[];
+  while(decoded.length<end-S.LOWSTART) {
+    const token=A[src++];
+    if(token&128) {
+      const distance=A[src]|A[src+1]<<8;src+=2;
+      for(let n=(token&127)+3;n>0;n--)decoded.push(decoded[decoded.length-distance]);
+    } else for(let n=token+1;n>0;n--)decoded.push(A[src++]);
+  }
+  // Stop at the first frame entry: no self-modifying gameplay code has run yet.
+  m.setBreak(S.frame,true);
+  for(let f=0;f<200&&m.cpu.pc!==S.frame;f++)m.runFrame();
+  check(m.cpu.pc===S.frame&&Buffer.from(A.subarray(S.LOWSTART,S.LOWEND)).equals(Buffer.from(decoded)),
+    'memory: CPU unpacks every relocated byte exactly before gameplay');
+  check(Buffer.from(A.subarray(S.LOWBACK,S.LOWBACK+original.length)).equals(original),
+    'memory: original low RAM survives in RAM beneath I/O');
+  check(A[S.LOWSTART-1]===0x6B&&A[S.LOWEND]===0xB6&&m.mmuCR===0x3E&&!(m.vic[0x30]&1),
+    'memory: relocation respects both bounds and restores MMU/1 MHz');
+  m.setBreak(S.frame,false);m.stopped=null;
+  const c=m.cpu;c.push(0xFF);c.push(0xF3);c.pc=S.EXIT;
+  for(let i=0;i<1e6&&c.pc!==0xFFF4;i++)c.step();
+  check(c.pc===0xFFF4&&Buffer.from(A.subarray(S.LOWSTART,S.LOWEND)).equals(original)&&m.mmuCR===A[S.SAVMMU],
+    'memory: normal EXIT restores every borrowed byte and the caller MMU');
+}
+
 // ---- game: mothership preliminary scanner positioning, original $8C44-$8D56 ----
 {
   {   // The C128 KERNAL's LOAD ends when the load address reaches $FF00 (its
@@ -1263,12 +1318,38 @@ for (const name of Object.keys(Profiles)) {
   // $FD guards damage in the original; the deflector key is available only in hyperspace.
   R[0xFD]=1;R[0xCF01]=1;R[0xCF02]=1;R[0xCF03]=1;R[0x5D]=0x80;R[0x5E]=0xA0;call(o.m,0xCF04);
   check(R[0xF432]===5,'game: original forced deflector flag suppresses all five damage calls');
-  // Replay the reported VICE setup with DMA, overlaying only the same-size fix:
-  // save states contain the old program bytes as well as the game state.
+  // The fixture contains an older executable. Install the relocated executable
+  // while retaining its gameplay state, external hooks and CPU position.
   const saved=JSON.parse(fs.readFileSync(path.join(ROOT,'../briefs/img-torpedo/before-torpedo.state.json'),'utf8'));
   const replay=boot('game','trace'),sm=replay.m,SA=sm.ram;
+  run(sm,replay.hooks,60);
+  const current=SA.slice();
   sm.loadState(sm.stateFromText(JSON.stringify(saved.state)));sm.dma=true;
-  SA.set(A.subarray(S.ETSPR,S.ETSOUND),S.ETSPR);
+  const delta=0xDD00, oldStart=S.LOWSTART+delta, oldEnd=S.LOWEND+delta;
+  const old=SA.slice();
+  // Only words which changed by the relocation are rewritten in fixed code.
+  for(const [start,end] of [[0x1D00,0x28D7],[0x5300,0x5DFF],[0x8500,0xCFFA],[0xE000,0xE960]]) {
+    for(let a=start;a<end-1;a++) {
+      const was=old[a]|old[a+1]<<8,now=current[a]|current[a+1]<<8;
+      if(was>=oldStart&&was<oldEnd&&now===was-delta) {SA[a]=now&255;SA[a+1]=now>>8;}
+    }
+  }
+  SA.set(current.subarray(S.LOWSTART,S.LOWEND),S.LOWSTART);
+  // This pre-launch fixture is an ordinary approach: no docking, erasing
+  // circles or queued battle messages. Keep the fresh low-block defaults;
+  // that historical executable also predates the one-byte ring-work rewrite.
+  for(const label of ['sprcj','HTSPR','shpj','vv2','g_vs2']) {
+    const a=S[label]+1,was=old[a]|old[a+1]<<8;
+    if(was>=oldStart&&was<oldEnd){const now=was-delta;SA[a]=now&255;SA[a+1]=now>>8;}
+  }
+  if(sm.cpu.pc>=oldStart&&sm.cpu.pc<oldEnd)sm.cpu.pc-=delta;
+  for(let a=0x101+sm.cpu.sp;a<0x1FF;a++) {
+    const ret=SA[a]|SA[a+1]<<8;
+    if(ret>=oldStart&&ret<oldEnd){SA[a+1]-=delta>>8;a++;}
+  }
+  SA.set(current.subarray(0xE960,S.MINEFREE),0xE960);
+  SA.set(old.subarray(S.LOWSTART,S.LOWEND),S.LOWBACK);
+  sm.freeMemoryRecord.armed=false;
   const trace=[];let replayArt=true,replayLayout=true;
   const raw=fs.readFileSync(path.join(ROOT,'../c128-gui/ref/torpedo-a000.bin'));
   for(let f=0;f<150;f++) {
@@ -1882,5 +1963,7 @@ for (const name of Object.keys(Profiles)) {
 
 }
 
+check(freeMemoryRuns.filter(r=>r.armed).every(r=>r.intact)&&freeMemoryRuns.some(r=>r.frames>1000),
+  `memory: $A5-filled free high RAM survives all existing game scenarios (${freeMemoryRuns.filter(r=>r.armed).length} boots)`);
 console.log(failures ? failures + ' check(s) failed' : 'all checks passed');
 process.exit(failures ? 1 : 0);

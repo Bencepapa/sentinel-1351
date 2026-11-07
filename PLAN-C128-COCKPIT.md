@@ -6,9 +6,24 @@ is ported from the C64 code and checked against it.
 
 ## Status
 
-Updated 2026-11-06 (working tree; not committed). Everything below is built into
+Updated 2026-11-07 (working tree; not committed). Everything below is built into
 `c128-game/sentinel-c128-game.prg` and the browser page (`js/dist/sentinel.html`),
 and `node js/test/run.js` ends with "all checks passed".
+
+Memory rearrangement: 3,299 resident high bytes at `$EA16-$F6F8` are now free
+in flight, fights, mothership sequences and hyperspace; packed margin is 2,398
+bytes, glue margin remains 1. The former `$E960-$F6F8` block is installed once
+at `$0C60-$19F8`, moving by whole pages to preserve timing. Low RAM is saved
+beneath I/O at `$D200-$DF98` and restored on EXIT. The complete memory/lifetime
+map and init order are in `c128-game/README.md`, "Memory map (2026-11-07)".
+No minefield feature is added by this rearrangement.
+Verified with `python c128-game/build.py`, `python js/build.py`,
+`python js/bundle.py` and `node js/test/run.js` ("all checks passed"). Split
+late writes and OVRUN remain 0. The free range survives `$A5` filling across
+42 game boots/scenarios; archive installation, workspace backup and normal EXIT
+restoration are checked independently. VICE x128 cold-load/exit and visual
+confirmation remain with the user. Old executable save states need migration;
+the existing pre-proton fixture is explicitly migrated in its replay test.
 
 Done: the cockpit and its raster schedule, the phasor shot, fighters of all three
 squadron types, steering, hits and explosions, enemy fire and the ship being hit,
@@ -68,19 +83,30 @@ Left, in a suggested order (each with what is already known):
   230-245, cycles 16-55) and `OVRUN`; both must stay 0. A blanked screen must keep
   the bad lines: use an invalid VIC mode (`$D011 = $7B`, ECM+BMM, black), not
   DEN=0, which removes the line-75 bad line the top split is timed by.
-- **Memory is the bottleneck.** Now: `$E000` code 0 bytes free (to TORPA
-  `$F6F9`), packed image 68 bytes before cockpit art `$7680`, glue 1 byte.
-  TORPA's 1927 bytes end exactly at TSHOT `$FE80`; its decoded art is unchanged.
-  The main image is packed at `$5E00`. STR2Y is staged at `$D000-$D051`, the
-  245-byte positioning tail at `$D100-$D1F4`, and a third packed enemy-proton
-  stream at `$D200` (bounded below `$D400`). MSUNPACK reads these with MMU `$3F`.
-  After all decoding, 142 bytes staged at `$D400-$D48D` replace the now-dead
-  GUNPACK decoder with frame pointers, mothership state and MSDELAY. UPEND,
-  GSEED and GUNPK2 remain intact. Init uses 2 MHz for these extra streams and
-  restores 1 MHz / MMU `$3E` before returning.
-  The PRG ends at `$D48D`, inside the C128 KERNAL LOAD range (below `$FF00`).
+- **Memory after rearrangement:** `$EA16-$F6F8` = 3,299 bytes free in every
+  gameplay mode; 2,398 packed bytes before cockpit art `$7680`; glue 1 byte.
+  See the complete lifetime map in `c128-game/README.md`. Append new high code
+  before GINIT3END, use the existing hooks, and keep MINEEND/TORPA at `$F6F9`.
+  The 3,481-byte mothership/message/repair block now lives at `$0C60-$19F8`.
+  Do not shift it: relocation by `$DD00` preserved every page crossing.
+  No runtime overlays/unpacks were introduced. TORPA remains 1,927 bytes,
+  ending exactly at TSHOT `$FE80`; decoded art is unchanged.
+  Init loads packed high code from `$5E00`, STR2Y from `$D000-$D051`, the
+  entire low block from `$D100-$DD72`, and runtime tables from `$DF00-$DF8D`.
+  GINIT3 temporarily saves original low RAM at `$6000-$6D98` after the high
+  stream has been consumed, then installs low code and moves that backup to
+  `$D200-$DF98` after consuming all I/O staging. GINIT2 restores sprite slots
+  and clears the view. Never overwrite the runtime backup, even in hyperspace.
+  The normal EXIT hook restores low RAM before the caller's MMU/IRQs.
+  Init/exit alone select MMU `$3F`; gameplay stays `$3E`, with no KERNAL calls.
+  Init uses 2 MHz and returns at 1 MHz. GUNPACK's 142-byte reclamation remains
+  unchanged; UPEND, GSEED and GUNPK2 stay intact. The retired MSUNPACK bytes in
+  low RAM are padding retained to preserve offsets; GUNPK2 calls GINIT3.
+  All 2,206 pre-existing symbols below `$E000` are frozen in
+  `c128-game/fixed-symbols.json` and checked by build and tests.
+  The PRG ends at `$DF8D`, inside the C128 KERNAL LOAD range (below `$FF00`).
   Never stage anything at `$FF05-$FFF9`: the KERNAL does not load it. Keep all
-  build bounds, including staging overlaps and reclaimed decoder size.
+  build bounds, including staging overlaps, backup/copy sizes and reclaimed decoder size.
 - Assembler (`mouse/tools/asm.py`): no `label+n` for forward labels, no long
   branches (use JMP), labels are global (prefix them: `g_xx`, `mt_`, `mr`).
 - Workflow with the user: they test every build in VICE x128 (and the C64
@@ -638,6 +664,10 @@ Strategic battle messages:
   tick with no late split writes or OVRUN.
 
 Memory and integration:
+
+The following records the initial repair integration. Current addresses and
+available space are superseded by the 2026-11-07 Status/handing-on notes and the
+complete memory map in `c128-game/README.md`.
 
 - New high code remains at `$E000`, below TORPA `$F600`; small repair helpers also use checked padding gaps. Glue/cockpit/map code sizes
   and positions are unchanged. Existing BIT/JSR and JMP slots provide the hooks,

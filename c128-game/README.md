@@ -46,6 +46,125 @@ It is the browser page's default program.
 
 ## How it is built
 
+### Memory map (2026-11-07)
+
+Bank 0, inclusive addresses. F = flight/approach, D = dogfight, M = mothership
+(including docking/destruction), H = hyperspace. "Resident" means reserved in
+**all four modes**, even if that mode is not currently executing the code. Small
+padding gaps below are not advertised as feature space. The map remains live
+behind the cockpit, including while closed; its world arrays are never scratch.
+
+| Range | Contents and lifetime |
+|---|---|
+| `$0C60-$19F8` | 3,481-byte resident relocated mothership/repair/message/positioning/enemy-proton block. Used in M, message jobs also F/D/H; retained in every mode. Original bank-0 contents saved/restored. |
+| `$1C01-$1C0C` | BASIC SYS stub; init only. |
+| `$1C0D-$1CFF` | Loader-to-entry padding; reserved. |
+| `$1D00-$28D6` | Cockpit first code/state chunk; resident F/D/M/H. |
+| `$28D7-$28F5` | Repair art-restore helper; resident, executes M. |
+| `$28F6-$28F7` | Padding. |
+| `$28F8-$28FF` | Saved repair glyph; resident master, M. |
+| `$2900-$2CBF` | Fifteen type-1 fighter masters; resident, F/D/M cleanup. Replaces disabled VDC assets. |
+| `$2CC0-$2CDD` | Repair words and eight lengths; resident, M. |
+| `$2CDE-$2CFA` | Repair helper; resident, M. |
+| `$2CFB-$2CFF` | Padding. |
+| `$2D00-$2DFF` | Bitmap Y low-byte table (200 entries), then padding. Shared with map, F/D/M/H. |
+| `$2E00-$2EFF` | Bitmap Y high-byte table (200 entries), then padding. Shared, F/D/M/H. |
+| `$2F00-$2F4F` | Bitmap X low/high tables (40 entries each), shared F/D/M/H. |
+| `$2F50-$2FED` | Repair system names (158 bytes); resident, M. |
+| `$2FEE-$2FFA` | Repair helper; resident, M. |
+| `$2FFB-$2FFF` | Padding. |
+| `$3000-$33E7` | Original colour RAM image; resident master, init and scene restoration. |
+| `$33E8-$33FD` | Repair helper; resident, M. |
+| `$33FE-$33FF` | Padding. |
+| `$3400-$35FF` | Phasor X/Y path buffers; F/D/M. Not available as persistent scratch in H. |
+| `$3600-$3680` | Long-range scanner scale, 129 bytes; F/D/M/H. |
+| `$3681-$368C` | Repair helper; resident, M. |
+| `$368D-$368F` | Padding. |
+| `$3690-$36CF` | Digit-sprite master; F/D/M/H. |
+| `$36D0-$3767` | Two 76-byte tractor-beam paths; resident, M. |
+| `$3768-$37FD` | Repair helper; resident, M. |
+| `$37FE-$37FF` | Padding. |
+| `$3800-$39BF` | Seven type-2 fighter masters; resident F/D/M cleanup. |
+| `$39C0-$3BBF` | Eight type-3 fighter masters; resident F/D/M cleanup. |
+| `$3BC0-$3BCF`, `$3BD1-$3BFF` | Repair helpers; resident M (one padding byte at `$3BD0`). |
+| `$3C00-$3D3B` | Map STATE/COUNT/NEWST/NEWCT/DIRTY: five 60-byte arrays at `$3C00/$3C40/$3C80/$3CC0/$3D00`, with four-byte gaps. Live F/D/M/H. |
+| `$3D3C-$3D5F` | Reserved map-table padding (ship systems use the shared cockpit variables). |
+| `$3D60-$3DFA` | Repair charging code; resident, M. |
+| `$3DFB-$3DFF` | Padding. |
+| `$3E00-$3FFF` | Type-2 X movement streams; resident, F/D. Disabled VDC text aliases are unusable. |
+| `$4000-$43FF` | VIC character font; displayed HUD/text F/D/M/H. |
+| `$4400-$47E7` | Bitmap screen matrix; live F/D/M/H. |
+| `$47E8-$47FF` | Matrix padding and sprite pointers; reserve the whole tail. |
+| `$4800-$4BE7` | HUD/bottom text and docking report screen; live F/D/M/H. |
+| `$4BE8-$4BFF` | Text padding and sprite-pointer tail; reserved. |
+| `$4C00-$4FFF` | Crosshair, tracking, guns, approach blips, planet and barrel sprite slots; protected in every mode. |
+| `$5000-$5257` | 600-byte cockpit matrix master for map close; resident F/D/M/H. CPU-only RAM (VIC sees character ROM). |
+| `$5258-$52FF` | Reserved padding. |
+| `$5300-$5DFE` | Glue code/state; resident F/D/M/H. `$5D63-$5DF0` is the init decoder, reclaimed as 142 bytes of frame pointers, mothership state, timing and repair state. UPEND/GSEED/GUNPK2 stay intact. |
+| `$5DFF` | One glue byte free; do not move existing code. |
+| `$5E00-$5FFF` | Packed high-image start at load; becomes 512-byte type-2 Y streams at init, resident F/D. |
+| `$6000-$63BF` | Fighter sprite slots, protected F/D/M/H; enemy proton temporarily borrows `$6000-$607F`. Init temporarily uses `$6000-$6D98` for the low-RAM backup, then restores all slots. |
+| `$63C0-$767F` | 3D-view bitmap: stars/fight, map, rings and hyperspace. Packed image occupies through `$6D21` at load, then is dead. The 2,398-byte packed margin `$6D22-$767F` is **load-time capacity**, not persistent runtime RAM. |
+| `$7680-$7CBF` | 1,600-byte cockpit bitmap art, always protected. |
+| `$7CC0-$7F3F` | Ten phasor/shot sprite slots; player proton borrows the first two; restored from TSHOT. Protected in every mode. |
+| `$7F40-$7FFF` | Last fighter shape, scanner line and fifth planet frame; protected in every mode. |
+| `$8000-$84FF` | Type-1 movement streams; resident F/D. |
+| `$8500-$A996` | Cockpit second code/state chunk; resident F/D/M/H. |
+| `$A997-$A99F` | Alignment padding. |
+| `$A9A0-$BFC2` | Map code/state; resident, world runs F/D/M/H. |
+| `$BFC3-$BFFC` | Repair helper; resident M. |
+| `$BFFD-$BFFF` | Padding. |
+| `$C000-$CFF9` | High glue/hyperspace code and buffers; resident F/D/M/H. |
+| `$CFFA-$CFFF` | Padding. |
+| `$D000-$D051` | RAM beneath I/O: init STR2Y packed stream; dead afterwards. Visible addresses are hardware in gameplay. |
+| `$D052-$D0FF` | Staging padding; not directly accessible with gameplay MMU `$3E`. |
+| `$D100-$DD72` | RAM beneath I/O: 3,187-byte packed low-code stream at load/init. Consumed before backup installation. |
+| `$DD73-$DEFF` | Staging padding. |
+| `$DF00-$DF8D` | RAM beneath I/O: 142 runtime bytes staged at load, copied to the reclaimed decoder before backup installation. PRG ends here. |
+| `$DF8E-$DFFF` | No load-time payload; reserved staging/backup tail. |
+| `$D200-$DF98` (runtime) | **3,481-byte original low-RAM backup**, replacing consumed staging. Required until EXIT in F/D/M/H; never scratch. I/O remains visible over it. |
+| `$E000-$E95F` | Resident proton/type/hyperspace code/state; packed then installed at init, F/D/M/H. |
+| `$E960-$EA15` | Resident init/copy/exit helpers (182 bytes); only init and exit execute them. |
+| **`$EA16-$F6F8`** | **3,299 bytes free for new code/data in every mode**, no overlay or restore needed. Use the existing hooks. |
+| `$F6F9-$FE7F` | Unchanged 1,927-byte TORPA stream; resident, player and enemy protons. |
+| `$FE80-$FEFF` | TSHOT, 128 bytes of original shot masters; resident, F/D/M restoration. End of decoded high image. |
+| `$FF00-$FF04` | MMU configuration registers, never ordinary payload. |
+| `$FF05-$FFF9` | Reserved KERNAL/vector area; never stage loaded data here (native LOAD stops at `$FF00`). |
+
+The new choice is permanent relocation, rather than a runtime overlay. All 3,481
+bytes originally at `$E960-$F6F8` move by exactly `$DD00` to `$0C60-$19F8`;
+relative branches and indexed accesses keep their low bytes and page crossings.
+No code in the cockpit, map or `$5300` glue moves. The 2,206 pre-existing symbols
+below `$E000` are frozen in `fixed-symbols.json` and checked by every game build.
+Low RAM is borrowed only after all KERNAL loading has finished. With interrupts
+disabled and no KERNAL calls during gameplay, its editor/BASIC workspace is not
+used by the game; EXIT restores it before restoring the caller's MMU and IRQs.
+
+Init first decodes the high image. `GINIT3` selects 2 MHz/MMU `$3F`, saves the
+original low RAM into the consumed packed bitmap at `$6000`, decodes STR2Y and
+the low block from `$D000/$D100`, installs the 142 runtime bytes from `$DF00`,
+then copies the saved workspace beneath I/O to `$D200`. It returns at 1 MHz/MMU
+`$3E`; GINIT2 restores fighter slots and clears the view before showing it.
+Only EXIT selects `$3F` again to restore the saved workspace. The former
+MSUNPACK code remains inert in the relocated block to preserve all page offsets.
+
+Measured margins: **3,299 high**, **2,398 packed**, **1 glue** byte, versus 0/68/1
+before. The new archive uses 3,187 of the 3,584 staging bytes before `$DF00`.
+All sprite, art, stream, decoder-reclamation and native LOAD bounds remain
+checked; superseded separate positioning/enemy-stream checks are replaced with
+whole-low-block and archive/table/backup bounds. No runtime unpacking is added.
+
+`node js/test/run.js` independently decodes the archive, checks CPU-installed
+bytes and original-workspace backup, checks both low-RAM boundaries and EXIT,
+and fills the entire free high range with `$A5` across the existing gameplay
+scenarios. Its old executable save-state fixture is explicitly relocated by
+the replay test; old browser save states are not automatically migrated.
+VICE x128 remains the user's final check, especially cold LOAD, docking, a
+subsequent fight/hyperspace jump, and RUN/STOP back to BASIC.
+Verification on 2026-11-07: game build, JS build, bundle and the full Node suite
+all pass ("all checks passed"); 42 game boots retain the free-range pattern,
+and DMA late split writes / OVRUN remain zero.
+
 `build.py` reads both sources and `game.asm` (the glue):
 
 - the map's source: every label and constant it defines gets the prefix `M_`
@@ -94,15 +213,10 @@ radar mark and frames to the ring start for friendly and enemy bases. The port
 uses a frame-locked approximation of the original loop's rate (up to five passes/frame, with a raster deadline),
 including its exact 00/00 lock and in-front/distance-below-$0600 exit.
 
-Memory left: 0 bytes before TORPA `$F6F9`, 68 bytes in the packed image,
-1 byte in the glue. The unchanged 1927-byte animation ends at TSHOT `$FE80`.
-Init-only staging uses `$D000` (STR2Y), `$D100` (positioning tail), `$D200`
-(third packed enemy-proton stream, bounded below `$D400`) and `$D400-$D48D`
-(frame pointers and mothership state/timing tables). After unpacking with MMU
-`$3F`, the last table replaces 142 bytes of the dead GUNPACK decoder; live
-UPEND/GSEED/GUNPK2 stay intact. Init briefly uses 2 MHz, then restores 1 MHz
-and MMU `$3E`. All earlier bounds remain checked; the PRG ends at `$D48D`,
-below the KERNAL LOAD limit `$FF00`. Runtime code outside `$E000` stays fixed.
+Memory now follows the 2026-11-07 map above: 3,299 high, 2,398 packed and 1 glue
+byte free; low code is installed once with original workspace saved beneath I/O.
+The unchanged 1,927-byte animation ends at TSHOT `$FE80`. The PRG ends at `$DF8D`,
+below the KERNAL LOAD limit `$FF00`. All pre-existing symbols below `$E000` stay fixed.
 The temporary SPRCROSS/HTSPR wrapper keeps incoming sprites visible even when phasor work defers the view hook; MSOFF
 restores both hooks.
 

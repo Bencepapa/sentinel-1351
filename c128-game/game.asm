@@ -1248,7 +1248,7 @@ GSEED:  .BYTE 0
 GUNPK2: JSR GUNPACK
         LDA #>STR2Y     ; (CDST's low byte is 0: the first stream ends at a page)
         STA CDST+1
-        JMP MSUNPACK
+        JMP GINIT3
 HIGH2   = $E000
 PACKSRC = $5E00
 
@@ -3120,9 +3120,9 @@ HDL:    .BYTE 0
 HDH:    .BYTE 0
 
 ; ---------------- more code: the RAM under the KERNAL at $E000 ----------------
-; Loaded packed at $5E00 (restored sprite slots and the view, wiped before shown)
-; and moved here by GAMEINIT; the second stream and the positioning tail are
-; staged beneath I/O and read under MMU $3F during init only.
+; Loaded packed at $5E00 (restored sprite slots and the view, wiped before shown).
+; The mothership block below is resident in borrowed low RAM instead; GINIT3
+; installs it from a third stream beneath I/O after saving the caller's RAM.
         * = $E000
 TSH1    = $2900         ; type-1 masters (15 shapes), restored to live slots at init
 TSH2    = $3800         ; type-2 masters (7), reclaimed duplicate map address tables
@@ -4172,7 +4172,10 @@ g_cu1:  LDA HTEST
 H2END:
 
 ; Mothership sector ($FD3B, $8C44); work in the view through shpj, no idle cost.
-; Fighter masters and STR2X use lower RAM; new code fits below TORPA ($F6F9).
+; Fighter masters and STR2X use lower RAM; feature space is MINEFREE..MINEEND.
+; Relocate by $DD00: identical low bytes preserve page-crossing timing.
+; Init saves this RAM to $D200 before installing the packed low block.
+        * = $0C60
 MSECTOR:
         LDA #<MAPCLOSE
         STA g_mi8+1
@@ -5285,11 +5288,8 @@ g_mrflout:RTS
 MREND:
 
 
-; Original $8C44-$8D56 preliminary positioning. Five loop passes/frame,
-; $9054 settling ~194 DMA frames, then $0F7F's five-count wait ~70 frames.
-; Both init-only load streams are staged beneath I/O; the KERNAL's LOAD cannot
-; reach $FF00-$FFFF (its store loop ends when the address reaches $FF), so the
-; positioning tail is copied from $D100 while the RAM beneath I/O is selected.
+; Retired init path, retained as inert bytes to keep every following page
+; offset. GUNPK2 now calls resident GINIT3, not this old staging decoder.
 MSPOSSRC = $D100
 MSUNPACK:
         INC FAST        ; init only: START selected 1 MHz; restore after the streams
@@ -5656,6 +5656,106 @@ ETSOUND:LDA #$0A        ; the launch ($BBB2): noise on voices 1 and 2
         STA $D40B
         RTS
 ETEND:
+LOWEND:
+
+; Resident init/exit helpers. No KERNAL calls or interrupts while low RAM is
+; borrowed. The packed view is dead after GUNPACK, so it can hold the original
+; low RAM until the I/O staging streams have all been consumed.
+        * = $E960
+LOWSTART = $0C60
+LOWBACK = $D200
+LOWTEMP = $6000
+LOWPAGES = 13
+LOWTAIL = 153
+GINIT3: INC FAST
+        LDA #$3F
+        STA $FF00
+        LDA #<LOWSTART
+        STA CSRC
+        LDA #>LOWSTART
+        STA CSRC+1
+        LDA #<LOWTEMP
+        STA CDST
+        LDA #>LOWTEMP
+        STA CDST+1
+        JSR GLOWCOPY
+        LDA #$00
+        STA CSRC
+        LDA #$D0
+        STA CSRC+1
+        LDA #<STR2Y
+        STA CDST
+        LDA #>STR2Y
+        STA CDST+1
+        JSR g_upb
+        LDA #$00
+        STA CSRC
+        LDA #$D1
+        STA CSRC+1
+        LDA #<LOWSTART
+        STA CDST
+        LDA #>LOWSTART
+        STA CDST+1
+        JSR g_upb
+        LDX #141
+gl_table:LDA $DF00,X
+        STA GUNPACK,X
+        DEX
+        CPX #$FF
+        BNE gl_table
+        LDA #<LOWTEMP
+        STA CSRC
+        LDA #>LOWTEMP
+        STA CSRC+1
+        LDA #<LOWBACK
+        STA CDST
+        LDA #>LOWBACK
+        STA CDST+1
+        JSR GLOWCOPY
+        LDA #$3E
+        STA $FF00
+        DEC FAST
+        RTS
+
+; Exactly LOWEND-LOWSTART bytes; X counts full pages, then the partial page.
+GLOWCOPY:
+        LDY #0
+        LDX #LOWPAGES
+gl_page:LDA (CSRC),Y
+        STA (CDST),Y
+        INY
+        BNE gl_page
+        INC CSRC+1
+        INC CDST+1
+        DEX
+        BNE gl_page
+gl_tail:LDA (CSRC),Y
+        STA (CDST),Y
+        INY
+        CPY #LOWTAIL
+        BNE gl_tail
+        RTS
+
+; Same-size EXIT hook, before it restores the original MMU and enables IRQs.
+GREXIT: LDA #$3F
+        STA $FF00
+        LDA #<LOWBACK
+        STA CSRC
+        LDA #>LOWBACK
+        STA CSRC+1
+        LDA #<LOWSTART
+        STA CDST
+        LDA #>LOWSTART
+        STA CDST+1
+        JSR GLOWCOPY
+        LDA #$3E
+        STA $FF00
+        LDA SAVFAST
+        STA FAST
+        RTS
+GINIT3END:
+MINEFREE = GINIT3END
+MINEEND = $F6F9
         * = $3D60
 MRCHARGE:LDA MREN
         BNE g_mrcout
