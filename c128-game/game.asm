@@ -20,7 +20,7 @@
 ; ships is approached group by group (the cockpit's long range scanner), each
 ; kill lowers the map's COUNT, the last one empties the sector on the map.
 ; Motherships (STATE $80 / $FF) approach as biased concentric rings (MSECTOR).
-; Friendly repair, proton destruction and the enemy proton follow; mines are later work.
+; Friendly repair, destruction and the enemy proton follow; build.py joins mines.asm.
 
 HUDSEC  = $4865         ; the HUD's sector digits (row 2, column 21)
 MATRIX  = $4400         ; the bitmap's colour matrix
@@ -3431,7 +3431,7 @@ TCOL0:  LDA #$00
         LDA #$D8
         STA TPCP+1
         RTS
-TCOL:   LDA #34
+TCOL:   LDA #38        ; one more bounded row after the base input hook
         JSR TLATE
         BCS g_tc9
         LDA TPCR
@@ -4353,13 +4353,13 @@ g_msc3: STA (CDST),Y
 
 g_msv3: JSR MSPSTEP
 ; The enemy entry sweep formerly overlapped the rings. After positioning it has
-; ended; reserve one frame in sixteen to retain the original DMA growth rate.
+; ended; reserve one frame in sixty-four after the base steering/fire gates.
 g_msclock:LDA MSKIND
         ASL A
         BNE g_msclocktick
         JSR ETSPR
         LDA EFRM
-        AND #$0F
+        AND #$3F
         BEQ g_msret
 g_msclocktick:INC MSCLOCK
         LDA MSRUN
@@ -5817,7 +5817,7 @@ g_mrrcolor:LDA COLORDATA+719,X
 MRNBUDGET:LDA FAST
         AND #1
         BEQ g_mnbview
-        LDY #52
+        LDY #60        ; repair report: compensate the active base input hook
         LDA #8
         JSR TLATE
         BCS g_mnbret

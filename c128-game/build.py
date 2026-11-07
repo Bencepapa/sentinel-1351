@@ -24,7 +24,7 @@ $3800-$3FFF (c128-map/build.py):
   $5E00  packed $E000 image, after glue and over sprite slots restored at init
   $0C60  resident mothership/message/repair code; original RAM saved at $D200
   $D000  init-only packed STR2Y; $D100 low-code stream; $DF00 runtime tables
-  $EA16  3299 free high bytes to TORPA, available in every gameplay mode
+  $EA16  resident minefield code/art/slot backup, full through $F6F8
   $xx00  the map's code: right after the cockpit's second chunk
   $5300  the glue (game.asm), CPU RAM the VIC-IIe cannot use
   $C000  more of the glue, in the RAM under the KERNAL (MMU $3E: the game calls no
@@ -275,6 +275,21 @@ def assemble():
     cockpit = cockpit.replace('        STA HITS\n        STA HITS+1\n        JMP SHOWSH',
                               '        BIT HITS\n        BIT HITS+1\n        JMP SHOWSH')
     glue = read('c128-game', 'game.asm')
+    # Same-size entry replacements; every existing lower symbol stays fixed.
+    glue = glue.replace('        JMP MSPOS\n', '        JMP MNVIEW\n')
+    glue = glue.replace('        JSR MSPOSOFF\n', '        JSR MNOFF\n', 1)
+    # Preserve every low-code address: helpers live in the minefield's high tail.
+    glue = glue.replace('mp_pass:LDA $D012', 'mp_pass:JSR MNPASS')
+    glue = glue.replace('        JSR STEER\nmp_depth:', '        JSR MNSTEER\nmp_depth:')
+    glue = glue.replace('MSPREAD:JMP lr7', 'MSPREAD:JMP MNREAD')
+    glue = glue.replace('        JSR APINIT\n        LDA EVIS', '        BIT APINIT\n        LDA EVIS')
+    glue = glue.replace('g_tp6:  LDA TREQ', 'g_tp6:  JSR MNREQUEST')
+    mine_source = read('c128-game', 'mines.asm')
+    sprites = open(os.path.join(ROOT, 'c128-gui/ref/sprites-4800.bin'), 'rb').read()
+    mine_raw = sprites[65*64:77*64]  # shape $71-$7C in the reference's order
+    mine_packed = torp_frames(mine_raw)
+    mine_source = mine_source.replace('; MNARTDATA', '.BYTE ' + ','.join(str(v) for v in mine_packed))
+    glue = glue.replace('GINIT3END:', mine_source + '\nGINIT3END:')
     global MAPCODE
     for _ in range(3):              # the map's code goes right after the cockpit's second chunk
         source = cockpit + '\n' + mapsrc.replace('        * = $1D00\n', '        * = $%04X\n' % MAPCODE) + '\n' + glue
@@ -387,7 +402,12 @@ def main():
             raise SystemExit(f'code from ${start:04X} ends at ${start + len(chunks[start]):04X}, past ${limit:04X}')
     assert HIGH2 + len(chunks[HIGH2]) == 0xE960
     assert 0xE960 + len(chunks[0xE960]) == symbols['MINEFREE']
-    assert symbols['MINEEND'] - symbols['MINEFREE'] >= 3072
+    assert symbols['MNSTART'] == 0xEA16
+    assert symbols['MINEEND'] - symbols['MNSTART'] >= 3072
+    assert symbols['MINEFREE'] <= symbols['MINEEND']
+    assert symbols['MNARTEND'] - symbols['MNART'] == len(torp_frames(open(os.path.join(ROOT, 'c128-gui/ref/sprites-4800.bin'), 'rb').read()[65*64:77*64]))
+    assert symbols['MNBACKEND'] - symbols['MNBACK'] == 768
+    assert 0x6000 + 12 * 64 <= 0x63C0
     assert symbols['LOWSTART'] == 0x0C60
     assert symbols['LOWEND'] == symbols['LOWSTART'] + len(chunks[0x0C60]) == 0x19F9
     assert len(chunks[0x0C60]) == symbols['LOWPAGES'] * 256 + symbols['LOWTAIL']
@@ -459,6 +479,7 @@ def main():
     p(symbols['STR2X'], open(os.path.join(ref, 'streams2-0600.bin'), 'rb').read())
     at('TORPA', torp_frames(open(os.path.join(ref, 'torpedo-a000.bin'), 'rb').read()))
     at('TSHOT', shape(0x67) + shape(0x68))
+    assert bytes(image[symbols['MNART']-HIGH2:symbols['MNARTEND']-HIGH2]) == torp_frames(b''.join(shape(s) for s in range(0x71, 0x7D)))
     frames = open(os.path.join(ref, 'torpedo-a000.bin'), 'rb').read()
     addresses = []
     offset = symbols['TORPA']

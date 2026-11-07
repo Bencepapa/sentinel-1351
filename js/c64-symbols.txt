@@ -125,3 +125,13 @@ DRIFT       $33B6   ; found: attackers drift back toward the middle of the view
 THRUST      $FEA7   ; found: thrust key $FDE6: speed $F209, energy, depth -6 per $C81E
 AUTOTRACK   $89E6   ; found: automatic tracking computer (needs system 4, $3D)
 FIGHTLOOP   $2CE8   ; found: main loop in a fight (pass counter $89)
+; ---- mines before the mothership rings (DMA traced, 2026-11-07) ----
+MINEINIT    $CC31   ; four multicolour mines: sprites 2/4/5/6, shapes $7C down to $71
+MINESTEP    $CC71   ; delay, spawn, growth, outward drift, retirement
+MINEGROW    $CD27   ; next larger mine shape; final size hits while still enabled
+MINEHIT     $CD3B   ; SHIPHIT, one shield and one system point
+MINESTEER   $B988   ; horizontal mine steering scaled by shape size
+MINEPHASOR  $B7BA   ; low-byte hit box, burst/noise, no kill/energy bonus
+MSPOSITION  $8C44   ; scanner positioning plus six mine calls per main-loop pass
+MSSETTLE    $9054   ; suppress new mines and settle before the ring approach
+STARBASEY   $F1E1   ; base-mode star birth: D4 nonzero forces y=$69

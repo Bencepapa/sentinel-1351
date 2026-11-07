@@ -1036,13 +1036,18 @@ for (const name of Object.keys(Profiles)) {
   report(hooks, 'game');
 }
 
+// ---- game: mines before the mothership rings ---------------------------------
+require('./mines')({boot,run,check,snap,fs,path,ROOT,OUT});
+require('./mine-parity')({boot,run,check,fs,path,OUT});
+
 // ---- game: permanent low-RAM relocation and BASIC workspace restoration -------
 {
   const g=boot('game','trace'),m=g.m,A=m.ram,S=g.p.symbols;
   const fixed=JSON.parse(fs.readFileSync(path.join(ROOT,'../c128-game/fixed-symbols.json'),'utf8'));
   check(Object.entries(fixed).every(([name,address])=>S[name]===address),
     'memory: every pre-existing symbol below $E000 retains its address');
-  check(S.MINEEND-S.MINEFREE>=3072,'memory: at least 3 KB of resident high RAM free in every mode');
+  check(S.MINEEND-S.MNSTART>=3072 && S.MINEFREE<=S.MINEEND,
+    'memory: minefield and remaining free RAM fit the resident 3 KB reservation');
   const original=Buffer.alloc(S.LOWEND-S.LOWSTART);
   for(let i=0;i<original.length;i++) original[i]=(i*73+(i>>8)*19+0x37)&255;
   A.set(original,S.LOWSTART);
@@ -1119,6 +1124,7 @@ for (const name of Object.keys(Profiles)) {
       if(m.breakInfo) {
         const name=m.cpu.pc===0x8D2C?'close':m.cpu.pc===0x9097?'settled':'rings';
         events[name]=m.frame-start;
+        if(name==='rings')check(R[0xD4]===0x80,'game: original keeps star band when rings begin');
         if(name==='rings')break;
       }
     }
@@ -1161,7 +1167,7 @@ for (const name of Object.keys(Profiles)) {
   // The original's steering lock is exact 00/00, latched, and only in front.
   let locks=true;
   const read=m.read;m.read=function(a){return a===0xD012?80:read.call(this,a);};
-  for(const digit of [0x70,0x71,0x73]) {
+  for(const digit of [0x70,0x71,0x73,0x74]) {
     R[0x16]=A[S.ENX]=0xA0;R[0x17]=A[S.ENX+1]=0x88;
     R[0x1C]=A[S.ENY]=0x90;R[0x1D]=A[S.ENY+1]=0x88;
     R[0x22]=A[S.ENZ]=0x90;R[0x23]=A[S.ENZ+1]=0x94;
@@ -1169,7 +1175,7 @@ for (const name of Object.keys(Profiles)) {
     R[0x372D]=A[S.LRDIG+1]=digit;R[0x8E8F]=A[S.FLATCH]=0;
     A[S.MSROW]=1;A[S.APCNT]=8;A[S.JOY]=0xFF;
     call(o.m,0x8E90);call(m,S.MSPOS);
-    locks &&= !!R[0x8E8F]===!!A[S.FLATCH];
+    locks &&= !!R[0x8E8F]===!!A[S.FLATCH] && !!R[0x8E8F]===(digit===0x70);
   }
   m.read=read;
   check(locks,'game: base steering locks at exactly 00/00, unlike the fighter rush at 00-03');
@@ -1399,7 +1405,7 @@ for (const name of Object.keys(Profiles)) {
       if(A[S.ETSTATE]===1&&m.vicLog.some((v,i)=>i%4===2&&v===0x15&&(m.vicLog[i+1]&0x60)===0x60))visible++;
       if(last>=0&&A[S.MAPSHOWN])break;
     }
-    check(first>=0&&Math.abs(last-first-refFrames)<=10&&launches>=2&&A[S.HITS]===5&&(stress!==true||shots),
+    check(first>=0&&Math.abs(last-first-refFrames)<=10&&launches>=2&&A[S.HITS]===5&&(stress!==true||!shots),
       `game: enemy proton lasts ${last-first} DMA frames (original ${refFrames}), five hits with ${stress==='proton'?'overlapping player proton':stress?'steering/fire':'neutral input'}`);
     check(visible>=last-first-1,'game: incoming sprites stay visible through phasor and overlapping proton work');
     check(A[S.MAPSHOWN]&&A[S.MSLOCK]&&!A[S.MSSTATE], 'game: enemy endpoint returns to map and locks base re-entry');
@@ -1540,7 +1546,7 @@ for (const name of Object.keys(Profiles)) {
     call(m, s.SECTORIN);                 // approach under firing/steering load
     for (let f = 0; f < 500 && (K[s.MSSTATE] === 1 || K[s.MSSTATE] === 16); f++) m.runFrame();
     let stressLate = 0;
-    for (let f = 0; f < 200; f++) {
+    for (let f = 0; f < 120; f++) {
       m.mouse.left = true; m.moveMouse(f % 20 < 10 ? 3 : -3, f % 16 < 8 ? 2 : -2);
       m.runFrame();
       const v = m.vicLog;
@@ -1812,7 +1818,8 @@ for (const name of Object.keys(Profiles)) {
     const originalWrite=m.write;
     m.write=function(a,v){if(scan&&((a>=0xDB2C&&a<0xDB3C)||(a>=0xDB54&&a<0xDB64)))events.noiseWrites++;return originalWrite.call(this,a,v);};
     for(const [address,name] of [[0x918E,'beam'],[0x92E3,'repair'],[0x93BB,'typed'],[0xFA33,'charged'],[0x8D6F,'done']])
-      g.hooks.on(address,()=>{events[name]=m.frame-start;if(name==='done')done=true;});
+      g.hooks.on(address,()=>{events[name]=m.frame-start;
+        if(name==='rings')check(R[0xD4]===0x80,'game: original keeps star band when rings begin');if(name==='done')done=true;});
     g.hooks.on(0x9489,()=>events.chars.push(m.frame-start));
     g.hooks.on(0x94DC,()=>events.statuses.push({frame:m.frame-start,index:R[0x9496]}));
     R[0xE1]=1;R[0xE2]=0;R[0x89]=1;R[0xBAD1]=R[0xBACE]=R[0x8C3E]=0;

@@ -38,7 +38,7 @@ It is the browser page's default program.
   points rush to three places with a sound (`$1AF2`), three fighters appear there,
   the warning sounds and the dogfight starts. A squadron of fewer than 3 becomes 3,
   as in the original.
-- In mothership sectors the long range scanner first shows the base's position and X/Y/Z readings. Steering moves it; exact 00 side and 00 up in front locks steering, and depth closes at the original base loop's rate. Fire still shoots, but does not select another target. As in the original, the base is a radar mark without the cyan animated fighter-selection sprite. Near enough in front, the ship settles for about 194 frames, then waits about 70 frames before the rings and rectangular opening grow as in the original. Enemy bases flicker and turn white in alternating phases; friendly bases stay white but share the same hidden phase. A proton destroys a base only if its opening has appeared and the phase is on when the torpedo arrives; a miss preserves the base's colours and the approach continues. A kill shows BASESTAR DESTROYED CAPTAIN, a burst and expanding erasing rings, then clears the sector. Every base sequence returns to the map; that sector cannot be selected straight back until you jump elsewhere. A surviving friendly base draws its white tractor rays, types the full-screen eight-system report with coloured scanning blocks and repair beeps, recharges energy, repairs the ship and grants one proton before the map returns. Tractor rays reach the guns; docking restores the cockpit and all sprite shapes for the next fight. An enemy base fires a white incoming proton at radius 25: it cannot be shot down or dodged, takes five shield/system hits, then returns to the map with the same re-entry lock. Friendly bases never fire. Mines are still to come. Opening and closing the map before the sequence ends restarts the approach.
+- In mothership sectors the long range scanner first shows the base's position and X/Y/Z readings. Only sideways steering moves it; pitch input is ignored. Exact 00 side and 00 up in front locks steering, and depth closes at the original base loop's rate. Fire shoots in the mine/settling phase; later base phases refuse phasors. It does not select another target. As in the original, the base is a radar mark without the cyan animated fighter-selection sprite. After the bounded shape loading, near enough in front, the ship settles for about 184 frames, then waits about 70 frames before the rings and rectangular opening grow as in the original. Enemy bases flicker and turn white in alternating phases; friendly bases stay white but share the same hidden phase. A proton destroys a base only if its opening has appeared and the phase is on when the torpedo arrives; a miss preserves the base's colours and the approach continues. A kill shows BASESTAR DESTROYED CAPTAIN, a burst and expanding erasing rings, then clears the sector. Every base sequence returns to the map; that sector cannot be selected straight back until you jump elsewhere. A surviving friendly base draws its white tractor rays, types the full-screen eight-system report with coloured scanning blocks and repair beeps, recharges energy, repairs the ship and grants one proton before the map returns. Tractor rays reach the guns; docking restores the cockpit and all sprite shapes for the next fight. An enemy base fires a white incoming proton at radius 25: it cannot be shot down or dodged, takes five shield/system hits, then returns to the map with the same re-entry lock. Friendly bases never fire. Before the rings, four multicolour mines grow and drift through the scanner approach. They can be shot down or dodged sideways; an undodged full-size mine takes a shield and a system point. New stars start on a horizontal band throughout positioning and the visible rings; aligning exact 00/00 in front locks star steering at any depth. The lock remains latched until a new sequence. The ?3 fighter-approach threshold does not apply to bases. DMA comparison found the original slightly faster than the port under sustained horizontal input (65?66 versus 60 steering updates in 60 frames); horizontal speed has been retained. The port clears surviving mines in a short cleanup tail before the rings, restoring the borrowed fighter sprite slots instead of retaining the original frozen-sprite bug. Opening and closing the map before the sequence ends restarts the approach.
 - Strategic warnings (a mothership engaged/destroyed, JARALOBA surrounded/lost) now appear on the cockpit message line even with VDC off.
 - The ship (systems, shields, hits, difficulty) is one: the cockpit's model.
 - The second display (VDC) is off in this program for now: its updates take more
@@ -104,7 +104,7 @@ behind the cockpit, including while closed; its world arrays are never scratch.
 | `$5DFF` | One glue byte free; do not move existing code. |
 | `$5E00-$5FFF` | Packed high-image start at load; becomes 512-byte type-2 Y streams at init, resident F/D. |
 | `$6000-$63BF` | Fighter sprite slots, protected F/D/M/H; enemy proton temporarily borrows `$6000-$607F`. Init temporarily uses `$6000-$6D98` for the low-RAM backup, then restores all slots. |
-| `$63C0-$767F` | 3D-view bitmap: stars/fight, map, rings and hyperspace. Packed image occupies through `$6D21` at load, then is dead. The 2,398-byte packed margin `$6D22-$767F` is **load-time capacity**, not persistent runtime RAM. |
+| `$63C0-$767F` | 3D-view bitmap: stars/fight, map, rings and hyperspace. Packed image occupies through `$7589` at load, then is dead. The 246-byte packed margin `$758A-$767F` is **load-time capacity**, not persistent runtime RAM. |
 | `$7680-$7CBF` | 1,600-byte cockpit bitmap art, always protected. |
 | `$7CC0-$7F3F` | Ten phasor/shot sprite slots; player proton borrows the first two; restored from TSHOT. Protected in every mode. |
 | `$7F40-$7FFF` | Last fighter shape, scanner line and fifth planet frame; protected in every mode. |
@@ -118,14 +118,17 @@ behind the cockpit, including while closed; its world arrays are never scratch.
 | `$CFFA-$CFFF` | Padding. |
 | `$D000-$D051` | RAM beneath I/O: init STR2Y packed stream; dead afterwards. Visible addresses are hardware in gameplay. |
 | `$D052-$D0FF` | Staging padding; not directly accessible with gameplay MMU `$3E`. |
-| `$D100-$DD72` | RAM beneath I/O: 3,187-byte packed low-code stream at load/init. Consumed before backup installation. |
-| `$DD73-$DEFF` | Staging padding. |
+| `$D100-$DD73` | RAM beneath I/O: 3,188-byte packed low-code stream at load/init. Consumed before backup installation. |
+| `$DD74-$DEFF` | Staging padding. |
 | `$DF00-$DF8D` | RAM beneath I/O: 142 runtime bytes staged at load, copied to the reclaimed decoder before backup installation. PRG ends here. |
 | `$DF8E-$DFFF` | No load-time payload; reserved staging/backup tail. |
 | `$D200-$DF98` (runtime) | **3,481-byte original low-RAM backup**, replacing consumed staging. Required until EXIT in F/D/M/H; never scratch. I/O remains visible over it. |
 | `$E000-$E95F` | Resident proton/type/hyperspace code/state; packed then installed at init, F/D/M/H. |
 | `$E960-$EA15` | Resident init/copy/exit helpers (182 bytes); only init and exit execute them. |
-| **`$EA16-$F6F8`** | **3,299 bytes free for new code/data in every mode**, no overlay or restore needed. Use the existing hooks. |
+| `$EA16-$F269` | Resident minefield code/state, active only in M through existing hooks. |
+| `$F26A-$F3F7` | 398-byte packed mine art; read in bounded chunks on base entry. |
+| `$F3F8-$F6F7` | 768-byte mine sprite-slot backup; reserved in every mode. |
+| **`$F6F8`** | **One resident byte free in every gameplay mode**. |
 | `$F6F9-$FE7F` | Unchanged 1,927-byte TORPA stream; resident, player and enemy protons. |
 | `$FE80-$FEFF` | TSHOT, 128 bytes of original shot masters; resident, F/D/M restoration. End of decoded high image. |
 | `$FF00-$FF04` | MMU configuration registers, never ordinary payload. |
@@ -148,11 +151,11 @@ then copies the saved workspace beneath I/O to `$D200`. It returns at 1 MHz/MMU
 Only EXIT selects `$3F` again to restore the saved workspace. The former
 MSUNPACK code remains inert in the relocated block to preserve all page offsets.
 
-Measured margins: **3,299 high**, **2,398 packed**, **1 glue** byte, versus 0/68/1
-before. The new archive uses 3,187 of the 3,584 staging bytes before `$DF00`.
+Measured margins after the minefield: **0 high**, **253 packed**, **1 glue** byte.
+The low archive uses 3,188 of the 3,584 staging bytes before `$DF00`.
 All sprite, art, stream, decoder-reclamation and native LOAD bounds remain
 checked; superseded separate positioning/enemy-stream checks are replaced with
-whole-low-block and archive/table/backup bounds. No runtime unpacking is added.
+whole-low-block and archive/table/backup bounds. The mine art alone is decoded at base entry; no runtime code overlay is added.
 
 `node js/test/run.js` independently decodes the archive, checks CPU-installed
 bytes and original-workspace backup, checks both low-RAM boundaries and EXIT,
@@ -162,10 +165,10 @@ the replay test; old browser save states are not automatically migrated.
 VICE x128 remains the user's final check, especially cold LOAD, docking, a
 subsequent fight/hyperspace jump, and RUN/STOP back to BASIC.
 Verification on 2026-11-07: game build, JS build, bundle and the full Node suite
-all pass ("all checks passed"); 42 game boots retain the free-range pattern,
+all pass ("all checks passed"); all game boots retain the free-range pattern,
 and DMA late split writes / OVRUN remain zero.
 
-`build.py` reads both sources and `game.asm` (the glue):
+`build.py` reads both sources, `game.asm` (the glue), and `mines.asm` (the resident minefield):
 
 - the map's source: every label and constant it defines gets the prefix `M_`
   (except the ship's shared variables), its code moves right after the cockpit's second code chunk, its
@@ -213,7 +216,7 @@ radar mark and frames to the ring start for friendly and enemy bases. The port
 uses a frame-locked approximation of the original loop's rate (up to five passes/frame, with a raster deadline),
 including its exact 00/00 lock and in-front/distance-below-$0600 exit.
 
-Memory now follows the 2026-11-07 map above: 3,299 high, 2,398 packed and 1 glue
+Memory now follows the 2026-11-07 map above: 0 high, 253 packed and 1 glue
 byte free; low code is installed once with original workspace saved beneath I/O.
 The unchanged 1,927-byte animation ends at TSHOT `$FE80`. The PRG ends at `$DF8D`,
 below the KERNAL LOAD limit `$FF00`. All pre-existing symbols below `$E000` stay fixed.
@@ -276,3 +279,74 @@ pre-opening/opening radii. Hits retain the port's bounded row-fill latency
 Outside-$E000 symbol addresses are unchanged, and every build bound remains.
 Current memory left: 0 high-code bytes, 68 packed bytes and 1 glue byte.
 VICE x128 visual confirmation remains with the user.
+
+
+Minefield verification (2026-11-07): the game tests compare 72,000 mine calls,
+155 phasor hit cases, damage and SID noise with the original; verify all twelve
+sprite shapes, original y=105 star births and steering lock; and count late
+splits/OVRUN through live fields and their handover. The port uses bounded
+30/15-call ceilings and alternating six-star updates, rather than the original
+variable main-loop rate. The final fourteen wait frames restore borrowed
+slots. See the plan's "Minefield before the rings" for exact entry/exit traces,
+intentional approximations and VICE checks. No code below `$E000` moved.
+
+Final minefield build, JS build, bundle and full Node suite pass ("all checks
+passed"). All new minefield DMA scenarios, including map pause during cleanup,
+have zero late writes and zero OVRUN. Remaining margins: 0 high / 253 packed /
+1 glue byte. The PRG still ends at `$DF8D`, below the native LOAD limit.
+
+Minefield follow-up: the original resets base vertical high at `$8CB2` every
+pass. The port now does this too and ignores pitch for base and star steering.
+Lock tests cover 00 acceptance at near/far depths, rear rejection, 01/03/04
+rejection and latch persistence against `$8E90`; the original's ?3 check belongs
+to the fighter approach. Sustained DMA joystick/mouse-mask traces are written to
+`js/test/out/mine-steering-rates.json`, including every frame's side reading.
+The birth band is retained through visible rings and random births return on
+sequence exit. Regression log: `js/test/out/minefield-fixes-complete.log`.
+
+
+Parity corrections (2026-11-07): cursor Y is restricted to the original 135..165,
+centre 145, through the base sequence. Both entry messages retain their text
+for all ten colour flips (200 frames); scanner initialization no longer clears
+them and readings wait for the message. Steering stays locked through rings,
+destruction and repair. Mine/settling ignores SPACE/both-button torpedoes
+silently without spending ammunition; ring phases accept them under the usual
+phase/radius/count rules. Later base phases do not launch phasors. Normal
+input and star hooks return on sequence exit with no idle wrapper.
+
+The C64 also sends its former short-range contacts rapidly downward during
+jump acceleration; destination long range begins after acceleration. The port
+keeps its existing bounded radar cleanup, not an exact old-contact animation.
+See the plan's parity section for addresses, tests and this remaining visual
+approximation. Current free memory is 0 resident / 253 packed / 1 glue byte.
+
+Final parity validation: all four required build/bundle/test commands pass; full suite ends with all checks passed. Log: js/test/out/minefield-parity-complete.log. New DMA parity/base/repair scenarios have 0 late writes and 0 OVRUN. No commit or push.
+
+
+Supplied-state parity round (2026-11-07): js/test/mine-parity-states.js loads
+the user's C64 save and recreates its friendly-base approach in the current
+build (the C128 save embeds older code). Eight mouse/joystick clamp traces
+match exactly, including X 0..254; live identical-input traces cover four
+directions, fire, joystick up+fire, SPACE and both buttons. The saved message
+tail matches colours/expiry and retains its row. A real 00 scanner lock and
+both settling/ring transitions retain locked stars and suppress new phasors.
+
+Fixed an additional discrepancy: the mouse's both-button chord now suppresses
+phasors during the minefield, matching C64 v10; refused protons remain silent
+and free. The mouse-presence gate preserves joystick up+fire. The active base
+input hook alone changes; normal flight keeps direct INPUT. Leaf-only PTR
+scratch pays for the added instructions without moving any fixed lower code.
+Current memory left: **1 resident, 246 packed, 1 glue byte**; backup
+$F3F8-$F6F7, resident end $F6F7 and native PRG end $DF8D.
+
+Trace: js/test/out/mine-parity-saved-comparison.json. Input polling can differ
+by one frame; mine/shot cadence and old-contact radar cleanup at jump start
+remain bounded approximations. The existing radar tests confirm the original
+downward departure and the port's correct destination scanner. VICE visual
+confirmation remains with the user.
+
+Final supplied-state validation: python c128-game/build.py, python js/build.py,
+python js/bundle.py and node js/test/run.js all pass. Full-suite log:
+js/test/out/minefield-parity-states-final.log (all checks passed; 71 game boots
+retain the free-memory pattern). Every new live DMA state replay and handover
+reports 0 late split writes and 0 OVRUN. No commit or push.
