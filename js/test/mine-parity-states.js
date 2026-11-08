@@ -23,6 +23,8 @@ module.exports=function({boot,run,check,fs,path,OUT}) {
     A[S.MSGCD]=(R[0x9bdd]-1)*4+framesToTick;A[S.MSGN]=R[0x9bde];A[S.MSGTG]=R[0x9be4];
     A[S.MSGC1]=R[0x9bdf];A[S.MSGC2]=R[0x9be0];
     for(let i=0;i<40;i++)m.write(S.COLROW+i,o.m.read(0xdb98+i)&15);
+    const diagnostic=m.cpu.step.bind(m.cpu);
+    m.cpu.step=function(){const pc=this.pc,n=m.vicLog.length;const result=diagnostic();if(m.vicLog.length>n&&late({vicLog:m.vicLog.slice(n)}))console.log('LATE PC',pc.toString(16));return result;};
     return {o,g,m,A,S,R};
   }
   const meta={c64PC:saved.state.cpu.pc,c128PC:old.state.cpu.pc,recreated:true};
@@ -108,7 +110,7 @@ module.exports=function({boot,run,check,fs,path,OUT}) {
         R.set([0x90,0x88],0x22);A.set([0x90,0x88],S.ENZ);
         o.m.joy2=m.joy2=20; // hold left and fire through the appearance
       }
-      o.m.runFrame();m.runFrame();writes+=late(m);
+      o.m.runFrame();m.runFrame();const lw=late(m);if(lw)console.log('TUNNEL LATE',f,A[S.MSSTATE],A[S.MSROW],A[S.MNLOAD],Array.from({length:m.vicLog.length/4},(_,i)=>m.vicLog.slice(i*4,i*4+4)).filter(v=>(v[2]===32||v[2]===33)&&((v[0]>=50&&v[0]<=76)||(v[0]>=230&&v[0]<=245))&&v[1]>=16&&v[1]<=55));writes+=lw;
       if(R[0x8e8f]&&lockFrame0===null)lockFrame0=f;
       if(A[S.FLATCH]&&lockFrame1===null)lockFrame1=f;
       if(f>170)stable &&= !A[S.SHX]&&!A[S.SHY]&&!!R[0x8e8f]&&!!A[S.FLATCH];

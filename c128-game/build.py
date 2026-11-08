@@ -274,6 +274,7 @@ def assemble():
     # BIT preserves both size and cycles of the initialization-only stores.
     cockpit = cockpit.replace('        STA HITS\n        STA HITS+1\n        JMP SHOWSH',
                               '        BIT HITS\n        BIT HITS+1\n        JMP SHOWSH')
+    cockpit = cockpit.replace('        LDA #$30\n        STA SUBN', 'PHBUD: LDA #$30\n        STA SUBN')
     glue = read('c128-game', 'game.asm')
     # Same-size entry replacements; every existing lower symbol stays fixed.
     glue = glue.replace('        JMP MSPOS\n', '        JMP MNVIEW\n')
@@ -289,7 +290,35 @@ def assemble():
     mine_raw = sprites[65*64:77*64]  # shape $71-$7C in the reference's order
     mine_packed = torp_frames(mine_raw)
     mine_source = mine_source.replace('; MNARTDATA', '.BYTE ' + ','.join(str(v) for v in mine_packed))
+    tunnel = read('c128-game', 'tunnel.asm')
+    saved = json.load(open(os.path.join(ROOT, 'briefs/ref/c64-minefield.state.json')))
+    import base64
+    original = base64.b64decode(saved['state']['arrays']['ram'])
+    tunnel = tunnel.replace('; MTTABLEDATA', '.BYTE ' + ','.join(str(v) for v in original[0xF3F:0xF7F]))
+    table = tunnel[tunnel.index('MTTABLE:'):]
+    tunnel = tunnel[:tunnel.index('MTTABLE:')]
+    mine_source = mine_source.replace('; TUNNELDATA', tunnel)
+    mine_source = mine_source.replace('MNEXTRA:', table + '\nMNEXTRA:')
+    mine_source = mine_source.replace('MNEXTRA:', '''MTINIT:
+        JSR g_upb
+        LDA #<MTSTAGE
+        STA CSRC
+        LDA #>MTSTAGE
+        STA CSRC+1
+        LDA #<MNEXTRA
+        STA CDST
+        LDA #>MNEXTRA
+        STA CDST+1
+        JMP g_upb
+MTSTAGE = $DCD4
+MNEXTRA:''')
+    import itertools
+    stream = bytes(v for value, group in itertools.groupby(open(os.path.join(ROOT, 'c128-gui/ref/streams-e800.bin'), 'rb').read()[256:1024]) for v in (len(list(group)), value))
+    mine_source = mine_source.replace('; MNSTREAMDATA', '.BYTE ' + ','.join(str(v) for v in stream))
     glue = glue.replace('GINIT3END:', mine_source + '\nGINIT3END:')
+    glue = glue.replace('        LDA #$D1\n        STA CSRC+1', '        LDA #$D0\n        STA CSRC+1')
+    glue = glue.replace('        LDA #$00\n        STA CSRC\n        LDA #$D0\n        STA CSRC+1\n        LDA #<LOWSTART', '        LDA #$60\n        STA CSRC\n        LDA #$D0\n        STA CSRC+1\n        LDA #<LOWSTART')
+    glue = glue.replace('        JSR g_upb\n        LDX #141', '        JSR MTINIT\n        LDX #141')
     global MAPCODE
     for _ in range(3):              # the map's code goes right after the cockpit's second chunk
         source = cockpit + '\n' + mapsrc.replace('        * = $1D00\n', '        * = $%04X\n' % MAPCODE) + '\n' + glue
@@ -477,6 +506,8 @@ def main():
     p(symbols['TSH2'], b''.join(shape(s) for s in range(0x3E, 0x45)))
     p(symbols['TSH3'], b''.join(shape(s) for s in range(0x31, 0x39)))
     p(symbols['STR2X'], open(os.path.join(ref, 'streams2-0600.bin'), 'rb').read())
+    extra = bytes(image[symbols['MNEXTRA']-HIGH2:symbols['MNEXTRAEND']-HIGH2])
+    at('MNEXTRA', bytes(len(extra)))
     at('TORPA', torp_frames(open(os.path.join(ref, 'torpedo-a000.bin'), 'rb').read()))
     at('TSHOT', shape(0x67) + shape(0x68))
     assert bytes(image[symbols['MNART']-HIGH2:symbols['MNARTEND']-HIGH2]) == torp_frames(b''.join(shape(s) for s in range(0x71, 0x7D)))
@@ -518,7 +549,11 @@ def main():
     low_end = symbols['LOWEND']
     low_stream = bytes((low_end & 255, low_end >> 8)) + lz_pack(bytes(chunks[0x0C60]))
     assert 0xD100 + len(low_stream) <= 0xDF00, 'low stream overlaps staged runtime tables'
-    p(0xD100, low_stream)
+    p(0xD060, low_stream)
+    assert 0xD060 + len(low_stream) <= symbols['MTSTAGE']
+    extra_stream = bytes((symbols['MNEXTRAEND'] & 255, symbols['MNEXTRAEND'] >> 8)) + lz_pack(extra)
+    assert symbols['MTSTAGE'] + len(extra_stream) <= 0xDF00, f'tunnel stream {len(extra_stream)} overlaps runtime tables'
+    p(symbols['MTSTAGE'], extra_stream)
     end = HIGH2 + len(image)
     assert end <= 0xFF00, f'the $E000 image ends at ${end:04X}'
     assert end & 255 == 0, 'GUNPK2 relies on the first stream ending at a page'
@@ -528,6 +563,7 @@ def main():
     second = bytes((0x00, (HIGH2SRC + 512) >> 8)) + lz_pack(open(os.path.join(ref, 'streams2-8100.bin'), 'rb').read())
     # Init-only RAM beneath I/O; GINIT3 selects MMU $3F to read it.
     assert 0xD000 + len(second) <= 0xD100
+    assert 0xD000 + len(second) <= 0xD060
     p(0xD000, second)
     assert HIGH2SRC + len(packed) <= 0x7680, f'the packed $E000 image ({len(packed)} bytes) overlaps the cockpit art'
     p(HIGH2SRC, packed)
@@ -547,3 +583,5 @@ def main():
 
 if __name__ == '__main__':
     main()
+
+

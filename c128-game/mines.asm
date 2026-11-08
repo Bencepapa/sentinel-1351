@@ -542,6 +542,7 @@ mn_backok:
         BCS mn_loaded
         RTS
 mn_loaded:
+        JSR MTRESET
         JSR MNENTER
         LDA #$00
         STA MNKIND
@@ -640,13 +641,15 @@ mn_work:
         BNE mn_work
         RTS
 MNVB:
+        JSR MTFRAME
+        JSR MTSHOT
         LDA #$4C
         STA shj
         LDA #<MNSTARSTEER
         STA shj+1
         LDA #>MNSTARSTEER
         STA shj+2
-        LDA #10
+        LDA #6
         STA MNPRE
 mn_pre:
         LDA #8
@@ -815,6 +818,7 @@ MNRESTORE:
         LDA #0
         STA MNENA
         STA MNWORK
+        JSR MNSTREAMINIT
         LDA #<MNBACK
         STA mn_rs+1
         LDA #>MNBACK
@@ -844,7 +848,8 @@ mn_rsok:
         STA mn_rd+1
         BCC mn_rdok
         INC mn_rd+2
-mn_rdok:DEC MNLOAD
+mn_rdok:JSR MNSTREAMRESTORE
+        DEC MNLOAD
 mn_rret:RTS
 MNNEWY:
         LDA #105        ; original $F1E1-$F1F2: $D4 nonzero, stars born at y=$69
@@ -918,6 +923,7 @@ mn_placeskip:
         BNE mn_place
         RTS
 MNOFF:
+        JSR MTOFF
         JSR MNEXIT
         LDA #$AD
         STA shj
@@ -932,6 +938,7 @@ MNOFF:
         LDA #>RANDOM
         STA nsy+2
 MNRINGS:
+        JSR MTOFF
         LDA #$70
         STA STARTK+7
         LDA #$20
@@ -1062,31 +1069,63 @@ MNWORK = MSRUN
 MNART:
 ; MNARTDATA
 MNARTEND:
-MNBACK:
-        .BYTE 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-        .BYTE 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-        .BYTE 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-        .BYTE 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-        .BYTE 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-        .BYTE 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-        .BYTE 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-        .BYTE 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-        .BYTE 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-        .BYTE 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-        .BYTE 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-        .BYTE 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-        .BYTE 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-        .BYTE 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-        .BYTE 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-        .BYTE 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-        .BYTE 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-        .BYTE 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-        .BYTE 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-        .BYTE 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-        .BYTE 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-        .BYTE 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-        .BYTE 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-        .BYTE 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-MNBACKEND:
-
+MNBACK = $8100
+MNBACKEND = $8400
+; Reload consumed backup bytes from the packed type-1 movement master.
+MNSTREAMINIT:
+        LDA #<MNSTREAM
+        STA mn_streamget+1
+        LDA #>MNSTREAM
+        STA mn_streamget+2
+        LDA #0
+        STA MNSTREAMLEFT
+        STA mn_streamdst+1
+        LDA #$81
+        STA mn_streamdst+2
+        RTS
+MNSTREAMGET:
+mn_streamget:LDA MNSTREAM
+        INC mn_streamget+1
+        BNE mn_streamret
+        INC mn_streamget+2
+mn_streamret:RTS
+MNSTREAMRESTORE:
+        LDX #0
+mn_streamloop:
+        LDA MNSTREAMLEFT
+        BNE mn_streamrun
+        JSR MNSTREAMGET
+        STA MNSTREAMLEFT
+        JSR MNSTREAMGET
+        STA MNSTREAMVALUE
+mn_streamrun:
+        DEC MNSTREAMLEFT
+        LDA MNSTREAMVALUE
+mn_streamdst:STA $8100,X
+        INX
+        CPX #64
+        BNE mn_streamloop
+        CLC
+        LDA mn_streamdst+1
+        ADC #64
+        STA mn_streamdst+1
+        BCC mn_streamret
+        INC mn_streamdst+2
+        RTS
+MNSTREAMLEFT: .BYTE 0
+MNSTREAMVALUE: .BYTE 0
+; Loaded as a fourth init stream, before low RAM's backup covers its staging.
+MNEXTRA:
+MTOFF:
+        LDA #48
+        STA PHBUD+1
+        SEI
+        LDA #0
+        STA $D01A
+        STA VIEWBG
+        RTS
+; TUNNELDATA
+MNSTREAM:
+; MNSTREAMDATA
+MNEXTRAEND:
 

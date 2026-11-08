@@ -1038,6 +1038,7 @@ for (const name of Object.keys(Profiles)) {
 
 // ---- game: mines before the mothership rings ---------------------------------
 require('./mines')({boot,run,check,snap,fs,path,ROOT,OUT});
+require('./tunnel')({boot,run,check,snap,fs,path,OUT});
 require('./mine-parity')({boot,run,check,fs,path,OUT});
 
 // ---- game: permanent low-RAM relocation and BASIC workspace restoration -------
@@ -1053,7 +1054,7 @@ require('./mine-parity')({boot,run,check,fs,path,OUT});
   A.set(original,S.LOWSTART);
   A[S.LOWSTART-1]=0x6B;A[S.LOWEND]=0xB6;
   // Independent decoder for the third stream, before init consumes its staging.
-  let src=0xD100,end=A[src]|A[src+1]<<8;src+=2;
+  let src=0xD060,end=A[src]|A[src+1]<<8;src+=2;
   const decoded=[];
   while(decoded.length<end-S.LOWSTART) {
     const token=A[src++];

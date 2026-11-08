@@ -37,3 +37,12 @@ saved exactly at this point; load it with `m.loadState(m.stateFromText(...))`.
    `python js/bundle.py`, `node js/test/run.js` ("all checks passed").
 4. Update docs. Do NOT commit or push. Final message: what the original does, what changed,
    what is verified, memory left, anything uncertain (the user tests in VICE x128).
+
+## Note: this task was interrupted (the machine was shut down)
+
+A previous run of this task left unfinished, uncommitted work in the tree: changes in
+`c128-game/mines.asm`, `c128-game/build.py`, `js/test/run.js` and the generated PRG / bundle,
+plus temporary scripts `briefs/adjust-tunnel*.py` (probably experiments with the band tables).
+Read `git status` / `git diff` first, decide what is worth keeping, continue from there (do not
+start over blindly), delete the temporary scripts when done, and make sure the final tree
+builds and `node js/test/run.js` ends with "all checks passed".

@@ -135,3 +135,16 @@ MINEPHASOR  $B7BA   ; low-byte hit box, burst/noise, no kill/energy bonus
 MSPOSITION  $8C44   ; scanner positioning plus six mine calls per main-loop pass
 MSSETTLE    $9054   ; suppress new mines and settle before the ring approach
 STARBASEY   $F1E1   ; base-mode star birth: D4 nonzero forces y=$69
+
+; ---- minefield raster tunnel -------------------------------------------------
+TUNNELFRAME $0E21 ; update mirrored boundaries/palette, entry and exit fade
+TUNNELPHASE $0E13 ; phase advances once a frame while $0E20 permits
+TUNNELRUN $0E20 ; cleared after the ring approach, before base arrival
+TUNNELLINES $0E14 ; eight IRQ raster boundaries
+TUNNELIRQ $0EE5 ; eight D020/D021 writes; close boundaries share an IRQ
+TUNNELCOLOURS $0EDC ; mirrored palette, central black strip
+TUNNELCURVE $0F3F ; 64-byte outward-motion table
+TUNNELFADEOUT $0F80 ; erase inner-to-outer every 16 frames
+TUNNELEXITLEVEL $0F7F ; armed by $9097 after mine settling
+TUNNELFADEIN $0FD6 ; reveal inner-to-outer every 16 frames
+TUNNELENTRYLEVEL $0FD5 ; 0 at sector entry; FF after fade
