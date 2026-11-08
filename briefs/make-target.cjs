@@ -1,0 +1,1 @@
+const fs=require('fs');const s=fs.readFileSync('js/test/run.js','utf8');fs.writeFileSync('js/test/_tunnel-target.js',s.slice(0,s.indexOf('// ---- flight'))+"\nrequire('./mines')({boot,run,check,snap,fs,path,ROOT,OUT});\nrequire('./mine-parity')({boot,run,check,fs,path,OUT});\nconsole.log(failures+' failures');");
