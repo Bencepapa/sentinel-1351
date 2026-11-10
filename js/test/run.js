@@ -1226,6 +1226,9 @@ require('./mine-parity')({boot,run,check,fs,path,OUT});
     A[S.ENX]=0x90;A[S.ENX+1]=0x84;
     A[S.ENY]=0x90;A[S.ENY+1]=0x88;A[S.ENZ]=0x90;A[S.ENZ+1]=0x94;
     call(m,S.HARRIVE);
+    // HARRIVE is injected between frames here; its synthetic CPU time can
+    // trip the frame deadline once before the normal raster loop resumes.
+    m.runFrame();A[S.OVRUN]=0;
     let rings=false,locked=false,moved=false,writes=0,frames=0;
     for(;frames<900&&!rings;frames++) {
       if(A[S.MSSTATE]===16&&!A[S.FLATCH]) {
@@ -1252,17 +1255,21 @@ require('./mine-parity')({boot,run,check,fs,path,OUT});
     const font=Buffer.from(A.subarray(0x4000,0x4400));
     A[S.M_STATE+24]=kind;call(m,S.SECTORIN);
     A[S.ENX]=0xA0;A[S.ENX+1]=0x88;A[S.ENY]=0x90;A[S.ENY+1]=0x88;A[S.ENZ]=0x90;A[S.ENZ+1]=z;
-    let frames=-1,writes=0,scanner=false,message='';
+    let frames=-1,settled=-1,writes=0,scanner=false,message='';
     for(let f=0;f<600;f++) {
       m.runFrame();writes+=late(m);
+      if(settled<0&&A[S.MSROW]===3)settled=f;
       if(f===0) message=String.fromCharCode(...A.subarray(S.LRROW,S.LRROW+39)).replace(/[@`]/g,' ').trim();
       scanner ||= A[S.LRMODE]===1&&A[S.RBON]===1&&A[S.LRROW+9]===0x7B&&!A[S.BLIPON];
       if(A[S.MSSTATE]===2){frames=f;break;}
     }
     check(scanner&&message===(kind===0x80?'GORGANITOR BASESTAR DETECTED':'ENTERING BASE SECTOR'),
       'game: base entry message precedes scanner readings and radar mark, with no fighter-selection sprite');
-    check(frames>=0&&Math.abs(frames-reference.rings)<=10,
-      `game: ${kind.toString(16)}/${z.toString(16)} frames to rings: port ${frames}, original ${reference.rings}`);
+    // The last stage waits for the tunnel's exit fade (C64 $8D3E: $0F7F >= 5),
+    // 64-80 frames depending on the tunnel phase at arming in either game.
+    const wait=frames-settled,wait0=reference.rings-reference.settled;
+    check(frames>=0&&Math.abs(settled-reference.settled)<=10&&wait>=64&&wait<=81&&wait0>=64&&wait0<=81,
+      `game: ${kind.toString(16)}/${z.toString(16)} frames to settled/rings: port ${settled}/${frames}, original ${reference.settled}/${reference.rings} (exit fade waits ${wait} / ${wait0})`);
     check(writes===0&&A[S.OVRUN]===0,`game: preliminary base positioning: ${writes} late split writes, ${A[S.OVRUN]} overruns`);
     check(frames>=0&&!m.stopped&&Buffer.from(A.subarray(0x4000,0x4400)).equals(font),
       `game: ${kind.toString(16)}/${z.toString(16)} arrival keeps running with the HUD font intact`);

@@ -1,3 +1,0 @@
-from pathlib import Path
-p=Path('c128-game/tunnel.asm');s=p.read_text().replace('        TYA\n        CLC\n        ADC MTLEVEL','        LDA MSROW\n        CMP #3\n        BNE mt_entryfade\n        CPY MTLEVEL\n        LDA #0\n        BCS mt_black\n        BCC mt_colour\nmt_entryfade:\n        TYA\n        CLC\n        ADC MTLEVEL').replace('        LDA MTPALETTE,X','mt_colour:LDA MTPALETTE,X');p.write_text(s)
-p=Path('c128-game/mines.asm');s=p.read_text().replace('MNRINGS:\n','MNRINGS:\n        JSR MTOFF\n').replace('MNOFF:\n','MNOFF:\n        JSR MTOFF\n');s=s.replace('MNEXTRA:\n','MNEXTRA:\nMTOFF:\n        SEI\n        LDA #0\n        STA $D01A\n        STA VIEWBG\n        RTS\n');p.write_text(s)

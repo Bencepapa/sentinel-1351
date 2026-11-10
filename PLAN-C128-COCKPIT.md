@@ -19,7 +19,7 @@ The birth band stays through the visible rings. The original lock is exact 00/00
 See "Minefield before the rings" below for original findings,
 scheduling differences and the decision about frozen sprites.
 
-Current margins: **1 high byte**, **246 packed bytes**,
+Current margins (2026-11-10, after the raster tunnel): **2 high bytes**, **91 packed bytes**,
 **1 glue byte**. The minefield occupies `$EA16-$F6F7`, including a 768-byte
 sprite-slot backup and 398 bytes of packed art. Low code stays `$0C60-$19F8`;
 its staging stream is now 3,188 bytes (`$D100-$DD73`). PRG end remains `$DF8D`.
@@ -854,14 +854,20 @@ starts the first burst when free and plays `$3350` noise, without a new flash
 or a kill/energy bonus. Port `MNHIT` matches 155 boundary/centre cases and SID
 writes against those original routines.
 
-The "raster tunnel" is primarily a **star-generation rule**, not an extra
-raster split: `$D4` is nonzero, so `$F1E1-$F1F2` gives every new star y=`$69`
-(105) instead of a random height. Existing stars gradually recycle into the
-band. `$8E90` latches exact 00/00 in front; normal star steering then stops.
-The port implements the same birth line and lock. To share the blank with
-mines, six of the twelve stars alternate, using twice the fractional step
-rate; this preserves the existing port's average speed, not the exact C64
-star trajectories.
+The minefield tunnel has a **star-generation rule and a raster-colour effect**.
+`$D4` is nonzero, so `$F1E1-$F1F2` gives every new star y=`$69` (105) instead
+of a random height. Existing stars gradually recycle into the band. `$8E90`
+latches exact 00/00 in front; normal star steering then stops. The port
+implements the same birth line and lock. To share the blank with mines, six of
+the twelve stars alternate, using twice the fractional step rate; this
+preserves the port's average speed, not the exact C64 star trajectories.
+
+`c128-game/tunnel.asm` also ports the original's moving `$D020/$D021` bands.
+Its eight raster positions are derived from the saved C64 table; the palette
+is recalculated only at phase/fade changes. The IRQ is armed only while the
+minefield hook is active, and MTOFF clears the VIC colours as it disables the
+effect at ring handover. Final sprite-slot restoration runs from the blank
+hook, not the visible-view pass, so it does not delay the lower cockpit split.
 
 `MNVIEW/MNVB/MNFRAME` use only existing self-modifying view, blank and sprite
 hooks. Idle flight/fights retain their direct hooks with zero extra per-frame
@@ -870,10 +876,11 @@ private state/shadows; its original instruction-looking initial delay-table
 bytes are retained. Work targets at most 30 mover calls/frame approaching,
 15 settling, and yields at view/blank raster deadlines. This is a bounded
 approximation of the original pass-based cadence. Installing twelve shapes
-in 64-byte chunks adds entry frames; the settling counter is 184 while the
+in 64-byte chunks adds entry frames; the settling counter is 180 while the
 feature is active (194 restored afterwards), compensating most of that
-latency. DMA total-entry measurements are port/original **271/267** and **335/331**
-frames for the enemy near/far cases, **269/267** and **332/331** for friendly.
+latency and the raster-IRQ cost. DMA total-entry measurements are
+port/original **267/267** and **340/331** frames for the enemy near/far cases,
+**266/267** and **335/331** for friendly.
 The existing ten-frame total-arrival tolerance remains unchanged.
 
 Art is packed in 128-byte frames (398 bytes), decoded only on base entry;
@@ -1059,7 +1066,7 @@ sideways displacement and sprite display masks use $FB; the phasor mine-hit
 mask uses $FC across HITBOX, which preserves PTR. None makes nested pointer
 calls while live; persistent packed-art decoder counters keep their original
 storage. Every fixed lower symbol and all build bounds remain checked.
-Memory left: **1 resident / 246 packed / 1 glue byte**, resident end $F6F7,
+Memory before the raster-colour effect: **1 resident / 246 packed / 1 glue byte**, resident end $F6F7,
 backup $F3F8-$F6F7, PRG end $DF8D.
 
 Per-frame source/port traces: js/test/out/mine-parity-saved-comparison.json.
@@ -1075,3 +1082,31 @@ python js/bundle.py and node js/test/run.js all pass. Full-suite log:
 js/test/out/minefield-parity-states-final.log (all checks passed; 71 game boots
 retain the free-memory pattern). Every new live DMA state replay and handover
 reports 0 late split writes and 0 OVRUN. No commit or push.
+
+### Raster-colour tunnel follow-up (2026-11-09)
+
+`c128-game/tunnel.asm` now ports the original moving `$D020/$D021` bands in
+addition to the minefield's y=105 star-birth rule. Eight IRQ writes are compared
+with the original across 256 phases; maximum line drift is 2. Palette work is
+limited to phase/fade changes, and the line table omits the original's repeated
+16-byte constant run. The tunnel starts with the loaded minefield hooks and
+stops at ring handover; MTOFF clears both VIC colour registers. The last mine
+sprite restoration is serviced from the blank hook, keeping the view and lower
+cockpit split on time.
+
+The final settling interval is 180 frames while the feature is active (194
+afterward); the 80/94 entry reaches the rings in 340 port / 331 original frames,
+within the existing ten-frame allowance. `node js/test/run.js` ends with **all
+checks passed**: the full suite, saved-state steering/fire through band wraps,
+0 late split writes and 0 OVRUN. Build margin is **9 high / 88 packed / 1 glue**
+byte. The user's VICE x128 replay should recheck the supplied turning/fire
+scenarios and the final colour cleanup against the reported screen artifact.
+Nothing was committed or pushed.
+
+2026-11-10: the white strip under the HUD was the cockpit's hit flash
+(`FLASHC`, drawn from line 76 to the first band); the tunnel now flashes as the
+original (`$139A`/`$1311`: one whole-tunnel frame per step, middle strip keeps
+the colour). The exit fade is a phase-locked level (`MTEXIT`, `$0F80`) and the
+last settling stage is held until its level 5 (`$8D3E`). The IRQ waits for a
+boundary on the next line (C64 `$0F08`); before, phases 1-2 of every 16 lost
+the lower half of the chain. See `c128-game/README.md`.

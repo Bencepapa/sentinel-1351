@@ -560,7 +560,7 @@ mn_kindok:
         STA nosh+1
         LDA #>MNSTARLOOP
         STA nosh+2
-        LDA #184
+        LDA #180
         STA mp_next-5
         LDA #160
         STA mp_pass+4
@@ -585,13 +585,6 @@ mn_kindok:
         STA nsy+2
         JMP MSPOS
 mn_running:
-        LDA MSROW
-        CMP #3
-        BNE mn_position
-        LDA MSCLOCK
-        CMP #14
-        BCS mn_position
-        JSR MNRESTORE
 mn_position:
         JSR MSPOS       ; scanner/depth work retains priority and its original rate
         LDA MSSTATE
@@ -642,7 +635,6 @@ mn_work:
         RTS
 MNVB:
         JSR MTFRAME
-        JSR MTSHOT
         LDA #$4C
         STA shj
         LDA #<MNSTARSTEER
@@ -1123,9 +1115,10 @@ MTOFF:
         LDA #0
         STA $D01A
         STA VIEWBG
+        STA $D021
+        STA $D020
         RTS
 ; TUNNELDATA
 MNSTREAM:
 ; MNSTREAMDATA
 MNEXTRAEND:
-

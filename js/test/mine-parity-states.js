@@ -101,7 +101,14 @@ module.exports=function({boot,run,check,fs,path,OUT}) {
     const st0=o.m.cpu.step.bind(o.m.cpu),st1=m.cpu.step.bind(m.cpu);
     o.m.cpu.step=function(){if(this.pc===0x909d)ring0=true;if(ring0&&this.pc===0x39c1)steers0++;if(ring0&&this.pc===0x1467)shots0++;return st0();};
     m.cpu.step=function(){if(A[S.MSSTATE]===2)ring1=true;if(ring1&&this.pc===S.MNSTEER)steers1++;if(ring1&&this.pc===S.LAUNCH)shots1++;return st1();};
+    // The direct setup calls above are injected between frames; restore the
+    // normal IRQ-enabled state before replaying the real frame loops.
+    o.m.cpu.p&=~4;m.cpu.p&=~4;
     let latched=false,lockFrame0=null,lockFrame1=null,stable=true;
+    // Exit fade: per game, frames (from arming) where the tunnel's black band
+    // count changes, and the ring start ($0F7F armed by $9097; port MSROW 3).
+    const fade=[{arm:null,steps:[],last:null,ring:null},{arm:null,steps:[],last:null,ring:null}];
+    const blacks=k=>{const w=[];for(let i=0;i<k.vicLog.length;i+=4)if(k.vicLog[i+2]===33&&k.vicLog[i]>78&&k.vicLog[i]<228)w.push(k.vicLog[i+3]&15);return w.length===8?w.filter(c=>!c).length:null;};
     for(let f=0;f<650;f++){
       if(f===170){
         latched=!!R[0x8e8f]&&!!A[S.FLATCH];
@@ -111,6 +118,12 @@ module.exports=function({boot,run,check,fs,path,OUT}) {
         o.m.joy2=m.joy2=20; // hold left and fire through the appearance
       }
       o.m.runFrame();m.runFrame();const lw=late(m);if(lw)console.log('TUNNEL LATE',f,A[S.MSSTATE],A[S.MSROW],A[S.MNLOAD],Array.from({length:m.vicLog.length/4},(_,i)=>m.vicLog.slice(i*4,i*4+4)).filter(v=>(v[2]===32||v[2]===33)&&((v[0]>=50&&v[0]<=76)||(v[0]>=230&&v[0]<=245))&&v[1]>=16&&v[1]<=55));writes+=lw;
+      for(const [i,k,armed,ring] of [[0,o.m,R[0xf7f]===0,ring0],[1,m,A[S.MSROW]===3,ring1]]){
+        const x=fade[i];if(x.arm===null&&armed)x.arm=f;
+        if(ring&&x.ring===null&&x.arm!==null)x.ring=f-x.arm;
+        const b=x.arm!==null&&x.ring===null?blacks(k):null;
+        if(b!==null&&b!==x.last){if(x.last!==null)x.steps.push([f-x.arm,b]);x.last=b;}
+      }
       if(R[0x8e8f]&&lockFrame0===null)lockFrame0=f;
       if(A[S.FLATCH]&&lockFrame1===null)lockFrame1=f;
       if(f>170)stable &&= !A[S.SHX]&&!A[S.SHY]&&!!R[0x8e8f]&&!!A[S.FLATCH];
@@ -119,7 +132,10 @@ module.exports=function({boot,run,check,fs,path,OUT}) {
     check(latched&&stable,'saved parity: both real scanners reach 00, latch steering, and keep star steering locked under held left');
     check(ring0&&ring1&&steers0===0&&steers1===0&&shots0===0&&shots1===0,'saved parity: actual mine-to-mothership transitions keep steering and new phasor launches locked');
     check(writes===0&&A[S.OVRUN]===0,'saved parity: alignment/settling/rings, 0 late splits and 0 OVRUN');
-    meta.handover={lockFrame0,lockFrame1,steers0,steers1,shots0,shots1,frames};
+    const fadeOk=fade.every(x=>x.steps.length===4&&x.steps[0][0]<=16&&x.steps.every((s,i)=>!i||s[0]-x.steps[i-1][0]===16)&&
+      x.ring!==null&&Math.abs(x.ring-x.steps[3][0]-16)<=2)&&fade[0].steps.map(s=>s[1]).join()===fade[1].steps.map(s=>s[1]).join();
+    check(fadeOk,`saved parity: exit fade blackens one band pair every 16 frames, inner first, rings after level 5 (original ${JSON.stringify(fade[0].steps)} rings +${fade[0].ring}, port ${JSON.stringify(fade[1].steps)} rings +${fade[1].ring})`);
+    meta.handover={fade,lockFrame0,lockFrame1,steers0,steers1,shots0,shots1,frames};
   }
   fs.writeFileSync(path.join(OUT,'mine-parity-saved-comparison.json'),JSON.stringify({meta,axes,replays},null,2));
 };

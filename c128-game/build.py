@@ -294,7 +294,7 @@ def assemble():
     saved = json.load(open(os.path.join(ROOT, 'briefs/ref/c64-minefield.state.json')))
     import base64
     original = base64.b64decode(saved['state']['arrays']['ram'])
-    tunnel = tunnel.replace('; MTTABLEDATA', '.BYTE ' + ','.join(str(v) for v in original[0xF3F:0xF7F]))
+    tunnel = tunnel.replace('; MTTABLEDATA', '.BYTE ' + ','.join(str(v) for v in original[0xF4F:0xF7F]))
     table = tunnel[tunnel.index('MTTABLE:'):]
     tunnel = tunnel[:tunnel.index('MTTABLE:')]
     mine_source = mine_source.replace('; TUNNELDATA', tunnel)
@@ -583,5 +583,4 @@ def main():
 
 if __name__ == '__main__':
     main()
-
 

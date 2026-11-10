@@ -46,3 +46,25 @@ plus temporary scripts `briefs/adjust-tunnel*.py` (probably experiments with the
 Read `git status` / `git diff` first, decide what is worth keeping, continue from there (do not
 start over blindly), delete the temporary scripts when done, and make sure the final tree
 builds and `node js/test/run.js` ends with "all checks passed".
+
+## Codex follow-up (2026-11-09)
+
+Implemented the colour raster bands in `c128-game/tunnel.asm`; the star-birth
+band/lock remains separate. The eight raster writes match the original across
+256 phases with at most 2 lines of drift. Palette work is phase/fade driven,
+not recomputed every frame. The final mine-shape restore now runs from the
+blank hook, and ring handover disables the IRQ and clears `$D020/$D021` plus
+`VIEWBG`.
+
+The settling counter is 180 while the tunnel is active (194 afterward). The
+80/94 entry reaches rings in 340 port / 331 original frames, inside the existing
+10-frame tolerance. The interrupted `HARRIVE` test setup is settled before its
+OVRUN measurement because injected subroutine calls advance CPU time outside
+`runFrame`; the real-frame replay then checks OVRUN and late splits normally.
+
+Validation: `python c128-game/build.py`, `python js/build.py`,
+`python js/bundle.py`, and `node js/test/run.js` all pass; the suite ends with
+`all checks passed`. The saved-state held-turn/fire replay and raster tunnel
+test report 0 late split writes and 0 OVRUN. Memory left: **9 high / 88 packed /
+1 glue** byte. VICE x128 visual confirmation of band wrap under turning/fire
+and the final fade remains useful. No commit or push.
