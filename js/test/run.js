@@ -1070,7 +1070,7 @@ require('./mine-parity')({boot,run,check,fs,path,OUT});
     'memory: CPU unpacks every relocated byte exactly before gameplay');
   check(Buffer.from(A.subarray(S.LOWBACK,S.LOWBACK+original.length)).equals(original),
     'memory: original low RAM survives in RAM beneath I/O');
-  check(A[S.LOWSTART-1]===0x6B&&A[S.LOWEND]===0xB6&&m.mmuCR===0x3E&&!(m.vic[0x30]&1),
+  check(A[S.LOWSTART-1]===0&&A[S.LOWEND]===0xB6&&m.mmuCR===0x3E&&!(m.vic[0x30]&1),
     'memory: relocation respects both bounds and restores MMU/1 MHz');
   m.setBreak(S.frame,false);m.stopped=null;
   const c=m.cpu;c.push(0xFF);c.push(0xF3);c.pc=S.EXIT;
@@ -1398,7 +1398,7 @@ require('./mine-parity')({boot,run,check,fs,path,OUT});
     const protonDigit=A[0x485B];
     const protectedRegions=[[0x6080,0x63C0],[0x7CC0,0x8000],[0x2900,0x2CC0],[0x3800,0x3BC0],[0x4000,0x4400]];
     const assets=protectedRegions.map(([a,b])=>Buffer.from(A.subarray(a,b)));
-    let first=-1,last=-1,writes=0,shots=false,launches=0,protonAt=-1,visible=0;
+    let first=-1,last=-1,writes=0,shots=false,launches=0,protonAt=-1,visible=0,hitsAtLaunch=0;
     for(let f=0;f<1100;f++) {
       if(stress===true&&A[S.MSSTATE]===3){m.mouse.left=true;m.joy2=4;}
       if(stress==='proton'&&A[S.MSSTATE]===3&&A[S.MSRAD]>=26&&protonAt<0){
@@ -1407,13 +1407,13 @@ require('./mine-parity')({boot,run,check,fs,path,OUT});
       if(protonAt>=0&&f===protonAt+2)m.setKey(7,4,false);
       m.runFrame();writes+=late(m);shots ||= !!A[S.SHOTON];
       for(let i=0;i<m.sidLog.length;i+=3)if(m.sidLog[i+1]===1&&m.sidLog[i+2]===10)launches++;
-      if(A[S.ETSTATE]===1&&first<0)first=f;
+      if(A[S.ETSTATE]===1&&first<0){first=f;hitsAtLaunch=A[S.HITS];}
       if(first>=0&&f===first+12)snap(m,stress==='proton'?'enemy-proton-overlap':stress?'enemy-proton-fire':'enemy-proton-active');
       if(first>=0&&A[S.ETSTATE]===2&&last<0)last=f;
       if(A[S.ETSTATE]===1&&m.vicLog.some((v,i)=>i%4===2&&v===0x15&&(m.vicLog[i+1]&0x60)===0x60))visible++;
       if(last>=0&&A[S.MAPSHOWN])break;
     }
-    check(first>=0&&Math.abs(last-first-refFrames)<=10&&launches>=2&&A[S.HITS]===5&&(stress!==true||!shots),
+    check(first>=0&&Math.abs(last-first-refFrames)<=10&&launches>=2&&((A[S.HITS]-hitsAtLaunch)&255)===5&&(stress!==true||!shots),
       `game: enemy proton lasts ${last-first} DMA frames (original ${refFrames}), five hits with ${stress==='proton'?'overlapping player proton':stress?'steering/fire':'neutral input'}`);
     check(visible>=last-first-1,'game: incoming sprites stay visible through phasor and overlapping proton work');
     check(A[S.MAPSHOWN]&&A[S.MSLOCK]&&!A[S.MSSTATE], 'game: enemy endpoint returns to map and locks base re-entry');
@@ -1509,13 +1509,14 @@ require('./mine-parity')({boot,run,check,fs,path,OUT});
     m.dma = true; run(m, g.hooks, 60);
     const idx = K[s.M_SELY] * 10 + K[s.M_SELX];
     K[s.M_STATE + idx] = kind; K[s.M_COUNT + idx] = 0;
-    const hp = Buffer.from(K.subarray(s.SYSHP, s.SYSHP + 8)), protons = Buffer.from(K.subarray(0x485A, 0x485C));
+    const protons = Buffer.from(K.subarray(0x485A, 0x485C));
     call(m, s.SECTORIN);
     check(K[s.MSKIND] === kind && K[s.MSSTATE] === 1 && K[s.APPR] === 0 && K[s.shpj] === 0x20,
       `mothership: entering ${kind === 0x80 ? 'enemy' : 'friendly'} sector arms the approach without fighters`);
     // This block measures the existing rings. The scanner phase has its own
     // original/port timing and split checks above.
     for (let f = 0; f < 500 && (K[s.MSSTATE] === 1 || K[s.MSSTATE] === 16); f++) m.runFrame();
+    const hp = Buffer.from(K.subarray(s.SYSHP, s.SYSHP + 8)), hitsBeforeRings=K[s.HITS];
     let late = 0, first = -1, last = -1, prev = 0, growth = [];
     for (let f = 0; f < 450; f++) {
       m.runFrame();
@@ -1532,7 +1533,7 @@ require('./mine-parity')({boot,run,check,fs,path,OUT});
     const reference = originalDuration(kind);
     check(Math.abs(last - first - reference) <= 10, `mothership: DMA growth ${last - first} frames, original ${reference} frames (frame-locked approximation)`);
     check(late === 0 && K[s.OVRUN] === 0, `mothership: DMA approach has ${late} late split writes, ${K[s.OVRUN]} overruns`);
-    check((kind===0x80 ? K[s.HITS]===5 : Buffer.from(K.subarray(s.SYSHP,s.SYSHP+8)).equals(hp)) && Buffer.from(K.subarray(0x485A,0x485C)).equals(protons) && K[s.M_STATE+idx]===kind,
+    check((kind===0x80 ? ((K[s.HITS]-hitsBeforeRings)&255)===5 : Buffer.from(K.subarray(s.SYSHP,s.SYSHP+8)).equals(hp)) && Buffer.from(K.subarray(0x485A,0x485C)).equals(protons) && K[s.M_STATE+idx]===kind,
       'mothership: enemy proton hits five times; friendly approach preserves ship, protons and base');
     const centreAddress = 0x6000 + (100 >> 3) * 320 + (85 >> 2) * 8 + (100 & 7);
     check(((K[centreAddress] >> ((3 - (85 & 3)) * 2)) & 3) === 2 && K[0x44A0] === 0x11 && K[s.MSCPEND] === 0,
@@ -1965,9 +1966,10 @@ require('./mine-parity')({boot,run,check,fs,path,OUT});
   check(texts.join('|')==='MOTHERSHIP ENGAGED IN BATTLE|MOTHERSHIP DESTROYED|JARALOBA IS SURROUNDED|JARALOBA CEASES TO EXIST'&&B[BS.M_VDCON]===0,
     `battle messages: all four events appear on the cockpit with VDC off (${texts.join('; ')})`);
   check(B[BS.MSGCOL]===0x87&&B[BS.MSGRATE]===15&&B[BS.MSGN]===15&&B[BS.SNDHI0]===0x1E&&!B[BS.SHIPLOST],
-    'battle messages: original yellow/orange timing and siren, no game-over implementation');
+    'battle messages: original yellow/orange timing and siren preserve the ship flag');
   // Direct subroutine comparisons above advance CPU time outside the raster loop.
   // Settle those calls before beginning this independent real-frame timing test.
+  B.fill(0,BS.M_DEAD,BS.M_DEAD+5); // end the isolated message fixture before resuming live play
   run(BM,bg.hooks,10); B[BS.OVRUN]=0;
   B.fill(0,BS.M_ENGC,BS.M_ENGC+5);B.fill(0,BS.M_DEAD,BS.M_DEAD+5);
   for(let i=0;i<20;i++)B[BS.M_STATE+B[BS.M_GRP+i]]=1;
@@ -1977,6 +1979,8 @@ require('./mine-parity')({boot,run,check,fs,path,OUT});
     `battle messages: five simultaneous events queue safely (${B[BS.GBTCOUNT]} waiting), ${battleLate} late writes, ${B[BS.OVRUN]} overruns`);
 
 }
+
+require('./game-end')({boot,run,check,snap,fs,path,OUT});
 
 check(freeMemoryRuns.filter(r=>r.armed).every(r=>r.intact)&&freeMemoryRuns.some(r=>r.frames>1000),
   `memory: $A5-filled free high RAM survives all existing game scenarios (${freeMemoryRuns.filter(r=>r.armed).length} boots)`);

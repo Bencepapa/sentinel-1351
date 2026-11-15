@@ -40,6 +40,13 @@ It is the browser page's default program.
   as in the original.
 - In mothership sectors the long range scanner first shows the base's position and X/Y/Z readings. Only sideways steering moves it; pitch input is ignored. Exact 00 side and 00 up in front locks steering, and depth closes at the original base loop's rate. Fire shoots in the mine/settling phase; later base phases refuse phasors. It does not select another target. As in the original, the base is a radar mark without the cyan animated fighter-selection sprite. After the bounded shape loading, near enough in front, the ship settles for about 184 frames, then, while the tunnel fades out (one band pair every 16 frames), waits 64-80 frames before the rings and rectangular opening grow as in the original. Enemy bases flicker and turn white in alternating phases; friendly bases stay white but share the same hidden phase. A proton destroys a base only if its opening has appeared and the phase is on when the torpedo arrives; a miss preserves the base's colours and the approach continues. A kill shows BASESTAR DESTROYED CAPTAIN, a burst and expanding erasing rings, then clears the sector. Every base sequence returns to the map; that sector cannot be selected straight back until you jump elsewhere. A surviving friendly base draws its white tractor rays, types the full-screen eight-system report with coloured scanning blocks and repair beeps, recharges energy, repairs the ship and grants one proton before the map returns. Tractor rays reach the guns; docking restores the cockpit and all sprite shapes for the next fight. An enemy base fires a white incoming proton at radius 25: it cannot be shot down or dodged, takes five shield/system hits, then returns to the map with the same re-entry lock. Friendly bases never fire. Before the rings, four multicolour mines grow and drift through the scanner approach. They can be shot down or dodged sideways; an undodged full-size mine takes a shield and a system point. New stars start on a horizontal band throughout positioning and the visible rings; aligning exact 00/00 in front locks star steering at any depth. The lock remains latched until a new sequence. The ?3 fighter-approach threshold does not apply to bases. DMA comparison found the original slightly faster than the port under sustained horizontal input (65?66 versus 60 steering updates in 60 frames); horizontal speed has been retained. The port clears surviving mines in a short cleanup tail before the rings, restoring the borrowed fighter sprite slots instead of retaining the original frozen-sprite bug. Opening and closing the map before the sequence ends restarts the approach.
 - Strategic warnings (a mothership engaged/destroyed, JARALOBA surrounded/lost) now appear on the cockpit message line even with VDC off.
+- Shield death and the loss of JARALOBA end the game: 255 frames of flashing
+  and noise, then the cockpit disappears into a star field with the original
+  large ending text, report, rank and class. Clearing every enemy and pending
+  mothership attack wins after the original 60 qualifying checks in flight. Fire restarts after the original
+  waiting interval; otherwise it restarts automatically (about 3.5 minutes for
+  death and 7.6 for victory at PAL speed). Restart restores the cockpit, world,
+  ship, sprite slots and movement streams in sector 05.03.
 - The ship (systems, shields, hits, difficulty) is one: the cockpit's model.
 - The second display (VDC) is off in this program for now: its updates take more
   time than a frame has to spare while the cockpit runs.
@@ -56,9 +63,11 @@ behind the cockpit, including while closed; its world arrays are never scratch.
 
 | Range | Contents and lifetime |
 |---|---|
+| `$0200-$0C5F` | Borrowed ending workspace; original bytes saved in VDC RAM and restored on EXIT. |
 | `$0C60-$19F8` | 3,481-byte resident relocated mothership/repair/message/positioning/enemy-proton block. Used in M, message jobs also F/D/H; retained in every mode. Original bank-0 contents saved/restored. |
 | `$1C01-$1C0C` | BASIC SYS stub; init only. |
-| `$1C0D-$1CFF` | Loader-to-entry padding; reserved. |
+| `$1C0D-$1C0F` | Loader-to-entry padding. |
+| `$1C10-$1CFF` | Ending init/exit loader, scene shutdown and stream-reset helpers. |
 | `$1D00-$28D6` | Cockpit first code/state chunk; resident F/D/M/H. |
 | `$28D7-$28F5` | Repair art-restore helper; resident, executes M. |
 | `$28F6-$28F7` | Padding. |
@@ -117,18 +126,16 @@ behind the cockpit, including while closed; its world arrays are never scratch.
 | `$C000-$CFF9` | High glue/hyperspace code and buffers; resident F/D/M/H. |
 | `$CFFA-$CFFF` | Padding. |
 | `$D000-$D051` | RAM beneath I/O: init STR2Y packed stream; dead afterwards. Visible addresses are hardware in gameplay. |
-| `$D052-$D0FF` | Staging padding; not directly accessible with gameplay MMU `$3E`. |
-| `$D100-$DD73` | RAM beneath I/O: 3,188-byte packed low-code stream at load/init. Consumed before backup installation. |
-| `$DD74-$DEFF` | Staging padding. |
+| `$D052-$D05F` | Staging padding; hidden beneath I/O during gameplay. |
+| `$D060-$DCD4` | 3,189-byte packed low-code stream at load/init, consumed before backup installation. |
+| `$DCD5-$DEFF` | Tunnel stream staging and padding, consumed before backup installation. |
 | `$DF00-$DF8D` | RAM beneath I/O: 142 runtime bytes staged at load, copied to the reclaimed decoder before backup installation. PRG ends here. |
 | `$DF8E-$DFFF` | No load-time payload; reserved staging/backup tail. |
 | `$D200-$DF98` (runtime) | **3,481-byte original low-RAM backup**, replacing consumed staging. Required until EXIT in F/D/M/H; never scratch. I/O remains visible over it. |
 | `$E000-$E95F` | Resident proton/type/hyperspace code/state; packed then installed at init, F/D/M/H. |
 | `$E960-$EA15` | Resident init/copy/exit helpers (182 bytes); only init and exit execute them. |
-| `$EA16-$F269` | Resident minefield code/state, active only in M through existing hooks. |
-| `$F26A-$F3F7` | 398-byte packed mine art; read in bounded chunks on base entry. |
-| `$F3F8-$F6F7` | 768-byte mine sprite-slot backup; reserved in every mode. |
-| **`$F6F8`** | **One resident byte free in every gameplay mode**. |
+| `$EA16-$F6F6` | Resident minefield/tunnel code, 398-byte packed mine art, tables and compressed movement master. The temporary 768-byte sprite backup borrows `$8100-$83FF`. |
+| `$F6F7-$F6F8` | Two resident bytes free in every gameplay mode. |
 | `$F6F9-$FE7F` | Unchanged 1,927-byte TORPA stream; resident, player and enemy protons. |
 | `$FE80-$FEFF` | TSHOT, 128 bytes of original shot masters; resident, F/D/M restoration. End of decoded high image. |
 | `$FF00-$FF04` | MMU configuration registers, never ordinary payload. |
@@ -152,7 +159,7 @@ Only EXIT selects `$3F` again to restore the saved workspace. The former
 MSUNPACK code remains inert in the relocated block to preserve all page offsets.
 
 Measured margins after the raster tunnel follow-up: **2 high**, **91 packed**, **1 glue** byte.
-The low archive uses 3,188 of the 3,584 staging bytes before `$DF00`.
+The low archive uses 3,189 of the 3,584 staging bytes before `$DF00`.
 All sprite, art, stream, decoder-reclamation and native LOAD bounds remain
 checked; superseded separate positioning/enemy-stream checks are replaced with
 whole-low-block and archive/table/backup bounds. The mine art alone is decoded at base entry; no runtime code overlay is added.
@@ -204,8 +211,8 @@ jump into a squadron's sector (the approach begins, TARGETS), the HUD's sector,
 the view's colours back, kills emptying the sector, C= closing the map, the right
 button, fire on the ship's own sector, a squadron coming in, the splits' timing.
 
-Not yet: hyperspace's abort, thrust (W), mothership mines and
-the second display while flying, game over, and the destroyed-system messages.
+Not yet: hyperspace's abort, thrust (W), the second display while flying,
+and the remaining destroyed-system effects/messages.
 
 
 The base positioning code lives in `$E000`, through the existing shape and blank
@@ -399,3 +406,122 @@ byte. Recheck the turning/fire/final-fade appearance in VICE x128.
   check now compares the settled stage (within 10 frames) and the exit-fade
   wait (64-81 frames in both games; 80/94: port 271/351, original 264/331).
   `node js/test/run.js`: all checks passed. Margins: 2 high / 91 packed / 1 glue.
+
+
+## Game-end workspace and restart (2026-11-11)
+
+`ending.asm` adds death, planet-loss and victory, the original `$F440` rating,
+four death reports, rank/class, bitmap lettering, SID effects, and fire/timeout
+restart. See the plan's "Game endings" for the original addresses, statistical
+quirks, measured timings and bounded cadence differences.
+
+The extra workspace is `$0200-$0C5F` (code through `$0C5E`), saved in VDC RAM
+before installation. `end-loader.asm` occupies previously unused BASIC-stub
+padding `$1C10-$1CFF`. The ending image is loaded at `$E000-$EA5F`, then copied
+before the existing high-image decoder overwrites that staging. The PRG now
+ends at `$EA5F`, below the unchanged `$FF00` native LOAD limit. Existing lower
+symbols, glue, cockpit and map code retain their addresses.
+
+The disabled VDC's first 16K holds the original workspace and reset snapshots.
+At program entry, `ENDVDCBLANK` disables VDC attributes (register 25) and sets
+both monochrome colours to black (register 26), and disables the cursor (register
+10), before delays or snapshot writes.
+This hides boot text and all screen/attribute/font data even while it changes;
+the RAM remains available for the snapshot. The helper uses matrix-master padding.
+This includes protected `$7CC0-$7FFF` sprites, which the full-screen bitmap
+clear temporarily erases. Reset restores them and re-decodes all 768 bytes of
+movement streams borrowed by mines. The existing `$D200` low-workspace backup
+is never overwritten; EXIT restores both borrowed workspaces before returning
+to BASIC. The second display must remain disabled while this snapshot is live.
+Immutable mine art, stream data, init/event helpers and the retired decoder are not
+copied into the reset snapshot.
+
+Final margins: **2 high / 91 packed / 1 glue bytes**; new workspace **1**,
+loader **0**, VDC **13** bytes. `build.py` checks every boundary and the frozen
+symbols. No code overlay is installed during play: only startup copies the
+ending image, and reset restores the startup snapshot.
+
+`js/test/game-end.js`, invoked by the "game:" suite, compares 240 original
+ratings, bitmap pixels, SID setup, death/report timing and restart waits. It
+checks RUN/STOP workspace restoration, both death causes, victory blockers,
+restored sprite slots, and actual minefield/proton death recreated from the
+supplied C128 low-shield save. The C64 original reference uses the C64 minefield
+save because `low-shield.state.json` identifies itself as C128.
+
+The original pass-counted waits are modeled using measured PAL frame counts;
+held-button restarts differ by at most four frames in the checked scenario.
+The pulse rattle uses 24 substeps/frame and letter colours change every six
+frames. VICE x128 visual/audio confirmation remains outstanding. No commit
+or push. Validation log: `js/test/out/game-end-all-checks.log`.
+
+## Game-end display fixes (2026-11-15)
+
+The full-screen ending handover and restart now use invalid VIC mode `$7B`
+(black, with bad lines retained) while clearing/rebuilding display memory.
+Previously `$3B` exposed the old bitmap sprite slots/cockpit art during the
+clear, and exposed the partially restored matrix/art during the VDC copy.
+The completed title switches back to `$3B`; the flight loop restores its own
+raster splits after restart. Death and victory share this path.
+
+The HUD's rightmost column was an older port bug, also present on `main`:
+`SHOWSEC` wrote character `$7A` after the leading zero, displaying `0..01`.
+The original `$FD7F-$FD99` explicitly formats column 10 as `10`; all 60 sectors
+now match its bytes, and leaving column 10 resets the tens digit.
+
+The fixed-address `SHOWSEC` slot calls a helper in unused CPU-only padding
+`$5258-$52AB`, immediately after the 600-byte matrix master. The ending energy
+hook also lives there to free ending workspace. No existing lower symbols move;
+build bounds cover the new chunk. Margins: 2 resident / 91 packed / 1 glue,
+32 ending-workspace / 0 loader / 13 VDC bytes, plus 84 unused helper bytes.
+
+DMA regressions in `js/test/game-end.js` stop at the actual clear and VDC restore,
+check the black mode, dump screen/colour/charset/bitmap memory and
+`$D018/$D011/$DD00` to `js/test/out/game-end-*-registers.json` and companion
+`.bin` files, and compare both title bitmaps with the original renderer.
+`end-fixes-before.log` records five failures when the old sector bytes and visible
+transition mode are reinstated in RAM; the same checks pass with the fixes.
+The screenshots `game-end-death-title-vic.png` and
+`game-end-win-title-vic.png` show the settled displays. VICE confirmation of the
+reported visual glitch remains for the user.
+
+Validation: `python c128-game/build.py`, `python js/build.py`,
+`python js/bundle.py` and the full `node js/test/run.js` pass.
+`js/test/out/game-end-fixes-all-checks.log` ends with `all checks passed`;
+84 game boots retain the free-memory pattern. Victory automatic restart is
+22,679 DMA frames, matching the C64 reference exactly. No commit or push.
+
+
+## VDC startup blanking (2026-11-15)
+
+The ending snapshots use VDC RAM at the boot screen, attribute and font addresses.
+Unlike main, which leaves that RAM alone, the ending loader overwrote it while
+its display remained enabled. This produced both the initial boot-text mixture
+and the later blinking garbage. `VDCON=0` only suppresses map updates; it does
+not blank the hardware display.
+
+START now calls `ENDVDCBLANK` immediately after selecting RAM in the MMU,
+before any settling delay or snapshot write. Calling the helper at `$52AC`
+before banking out BASIC would execute ROM on a native SYS start. It sets
+register 26 to black foreground/background, disables
+attributes with register 25, and disables the cursor with register 10. Thus all
+screen/attribute/font data stays visually black, including during snapshots,
+endings and restart. VDC RAM remains backup storage; clearing it after saving
+would destroy restart/EXIT data. This starts at executable entry; the program
+cannot alter the display before LOAD/RUN transfers control to it.
+
+The five-byte entry replacement preserves every existing cockpit address.
+The helper occupies CPU-only padding through `$52C4`, leaving 59 helper bytes;
+other margins remain 2 resident / 91 packed / 1 glue, 32 ending-workspace /
+0 loader / 13 VDC bytes. Tests seed dirty boot RAM and cursor, check blanking
+within 400 CPU cycles, model BASIC's initial ROM mapping, check both blink
+phases throughout startup and snapshot writes, and check
+death/victory endings and restart. Restoring the old entry bytes fails the new
+startup regression. VICE visual confirmation is still outstanding.
+`python c128-game/build.py`, `python js/build.py`, `python js/bundle.py` and the full `node js/test/run.js` pass; `js/test/out/vdc-entry-verified.log` ends with `all checks passed` (85 boots). No commit or push.
+
+Final validation after the MMU ordering fix: `js/test/out/vdc-final-all-checks.log`
+ends with `all checks passed` (85 boots). The two startup regressions fail with
+the original entry restored and pass with this build; see
+`js/test/out/vdc-startup-before-after.log`. The PRG, browser export and bundle
+match. Local VICE launch exits before emulation because the sandbox blocks
+its user state directory under `AppData/Roaming/vice`.

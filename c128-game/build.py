@@ -241,6 +241,8 @@ def assemble():
     read = lambda *p: open(os.path.join(ROOT, *p), encoding='ascii').read()
     cockpit = patch(read('c128-gui', 'cockpit', 'cockpit.asm'), PATCHES_COCKPIT, 'cockpit')
     mapsrc = patch(read('c128-map', 'map.asm'), PATCHES_MAP, 'map').replace('SHIPDEAD', 'SHIPLOST') + MAP_EXTRA
+    mapsrc = patch(mapsrc, [('        STA DEAD,X\n        CPX #4\n',
+                              '        JSR ENDPLANETFLAG\n        CPX #4\n')], 'planet end hook')
     icon = '        LDA COLC\n        STA (MP),Y\n'        # both icon cells: value 1 (the stars) white
     if mapsrc.count(icon) != 2:
         raise SystemExit('map: the icon cells\' colour writes not found')
@@ -276,6 +278,25 @@ def assemble():
                               '        BIT HITS\n        BIT HITS+1\n        JMP SHOWSH')
     cockpit = cockpit.replace('        LDA #$30\n        STA SUBN', 'PHBUD: LDA #$30\n        STA SUBN')
     glue = read('c128-game', 'game.asm')
+    # Blank before delays or snapshot writes, after START banks out BASIC ROM:
+    # the helper at $52AC is inaccessible under BASIC's initial MMU mapping.
+    # Five bytes replace LDA/STA without moving any cockpit symbol.
+    cockpit = patch(cockpit, [('        LDA PTR\n        STA SAVPTRL',
+                               'VDCENTRY:JSR ENDVDCBLANK\n        NOP\n        NOP')], 'VDC startup')
+    # Ending workspace is installed before GINIT2 consumes its $E000 staging.
+    # All existing lower instructions and symbols retain their size/address.
+    glue = glue.replace('JSR GINIT2      ;', 'JSR ENDINIT     ;', 1)
+    cockpit = cockpit.replace('JSR GREXIT', 'JSR ENDRESTORE')
+    cockpit = patch(cockpit, [('        STA SHIPLOST    ; ($8300)',
+                               '        JSR ENDSHIPFLAG ; ($8300)')], 'ship end hook')
+    cockpit = cockpit.replace('KILLHK: JMP SECKILL', 'KILLHK: JMP ENDKILL')
+    glue = glue.replace('JSR MSOFF', 'JSR ENDMSOFF')
+    glue = glue.replace('JSR MRGLYPHBACK', 'JSR ENDBASETALLY')
+    cockpit = cockpit.replace('        LDY HUDE+2      ; OUT OF ENERGY',
+                              '        JSR ENDENERGY   ; OUT OF ENERGY')
+    glue = glue.replace('g_tp9:  DEC $485B', 'g_tp9:  JSR ENDPROTONUSED')
+    glue = glue.replace('        LDY HUDE+3      ; the ones digit',
+                        '        JSR ENDONE      ; the ones digit')
     # Same-size entry replacements; every existing lower symbol stays fixed.
     glue = glue.replace('        JMP MSPOS\n', '        JMP MNVIEW\n')
     glue = glue.replace('        JSR MSPOSOFF\n', '        JSR MNOFF\n', 1)
@@ -310,7 +331,7 @@ def assemble():
         LDA #>MNEXTRA
         STA CDST+1
         JMP g_upb
-MTSTAGE = $DCD4
+MTSTAGE = $DCD5
 MNEXTRA:''')
     import itertools
     stream = bytes(v for value, group in itertools.groupby(open(os.path.join(ROOT, 'c128-gui/ref/streams-e800.bin'), 'rb').read()[256:1024]) for v in (len(list(group)), value))
@@ -322,13 +343,129 @@ MNEXTRA:''')
     global MAPCODE
     for _ in range(3):              # the map's code goes right after the cockpit's second chunk
         source = cockpit + '\n' + mapsrc.replace('        * = $1D00\n', '        * = $%04X\n' % MAPCODE) + '\n' + glue
+        source += '\n' + ending_source(source, read) + '\n' + read('c128-game', 'end-loader.asm') + '\n' + read('c128-game', 'end-events.asm')
         chunks, symbols = asm(source)
         end = CODE2 + len(chunks[CODE2])
         want = (end + 0x0F) & 0xFFF0    # (a page boundary here would waste what the map needs)
         if want == MAPCODE:
+            event_address = symbols['MSUNPACK']
+            events = chunks.pop(event_address)
+            assert symbols['ENDEVENTEND'] <= symbols['MSCOUNT'], 'ending events overlap live low code'
+            low = bytearray(chunks[0x0C60])
+            offset = event_address-0x0C60
+            low[offset:offset+len(events)] = events
+            chunks[0x0C60] = bytes(low)
             return chunks, symbols
         MAPCODE = want
     raise SystemExit('the map code address does not settle')
+
+
+def ending_source(source, read):
+    """Relocate the original rating instruction for instruction, including quirks."""
+    from dis6502 import ops, L, fmt
+    ref = json.loads(read('c128-game', 'end-reference.json'))
+    data = bytes(ref['rating'])
+    replacements = {0xE0: 'DIFF', 0xF34B: 'ENDVICTORY',
+                    0x2089: 'M_CORN', 0x2085: 'M_INNER', 0x033C: 'M_STATE'}
+    for old, name, count in ((0xF431, 'ENDPLANET', 1), (0xF432, 'ENDHITS', 2),
+                             (0xF434, 'ENDKILLS', 2), (0xF436, 'ENDRENER', 3),
+                             (0xF439, 'ENDRPROTON', 2), (0xF43B, 'ENDSHOTS', 2),
+                             (0xF43D, 'ENDSCORE', 3)):
+        for i in range(count):
+            replacements[old+i] = name + (f'+{i}' if i else '')
+    lines, pc = [], 0xF440
+    while pc < 0xF5B3:
+        op, mode = ops[data[pc-0xF440]]
+        n = L[mode]
+        raw = data[pc-0xF440:pc-0xF440+n]
+        instruction = fmt(op, mode, raw, pc)
+        if mode not in ('imm', 'imp', 'acc'):
+            address = raw[1] if n == 2 else raw[1] | raw[2] << 8
+            if mode == 'rel':
+                address = (pc+2+(raw[1] if raw[1]<128 else raw[1]-256)) & 65535
+            target = replacements.get(address)
+            if 0xF440 <= address < 0xF5B8:
+                target = f'er_{address:04x}'
+            if target:
+                instruction = re.sub(r'\$[0-9A-F]+', target, instruction)
+        lines.append(f'er_{pc:04x}: {instruction}')
+        pc += n
+    lines += ['er_f5b3: .BYTE 3,4,5,6,7',
+              'ENDRATING: JMP er_f440',
+              'ENDVICTORY: .BYTE 0']
+    text = read('c128-game', 'ending.asm').replace('; ENDRATINGDATA', '\n'.join(lines))
+    for name, value in [('ENDDEATHTEXT', ' THE BATTLE IS OVER'),
+                        ('ENDLOSTTEXT', '  JARALOBA IS LOST'),
+                        ('ENDWINTEXT', '  VICTORY IS YOURS'),
+                        ('ENDSAFETEXT', '  JARALOBA IS SAFE')]:
+        text = text.replace('; '+name+'DATA', '.BYTE '+','.join(map(str, value.encode()+b'\0')))
+    ranks = [ref['ranks'][i:i+13].ljust(13) for i in range(0,104,13)]
+    text = text.replace('; ENDRANKTEXTDATA', '.BYTE '+','.join(str(v) for t in ranks for v in t.encode()+b'\0'))
+    headers = []
+    for i, header in enumerate(ref['headers']):
+        values = [v for j in range(0,100,20) for v in header[j:j+20]+[0]]
+        headers.append(f'ENDHEADER{i}: .BYTE '+','.join(map(str,values)))
+    text = text.replace('; ENDHEADERDATA', '\n'.join(headers))
+    # Snapshot reset state and self-modified slots. Tables, code and existing
+    # high/low resident blocks are never moved.
+    ranges = [(0xE000, 'MNART', 0xE000), ('MNARTEND', 'MINEFREE', 'MNARTEND'), (0x0C60, 3481, 0),
+              (0x4400, 2048, 0), (0x7680, 2432, 0)]
+    for line in source.splitlines():
+        match = re.match(r'^(\w+):\s*\.BYTE\s+([^;]+)', line)
+        if match:
+            name, values = match.groups()
+            count = len(values.split(','))
+            # State scalars/short vectors; immutable art and large buffers are
+            # rebuilt by their existing initialization paths.
+            if count <= 2 and name not in ('SAVFAST','SAVMMU'):
+                ranges.append((name, count, 0))
+    # Addresses written by scene hooks; saved as instruction bytes too.
+    for name, count in [('sprcj',3),('shpj',3),('torpj',3),('vv2',3),('g_vs2',3),
+                        ('VBWORK',6),('MRMODE',2),('MRATTR',2),('MRWAIT',2),
+                        ('MRGUN',3),('iv1',3),('shj',3),('plshp',3),
+                        ('sprmc',2),('sprxe',2),('g_hk2',8),('nov3',3)]:
+        ranges.append((name,count,0))
+    # Filter by address after assembling the original joined source alone.
+    # END references in that source require placeholders during this address pass.
+    placeholder = '\n'.join(n+' = $0200' for n in
+        ('ELREG','ENDINIT','ENDRESTORE','ENDVIEW','ENDBORROW','ENDENER','ENDPROTONUSED','ENDONE',
+         'ENDSECTOR','ENDHIDE','ENDSHOW','ENDKILL','ENDMSOFF','ENDSHIPFLAG','ENDPLANETFLAG','ENDBASETALLY'))
+    _, sym = asm(source+'\n'+placeholder)
+    packed_ranges, used = [], set()
+    readonly = [(0xE960,0xEA16), (sym['MSUNPACK'],sym['MSPOS']),
+                (sym['MNSTREAM'],sym['MNEXTRAEND'])]
+    for address, length, minus in ranges:
+        if isinstance(address,str):
+            address = sym[address]
+            if isinstance(length,int) and (address < 0x1D00 or address >= 0xD000):
+                continue
+        if isinstance(length,str):
+            length = sym[length]-(sym[minus] if isinstance(minus,str) else minus)
+        for a in range(address,address+length):
+            if any(lo <= a < hi for lo,hi in readonly):
+                continue
+            if a not in used:
+                if packed_ranges and packed_ranges[-1][0]+packed_ranges[-1][1] == a:
+                    packed_ranges[-1][1] += 1
+                else:
+                    packed_ranges.append([a,1])
+                used.add(a)
+    assert 0xA60+len(used) <= 0x4000, f'ending VDC backup needs {0xA60+len(used)} bytes'
+    # Spend a few otherwise-unused VDC bytes on the small gaps between states;
+    # fewer descriptors leave more executable workspace without moving code.
+    merged = []
+    spare = 0x4000-0xA60-len(used)
+    for a,n in sorted(packed_ranges):
+        gap = a-(merged[-1][0]+merged[-1][1]) if merged else 999
+        if 0 <= gap <= min(32,spare):
+            merged[-1][1] += gap+n
+            spare -= gap
+        else:
+            merged.append([a,n])
+    descriptors = []
+    for a,n in merged:
+        descriptors += [a&255,a>>8,n&255,n>>8]
+    return text.replace('; ENDRANGEDATA', '.BYTE '+','.join(map(str,descriptors))) + f'\nENDVDCSIZE = {0x4000-spare}\n'
 
 
 def lz_pack(data):
@@ -424,12 +561,14 @@ def main():
         fixed = json.load(f)
     for name, address in fixed.items():
         assert symbols.get(name) == address, f'fixed symbol {name} moved from ${address:04X}'
-    if set(chunks) != {ENTRY, CODE2, MAPCODE, GLUE, HIGH, HIGH2, 0x0C60, 0xE960, 0x3D60, 0x3BD8, 0x3768, 0x3BC0, 0x2CDE, 0x2FEE, 0x33E8, 0x28D7, 0xBFC3, 0x3BD1, 0x3681}:
+    if set(chunks) != {ENTRY, CODE2, MAPCODE, GLUE, HIGH, HIGH2, 0x0C60, 0xE960, 0x3D60, 0x3BD8, 0x3768, 0x3BC0, 0x2CDE, 0x2FEE, 0x33E8, 0x28D7, 0xBFC3, 0x3BD1, 0x3681, 0x0200, 0x1C10, 0x5258}:
         raise SystemExit(f'unexpected assembly chunks: {[hex(c) for c in chunks]}')
-    for start, limit in ((ENTRY, 0x28D7), (CODE2, MAPCODE), (MAPCODE, 0xBFC3), (GLUE, HIGH2SRC), (HIGH, 0xD000), (HIGH2, 0xF6F9), (0x3D60, 0x3E00), (0x3BD8, 0x3C00), (0x3768, 0x3800), (0x3BC0, 0x3BD8), (0x2CDE, 0x2D00), (0x2FEE, 0x3000), (0x33E8, 0x3400), (0x28D7, 0x2900), (0xBFC3, 0xC000), (0x3BD1, 0x3BD8), (0x3681, 0x3690)):
+    for start, limit in ((0x5258, 0x5300), (ENTRY, 0x28D7), (CODE2, MAPCODE), (MAPCODE, 0xBFC3), (GLUE, HIGH2SRC), (HIGH, 0xD000), (HIGH2, 0xF6F9), (0x3D60, 0x3E00), (0x3BD8, 0x3C00), (0x3768, 0x3800), (0x3BC0, 0x3BD8), (0x2CDE, 0x2D00), (0x2FEE, 0x3000), (0x33E8, 0x3400), (0x28D7, 0x2900), (0xBFC3, 0xC000), (0x3BD1, 0x3BD8), (0x3681, 0x3690)):
         if start + len(chunks[start]) > limit:
             raise SystemExit(f'code from ${start:04X} ends at ${start + len(chunks[start]):04X}, past ${limit:04X}')
     assert HIGH2 + len(chunks[HIGH2]) == 0xE960
+    assert symbols['ENDINGEND'] <= 0x0C60, 'ending workspace overlaps resident low code'
+    assert symbols['ENDLOADEREND'] <= ENTRY, 'ending loader overlaps cockpit entry'
     assert 0xE960 + len(chunks[0xE960]) == symbols['MINEFREE']
     assert symbols['MNSTART'] == 0xEA16
     assert symbols['MINEEND'] - symbols['MNSTART'] >= 3072
@@ -452,7 +591,7 @@ def main():
     map_build.place_assets(p, VDC=VDCDATA, PL5=0x7FC0)   # (the planet's fifth frame: pointer $FF, behind the bottom strip)
     cockpit_build.place_assets(p)                   # the cockpit's picture wins where they meet
     for address, data in chunks.items():
-        if address not in (HIGH2, 0xE960, 0x0C60):
+        if address not in (HIGH2, 0xE960, 0x0C60, 0x0200):
             p(address, data)
     # The packed $E000 image: code, torpedo frames and borrowed shot shapes.
     # Fighter masters / STR2X are loaded directly into reclaimed lower RAM.
@@ -567,6 +706,11 @@ def main():
     p(0xD000, second)
     assert HIGH2SRC + len(packed) <= 0x7680, f'the packed $E000 image ({len(packed)} bytes) overlaps the cockpit art'
     p(HIGH2SRC, packed)
+    # Consumed by ENDINIT before the high decoder overwrites this staging.
+    # Native LOAD can reach the whole payload (never beyond $FF00).
+    ending = chunks[0x0200]
+    assert len(ending) <= 0xA60
+    p(0xE000, ending + bytes(0xA60-len(ending)))
     # master copy of the colour matrix's view rows for MAPCLOSE (game.asm)
     p(symbols['MMAT'], bytes(body[0x4478 - LOAD:0x4478 - LOAD + 600]))
 
@@ -577,10 +721,10 @@ def main():
         f.write(bytes((LOAD & 255, LOAD >> 8)) + body)
     ends = ', '.join(f'${a:04X}-${a + len(c) - 1:04X}' for a, c in sorted(chunks.items()))
     print(f'memory left: high {symbols["MINEEND"] - symbols["MINEFREE"]} bytes (${symbols["MINEFREE"]:04X}-${symbols["MINEEND"]-1:04X}, all modes), packed {0x7680 - HIGH2SRC - len(packed)} bytes, glue {HIGH2SRC - GLUE - len(chunks[GLUE])} bytes; low stream {len(low_stream)} bytes')
+    print(f'ending memory: workspace {0xC60-symbols["ENDINGEND"]} bytes free, loader {ENTRY-symbols["ENDLOADEREND"]} bytes free, VDC {0x4000-symbols["ENDVDCSIZE"]} bytes free of 16K')
     print(f'wrote {OUT} (${LOAD:04X}-${LOAD + len(body) - 1:04X}, code {ends}, entry ${symbols["START"]:04X})')
     return symbols
 
 
 if __name__ == '__main__':
     main()
-

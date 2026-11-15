@@ -6,7 +6,7 @@ is ported from the C64 code and checked against it.
 
 ## Status
 
-Updated 2026-11-07 (working tree; not committed). Everything below is built into
+Updated 2026-11-15 (working tree; not committed). Everything below is built into
 `c128-game/sentinel-c128-game.prg` and the browser page (`js/dist/sentinel.html`),
 and `node js/test/run.js` ends with "all checks passed".
 
@@ -19,11 +19,20 @@ The birth band stays through the visible rings. The original lock is exact 00/00
 See "Minefield before the rings" below for original findings,
 scheduling differences and the decision about frozen sprites.
 
-Current margins (2026-11-10, after the raster tunnel): **2 high bytes**, **91 packed bytes**,
-**1 glue byte**. The minefield occupies `$EA16-$F6F7`, including a 768-byte
-sprite-slot backup and 398 bytes of packed art. Low code stays `$0C60-$19F8`;
-its staging stream is now 3,188 bytes (`$D100-$DD73`). PRG end remains `$DF8D`.
+Current margins (2026-11-11): **2 high bytes**, **91 packed bytes**,
+**1 glue byte**, **32 ending-workspace bytes**, **0 loader bytes**, and
+**13 VDC bytes**. The minefield/tunnel occupies `$EA16-$F6F6`, including
+398 bytes of packed art. Its 768-byte sprite backup borrows `$8100-$83FF`;
+the compressed movement master restores those bytes before flight resumes.
+Low code stays `$0C60-$19F8`; its 3,189-byte archive is staged at
+`$D060-$DCD4`. The ending loader extends the PRG to `$EA5F`.
 All 2,206 pre-existing lower symbols remain fixed. No commit or push.
+VDC follow-up: blank the hardware at START after banking out BASIC ROM and
+before settling/snapshot writes;
+black foreground/background with attributes and cursor disabled hides the VDC
+backup RAM throughout init, play, endings and restart. Helper padding now has
+59 bytes left (`$52C5-$52FF`); other margins above are unchanged. Dirty-boot,
+BASIC ROM mapping and blink-phase regressions live in `js/test/game-end.js`.
 
 
 Done: the cockpit and its raster schedule, the phasor shot, fighters of all three
@@ -36,25 +45,30 @@ deflector, the hyperspace cursor), the proton torpedo, the mothership sequences
 and repair, the automatic map afterwards and the base sector's re-entry lock),
 the enemy base's incoming proton (animation, launch restarts, five hits and return),
 the map's battle messages on the cockpit's message line, and the base's preliminary
-positioning on the long range scanner before its rings, plus the minefield and star band.
+positioning on the long range scanner before its rings, plus the minefield and star band, and death/planet-loss/victory endings with ratings and restart.
 
 Left, in a suggested order (each with what is already known):
 
-1. **Game end**: death (shields / systems), JARALOBA CEASES TO EXIST (the message
-   is shown, game over is not: `$DD`, `$3E7D`, `$F431`), winning, ratings.
-2. **Hyperspace**: the abort (Crsr) and a destroyed hyperspace coordinator.
-3. **What the other destroyed systems disable**, and their messages. So far the
+1. **Hyperspace**: the abort (Crsr) and a destroyed hyperspace coordinator.
+2. **What the other destroyed systems disable**, and their messages. So far the
    scanners, the sequencer and the tracking computer act on their counters.
-4. **Fighters warping in** when lingering in an empty sector (the manual; `$F96B`).
-5. **Thrust** (W, `$FEA7`).
-6. Small: opening and closing the map during an unfinished approach restarts it;
+3. **Fighters warping in** when lingering in an empty sector (the manual; `$F96B`).
+4. **Thrust** (W, `$FEA7`).
+5. Small: opening and closing the map during an unfinished approach restarts it;
    the destruction uses two particle bursts where the original has four; a
    friendly kill also sets the map's DEAD flag (the original `$8E42` only clears
    the cell; check what the original's SURROUND then does on that empty cell).
-7. The C64 patch: the hyperspace cursor (about 90-190 bytes; no room in the
+6. The C64 patch: the hyperspace cursor (about 90-190 bytes; no room in the
     1351 patch yet).
 
 ## Handing the work on (for another agent)
+
+- Game-end workspace (2026-11-11): `$0200-$0C5F` and `$1C10-$1CFF` are
+  now reserved. VDC RAM `$0000-$3FF2` holds the workspace/reset snapshot.
+  Read the game-end section before changing the snapshot or enabling VDC.
+  Entry blanks VDC via registers 25/26 before any delay or snapshot write;
+  keep this early blanking when changing the entry or reusing VDC RAM.
+  The PRG extends to `$EA5F` for init-only ending-code staging.
 
 - Read first: `README.md`, `c128-game/README.md`, this file, `MAP-LOGIC.md`,
   `FINDINGS.md`, `SHIP-STATUS.md`. The task briefs in `briefs/` show the expected
@@ -97,11 +111,11 @@ Left, in a suggested order (each with what is already known):
   The normal EXIT hook restores low RAM before the caller's MMU/IRQs.
   Init/exit alone select MMU `$3F`; gameplay stays `$3E`, with no KERNAL calls.
   Init uses 2 MHz and returns at 1 MHz. GUNPACK's 142-byte reclamation remains
-  unchanged; UPEND, GSEED and GUNPK2 stay intact. The retired MSUNPACK bytes in
-  low RAM are padding retained to preserve offsets; GUNPK2 calls GINIT3.
+  unchanged; UPEND, GSEED and GUNPK2 stay intact. The first 74 retired MSUNPACK bytes hold the ending event hooks; all
+  following labels retain their offsets. GUNPK2 still calls GINIT3.
   All 2,206 pre-existing symbols below `$E000` are frozen in
   `c128-game/fixed-symbols.json` and checked by build and tests.
-  The PRG ends at `$DF8D`, inside the C128 KERNAL LOAD range (below `$FF00`).
+  The PRG now ends at `$EA5F`, inside the C128 KERNAL LOAD range (below `$FF00`).
   Never stage anything at `$FF05-$FFF9`: the KERNAL does not load it. Keep all
   build bounds, including staging overlaps, backup/copy sizes and reclaimed decoder size.
 - Assembler (`mouse/tools/asm.py`): no `label+n` for forward labels, no long
@@ -1110,3 +1124,107 @@ the colour). The exit fade is a phase-locked level (`MTEXIT`, `$0F80`) and the
 last settling stage is held until its level 5 (`$8D3E`). The IRQ waits for a
 boundary on the next line (C64 `$0F08`); before, phases 1-2 of every 16 lost
 the lower half of the chain. See `c128-game/README.md`.
+
+
+## Game endings (2026-11-11)
+
+`c128-game/ending.asm` implements shield death, strategic planet loss, and
+victory, followed by large flashing bitmap text, rank/class, and restart.
+Victory follows `$F5B9`: every sector must be empty or a friendly mothership,
+all four pending attacks must be clear, and the flight loop must be active.
+The original 60-qualified-check countdown is retained (one poll per eight port
+frames); reset comparisons force the last check, as in the C64 trace.
+It does not interrupt a map, jump, approach or docking sequence. Death stops
+input, the tunnel IRQ, the base hooks and enemy firing before the 255-frame
+flash. RUN/STOP retains the program's normal exit behavior.
+
+The `$F440-$F5B7` rating is relocated instruction for instruction, including
+its arithmetic quirks and low-difficulty rank mask. The eight rank names,
+four death reports and CLASS digit come from the original. Phasor shots,
+hits, kills, energy and protons feed the rating. Original initialization
+biases (one kill and 173 energy units) are applied to the rating copy only.
+The extra unit counted when a full energy meter wraps is retained for both
+completed repairs and the final victory tally.
+The death path's HUD clear makes the final energy tally count 27,776 units;
+the port retains that quirk, without corrupting the live HUD counters.
+Bitmap letters match `$0816` pixel for pixel (pixel value 2); stars use 1,
+so they preserve letters. The letter palette cycles red/orange/light red/
+purple/brown through the original `$189B` values. Voice 2 uses `$3350`'s
+noise setup and voice 1 uses `$274C`'s pulse setup and `$15E7`'s subtraction
+sequence, bounded to 24 rattle steps per frame.
+
+Space: no existing lower code moves. New ending code occupies
+`$0200-$0C5E`; `$0200-$0C5F` is borrowed, saved/restored through the disabled
+VDC's first 16K. A new loader at `$1C10-$1CFF` saves the workspace and copies
+its load-time image from `$E000-$EA5F` before the normal high unpacker runs.
+The VDC also holds reset snapshots of mutable resident code/state, cockpit
+art, screen matrices and the protected bottom sprite slots. Proven immutable
+init helpers, retired decoder code and compressed art/streams are excluded.
+The minefield's overwritten movement streams are explicitly decoded on reset.
+The original low-RAM backup under I/O remains intact. The first 74 retired
+MSUNPACK bytes now hold `end-events.asm`: damage/planet hooks arm ENDVIEW,
+and kills/base cleanup first check whether any enemies remain. Idle flight
+calls VIEWWORK directly; no end-condition polling is added to ordinary frames.
+The low archive grows by one byte; the tunnel staging moves to `$DCD5`. All previous bounds and
+2,206 frozen lower symbols remain checked. Margins: 2 high / 91 packed /
+1 glue, plus 1 ending-workspace / 0 loader / 13 VDC bytes. VDC RAM is now
+reserved for this snapshot; do not enable the second display over it.
+
+DMA comparisons: 240 rating cases across all difficulties, both outcomes,
+planet loss, bases and all statistical inputs; original bitmap letters and
+SID setup; death scene/report timing; input/timeout restart; workspace exit
+restoration; protected sprite and movement-stream restoration; and the
+supplied low-shield scenario. That supplied JSON is actually `program: game`,
+`model: c128`, so its public state is recreated in current code, while the
+original is traced from `c64-minefield.state.json`.
+
+Reference death: scene +254, report entry +334, rating +612. Port report
+starts +612 after its 255 inclusive flash frames; the rating itself follows
+within twelve frames of the original (the report text is drawn as one bounded job). Original automatic
+resets: 10,410 death / 22,679 victory frames; port: 10,411 / 22,679.
+Held-button reset: original 715/653, port 712/654 (death/victory). Original
+waits count main-loop passes; the port models these measured waits in frames.
+The rattle cadence and six-frame letter-colour cadence are bounded schedules,
+not a cycle-for-cycle recreation of the original's variable main-loop rate.
+VICE x128 visual/audio confirmation remains with the user.
+
+Builds and full-suite verification are recorded in
+`js/test/out/game-end-all-checks.log`; original trace and reset comparisons are in
+`game-end-original.json` and `game-end-reset-comparison.json` in that directory.
+No commit or push.
+
+## Game-end display fixes (2026-11-15)
+
+The full-screen ending handover and restart now use invalid VIC mode `$7B`
+(black, with bad lines retained) while clearing/rebuilding display memory.
+Previously `$3B` exposed the old bitmap sprite slots/cockpit art during the
+clear, and exposed the partially restored matrix/art during the VDC copy.
+The completed title switches back to `$3B`; the flight loop restores its own
+raster splits after restart. Death and victory share this path.
+
+The HUD's rightmost column was an older port bug, also present on `main`:
+`SHOWSEC` wrote character `$7A` after the leading zero, displaying `0..01`.
+The original `$FD7F-$FD99` explicitly formats column 10 as `10`; all 60 sectors
+now match its bytes, and leaving column 10 resets the tens digit.
+
+The fixed-address `SHOWSEC` slot calls a helper in unused CPU-only padding
+`$5258-$52AB`, immediately after the 600-byte matrix master. The ending energy
+hook also lives there to free ending workspace. No existing lower symbols move;
+build bounds cover the new chunk. Margins: 2 resident / 91 packed / 1 glue,
+32 ending-workspace / 0 loader / 13 VDC bytes, plus 84 unused helper bytes.
+
+DMA regressions in `js/test/game-end.js` stop at the actual clear and VDC restore,
+check the black mode, dump screen/colour/charset/bitmap memory and
+`$D018/$D011/$DD00` to `js/test/out/game-end-*-registers.json` and companion
+`.bin` files, and compare both title bitmaps with the original renderer.
+`end-fixes-before.log` records five failures when the old sector bytes and visible
+transition mode are reinstated in RAM; the same checks pass with the fixes.
+The screenshots `game-end-death-title-vic.png` and
+`game-end-win-title-vic.png` show the settled displays. VICE confirmation of the
+reported visual glitch remains for the user.
+
+Validation: `python c128-game/build.py`, `python js/build.py`,
+`python js/bundle.py` and the full `node js/test/run.js` pass.
+`js/test/out/game-end-fixes-all-checks.log` ends with `all checks passed`;
+84 game boots retain the free-memory pattern. Victory automatic restart is
+22,679 DMA frames, matching the C64 reference exactly. No commit or push.

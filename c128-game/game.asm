@@ -1042,17 +1042,9 @@ SECIDX: LDA M_SELY      ; X = row * 10 + column
         TAX
         RTS
 
-SHOWSEC:LDX M_SELX      ; SECTOR cc.rr on the HUD: column and row from 1
-        INX
-        TXA
-        ORA #$70
-        STA HUDSEC+1
-        LDX M_SELY
-        INX
-        TXA
-        ORA #$70
-        STA HUDSEC+4
+SHOWSEC:JSR ENDSECTOR
         RTS
+        .BYTE $EA,$EA,$EA,$EA,$EA,$EA,$EA,$EA,$EA,$EA,$EA,$EA,$EA,$EA,$EA,$EA,$EA
 
 MJUMPF: .BYTE 0         ; the map chose another sector
 MBUSY:  .BYTE 0         ; this frame's map work was long
@@ -5288,8 +5280,8 @@ g_mrflout:RTS
 MREND:
 
 
-; Retired init path, retained as inert bytes to keep every following page
-; offset. GUNPK2 now calls resident GINIT3, not this old staging decoder.
+; Retired init path: end-events.asm replaces its first 74 bytes at build time.
+; Every following label keeps its offset. GUNPK2 calls resident GINIT3.
 MSPOSSRC = $D100
 MSUNPACK:
         INC FAST        ; init only: START selected 1 MHz; restore after the streams
@@ -6043,3 +6035,69 @@ MRBLACK:LDA #$7B        ; ECM+BMM: an invalid mode, black, with the bad lines (t
         STA MRWAIT+1
         RTS
 MRGAPEND:
+
+; Ending/sector helpers in unused CPU-only matrix-master padding.
+        * = $5258
+ENDSECTOR:
+        LDA #$70
+        STA HUDSEC
+        LDA M_SELX
+        CLC
+        ADC #$71
+        CMP #$7A
+        BNE end_secunits
+        LDA #$71
+        STA HUDSEC
+        LDA #$70
+end_secunits:
+        STA HUDSEC+1
+        LDA M_SELY
+        CLC
+        ADC #$71
+        STA HUDSEC+4
+        RTS
+ENDHIDE:
+        LDA #$7B
+        STA $D011
+        RTS
+ENDSHOW:
+        LDA #$3B
+        STA $D011
+        RTS
+ENDENERGY:
+        PHA
+        LDA ENDBORROW
+        BEQ end_energyten
+        LDA #0
+        STA ENDBORROW
+        BEQ end_energyret
+end_energyten:
+        CLC
+        LDA ENDENER
+        ADC #10
+        STA ENDENER
+        BCC end_energyret
+        INC ENDENER+1
+        BNE end_energyret
+        INC ENDENER+2
+end_energyret:
+        PLA
+        LDY HUDE+2
+        RTS
+
+; VDC RAM is snapshot storage, including its screen/attributes/font addresses.
+; Disable attributes and make both monochrome colours black before any init.
+; Neither blinking, reverse video nor arbitrary glyph data can then show pixels.
+ENDVDCBLANK:
+        LDA #0
+        LDX #26
+        JSR ELREG
+        LDX #25
+        JSR ELREG
+        LDA #$20
+        LDX #10         ; cursor off, including the boot cursor
+        JSR ELREG
+        LDA PTR         ; displaced START instructions, after MMU selects RAM
+        STA SAVPTRL
+        RTS
+ENDHELPEND:
