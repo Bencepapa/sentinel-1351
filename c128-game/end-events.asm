@@ -16,14 +16,15 @@ ENDPLANETFLAG:
         BEQ ENDARM
         RTS
 ENDKILL:
-        JSR SECKILL
-        JMP ENDTRYWIN
+        JSR SECKILL     ; any kill arms the poll for good (the original polls $F5B9
+        PHP             ; every 64 loops): the last squadron may vanish later by an
+        JSR ENDARM      ; attack, with no kill
+        PLP
+        RTS
 ENDMSOFF:
         JSR MSOFF
 ENDTRYWIN:
         PHP
-        PHA
-        TXA
         PHA
         TYA
         PHA
@@ -37,8 +38,6 @@ ee_next:DEY
         JSR ENDARM
 ee_done:PLA
         TAY
-        PLA
-        TAX
         PLA
         PLP
         RTS

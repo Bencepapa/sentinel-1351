@@ -1,0 +1,13 @@
+; In the VICE monitor (Alt+H) while the game runs: source c128-game/cheat-clearmap.mon
+bank ram0
+fill 3c00 3c3b 00
+fill 3c40 3c7b 00
+> 3c1e 01
+> 3c5e 01
+> 3c00 80
+> 3c40 01
+> 3c0c ff
+> 3c11 ff
+> 3c2a ff
+> 3c2f ff
+x

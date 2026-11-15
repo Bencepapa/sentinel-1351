@@ -7,6 +7,7 @@
 //            'digits' = consecutive HUD screen codes $70-$79 read as a number
 //   cheats:  {id, name, help, freeze: [{at, size, value}]}   value omitted = keep current
 //            {id, name, help, skip: 'LABEL'}                  the routine returns at once
+//            {id, name, help, map: {fighter, orange[], blue[]}}  one-shot rewrite of STATE/COUNT (ticking it does it)
 //   events:  {name, at: 'LABEL', pause: bool}                 log (and pause) when entered
 //   keys:    on-screen buttons: {label, mouse: 'left'|'right'|'both'} or {label, key: 'Space'}
 'use strict';
@@ -32,6 +33,7 @@ var SentinelProfiles = {
       { id: 'energy', name: 'Freeze energy', help: 'The four HUD energy digits stop counting', freeze: [{ at: 'ENERGY', size: 4 }] },
       { id: 'protons', name: 'Infinite protons', help: 'Writes to PROTONS are ignored', freeze: [{ at: 'PROTONS' }] },
       { id: 'planet', name: 'Planet survives', help: 'PLANETLOST stays 0', freeze: [{ at: 'PLANETLOST', value: 0 }] },
+      { id: 'cleanmap', name: 'Clear map (test win)', help: 'One-shot: empties the sector map, leaves 1 enemy squadron (sector 30), 1 enemy mothership (corner 0) and your 4 bases', map: { state: 'STATE', count: 'COUNT', fighter: 30, orange: [0], blue: [12, 17, 42, 47] } },
     ],
     events: [
       { name: 'Game over', at: 'GAMEOVER', pause: true },
@@ -152,7 +154,9 @@ SentinelProfiles.game = (function (c) {
       { name: 'Map STATE (60)', at: 'M_STATE', size: 60, fmt: 'bytes' },
       { name: 'Map COUNT (60)', at: 'M_COUNT', size: 60, fmt: 'bytes' },
     ].concat(c.watches),
-    cheats: c.cheats,
+    cheats: c.cheats.concat([
+      { id: 'cleanmap', name: 'Clear map (test win)', help: 'One-shot: empties the sector map, leaves 1 enemy squadron (sector 30), 1 enemy mothership (corner 0) and your 4 bases', map: { state: 'M_STATE', count: 'M_COUNT', fighter: 30, orange: [0], blue: [12, 17, 42, 47] } },
+    ]),
     events: c.events.concat([
       { name: 'Map opened', at: 'MAPOPEN' },
       { name: 'Map closed', at: 'MAPCLOSE' },

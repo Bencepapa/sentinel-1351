@@ -55,6 +55,29 @@ var SentinelHooks = (function () {
     return h;
   };
 
+  // The C64 original blanks the display with LDA $D011 / AND #$EF / ORA #$20 / STA $D011
+  // at $2475 (restart) and $8D9A (arrival after a destroyed mothership). The read returns
+  // the raster's bit 8 in bit 7, and the write stores it as the raster compare's bit 8.
+  // Done on a line >= 256 (the main thread is there about a quarter of the time) it moves
+  // the IRQ chain's compare to line 256+: the chain never fires again, the display stays
+  // off and the game goes on blind (black screen, even the win screen is never seen).
+  // The same code at the same line would do this on any VIC-II; the fix is to keep the
+  // compare bit that is stored instead of the raster's: the instruction sequence is done
+  // here with that bit masked. Page only: the tests run the original unchanged.
+  P.fixC64Original = function () {
+    var m = this.m;
+    function blank(next) {
+      return function () {
+        var c = m.cpu, v = ((m.vic[0x11] & 0x7F) & 0xEF) | 0x20;
+        m.vicWrite(0x11, v);
+        c.a = v; c.nz(v); c.cycles += 12; c.pc = next;
+      };
+    }
+    this.on(0x2475, blank(0x247F));
+    this.on(0x8D9A, blank(0x8DA4));
+    return this;
+  };
+
   P.trace = function (name) { this.handler(name); return this; };
 
   // Call fn(machine, handler) every time the routine is entered (events, cheats).

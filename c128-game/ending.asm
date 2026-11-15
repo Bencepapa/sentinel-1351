@@ -93,14 +93,16 @@ end_check:
 end_checkwin:
         LDA MSSTATE
         ORA HYPON
-        ORA MAPSHOWN
         ORA WIPE
         ORA APPR
         BNE end_viewdone
         DEC ENDWIN
         BPL end_viewdone
-        LDA #7
-        STA ENDWIN
+        LDA #7          ; the original polls every 64 loops: a cockpit frame is a loop,
+        LDX MAPSHOWN    ; the map's loops run about 14 a frame, so it polls 2x faster there
+        BEQ end_pollrate
+        LDA #3
+end_pollrate:STA ENDWIN
         LDY #59
 end_sector:
         LDA M_STATE,Y
@@ -408,6 +410,15 @@ end_colorback:
         JSR ENDSTREAMS
         JSR MRGLYPHBACK
         JSR g_gi2
+        LDA #1          ; g_gi2 put type 1 back in the fighter slots: the shape cache, the
+        STA SHLT        ; type and the sprites' looks (a type 2/3 fight leaves them set to
+        STA SQTYPE      ; its own) must say so, or the fighters never render
+        STA ETYPE
+        LDA #0
+        STA SHLK
+        LDA #$2C        ; shpj back to its BIT
+        STA shpj
+        JSR GTYPE
         JSR SHIPINIT
         JSR EFRESET
         JSR g_gi9

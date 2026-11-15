@@ -196,6 +196,7 @@ module.exports = function ({boot, run, check, snap, fs, path, OUT}) {
     const bottomSprites=Buffer.from(B.subarray(0x7cc0,0x8000));
     const reportGlyph=Buffer.from(B.subarray(0x41f8,0x4200));
     B.fill(255,0x41f8,0x4200); // the temporary report block if planet loss interrupts docking
+    B[T.SHLT]=3;B[T.SQTYPE]=3;B[T.SHLK]=5;B[T.shpj]=0x20;B[T.ETYPE]=3;call(n,T.GTYPE); // a type 3 fight just ended
     n.setBreak(T.ENDSCENE,true);n.setBreak(T.ENDREPORT,true);n.setBreak(T.ENDRATING,true);
     for(let f=0;f<800;f++){
       n.setKey(7,5,f>=10&&f<20);
@@ -235,6 +236,8 @@ module.exports = function ({boot, run, check, snap, fs, path, OUT}) {
       'game: reset restores all phasor, last-fighter, scanner and planet sprite slots');
     check(reportGlyph.equals(Buffer.from(B.subarray(0x41f8,0x4200))),
       'game: reset restores the report glyph if planet loss interrupts docking');
+    check(B[T.SHLT]===1&&B[T.SQTYPE]===1&&B[T.SHLK]===0&&B[T.shpj]===0x2c&&B[T.ETYPE]===1&&B[T.sprmc]===0x29&&B[T.sprmc+1]===0x8f&&B[T.plshp]===0x38,
+      'game: restart returns the fighter shape cache, type and sprite looks to type 1 (fighters render as at a fresh start)');
     const field=Buffer.from(B.subarray(0x63c0,0x7680));run(n,k.hooks,80);
     check(!B[T.OVRUN]&&!field.equals(Buffer.from(B.subarray(0x63c0,0x7680))),
       'game: reset resumes live stars without raster overruns');
@@ -254,6 +257,28 @@ module.exports = function ({boot, run, check, snap, fs, path, OUT}) {
     'game: clearing every enemy and pending attack enters victory with the original rating bonus');
   snap(win.m,'game-end-victory');
 
+  {   // the last enemy is removed by the map (no kill hook): the poll armed by an earlier kill must still see it
+    const w2=ready(),X=w2.m.ram,Q=w2.p.symbols;
+    X.fill(0,Q.M_STATE,Q.M_STATE+60);X.fill(0,Q.M_FLG,Q.M_FLG+4);
+    [12,17,42,47].forEach(a=>X[Q.M_STATE+a]=255);
+    X[Q.M_STATE+1]=1;X[Q.M_STATE+2]=1;X[Q.M_SELX]=1;X[Q.M_SELY]=0;X[Q.M_COUNT+1]=1;X[Q.CURG]=0;w2.m.cpu.x=0;call(w2.m,Q.KILLHK);run(w2.m,w2.hooks,20);
+    check(!X[Q.ENDMODE]&&(X[Q.nov3+1]|X[Q.nov3+2]<<8)===Q.ENDVIEW,'game: a kill that leaves squadrons still arms the victory poll');
+    X[Q.M_STATE+1]=0;X[Q.M_STATE+2]=0;run(w2.m,w2.hooks,600);
+    check(X[Q.ENDMODE]===2&&X[Q.ENDVICTORY]===4,
+      'game: victory fires on its own once the last squadron is gone by any path, without a planet shot');
+  }
+  {   // the original polls the win on the map's tick too (about 4.7 frames a poll while the map is up, a
+      // cockpit frame per loop otherwise): the last kill returns to the map and the win fires there
+    const w3=ready(),Y=w3.m.ram,P=w3.p.symbols,mm=w3.m;
+    Y.fill(0,P.M_STATE,P.M_STATE+60);Y.fill(0,P.M_COUNT,P.M_COUNT+60);Y.fill(0,P.M_FLG,P.M_FLG+4);
+    [12,17,42,47].forEach(a=>Y[P.M_STATE+a]=255);
+    Y[P.M_SELX]=2;Y[P.M_SELY]=0;Y[P.M_STATE+2]=1;Y[P.M_COUNT+2]=1;Y[P.SQCOUNT]=1;
+    mm.cpu.x=0;call(mm,P.KILLHK);run(mm,w3.hooks,3,()=>mm.setKey(7,5,true));mm.setKey(7,5,false);
+    let winAt=-1;
+    for(let f=0;f<900&&winAt<0;f++){run(mm,w3.hooks,1);if(Y[P.ENDMODE]===2)winAt=f;}
+    check(Y[P.M_STATE+2]===0&&winAt>200&&winAt<330,
+      'game: with the map up after the last kill the win polls keep running on the map tick and fire at '+winAt+' frames (original ~4.7 frames a poll)');
+  }
   // The brief's low-shield save is the C128 program. Recreate its public
   // sector/ship state with current executable code and the current VDC backup.
   const supplied=JSON.parse(fs.readFileSync(path.join(__dirname,'../../briefs/ref/low-shield.state.json'),'utf8'));

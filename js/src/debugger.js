@@ -119,6 +119,13 @@ var SentinelDebugger = (function () {
     if (!c) throw new Error('no cheat ' + id);
     var m = this.m, self = this;
     if (c.skip) this.hooks.skip(c.skip, on);
+    if (c.map && on) {
+      var st = this.parse(c.map.state), cn = this.parse(c.map.count), i;
+      for (i = 0; i < 60; i++) { m.ram[st + i] = 0; m.ram[cn + i] = 0; }
+      m.ram[st + c.map.fighter] = 1; m.ram[cn + c.map.fighter] = 1;
+      c.map.orange.forEach(function (k) { m.ram[st + k] = 0x80; m.ram[cn + k] = 1; });
+      c.map.blue.forEach(function (k) { m.ram[st + k] = 0xFF; m.ram[cn + k] = 0; });
+    }
     (c.freeze || []).forEach(function (f) {
       var a = self.parse(f.at);
       for (var i = 0; i < (f.size || 1); i++) {

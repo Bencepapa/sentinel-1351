@@ -40,6 +40,7 @@
     m.loadPrg(base64(prog.prg));
     hooks = new SentinelHooks(m, prog.symbols);
     SentinelNative.install(hooks, mode);
+    if (name === 'c64game') hooks.fixC64Original();
     hooks.onMismatch = function (r) { dbg.say('mismatch in ' + r.name + ' (frame ' + r.frame + '): ' + r.diffs.join('; '), 'mismatch'); };
     ['STEP', 'DRAWCELL', 'TICK', 'MOVEPASS', 'CURSOR', 'VDCDRAW', 'MOVESTAR', 'DRAW7', 'ERASE7',
      'INPUT', 'STARS', 'GUNS', 'SPRCROSS', 'SPRGUNS', 'IRQ', 'LINE', 'PLOT', 'GAMEOVERCHK']
@@ -544,6 +545,14 @@
   setDebug(debugOn);
 
   function typing(e) { var t = e.target.tagName; return t === 'INPUT' || t === 'SELECT' || t === 'TEXTAREA'; }
+  var warpBack = '1';
+  window.addEventListener('keydown', function (e) {      // Alt+W: warp, 5x speed on / off
+    if (e.altKey && e.code === 'KeyW') {
+      var sp = $('speed');
+      if (sp.value === '5') sp.value = warpBack; else { warpBack = sp.value; sp.value = '5'; }
+      e.preventDefault();
+    }
+  });
   window.addEventListener('keydown', function (e) {
     if (typing(e) || !m) return;
     audio.start();
