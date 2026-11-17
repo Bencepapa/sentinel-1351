@@ -6156,7 +6156,11 @@ g_ap9:  RTS
 ; in its flight, fight and approach loops ($FB43 from $8AF3, $2D17, $C6AF); its
 ; base loops ($8C44, $90F3) never do. The map is not open then (MSOFF comes before
 ; the automatic MAPOPEN), so closing needs no exception.
+; Nor while a proton torpedo is asked for (TREQ) or under way (TPF): $FB43 refuses
+; then ($BACE, $BAD1), so the torpedo is never frozen behind the map.
 GMAPTOG:LDA MSSTATE
+        ORA TREQ
+        ORA TPF
         BNE g_ap9
         JMP MAPTOG
 ENDHELPEND:

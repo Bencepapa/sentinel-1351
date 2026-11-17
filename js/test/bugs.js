@@ -131,6 +131,15 @@ module.exports = function ({boot, run, check, snap, fs, path, OUT}) {
     const g = boot('game', 'trace'); run(g.m, g.hooks, 60);
     run(g.m, g.hooks, 3, () => g.m.setKey(7, 5, true)); g.m.setKey(7, 5, false); run(g.m, g.hooks, 5);
     check(g.m.ram[S.MAPSHOWN] === 1, 'map (#19): in flight C= still opens the map');
+    // The original refuses the map while a proton torpedo is pending or flying ($FB43, $BACE/$BAD1).
+    for (const [name, flag] of [['pending', S.TREQ], ['flying', S.TPF]]) {
+      const t = boot('game', 'trace'); t.m.dma = true; run(t.m, t.hooks, 60);
+      const TA = t.m.ram; TA[flag] = 1;
+      t.m.setKey(7, 5, true); run(t.m, t.hooks, 1); call(t.m, S.GMAPTOG); t.m.setKey(7, 5, false);
+      const opened = TA[S.MAPSHOWN] || TA[S.WIPE];
+      TA[flag] = 0; call(t.m, S.GMAPTOG); run(t.m, t.hooks, 5);
+      check(!opened && TA[S.MAPSHOWN] === 1, `map (torpedo ${name}): GMAPTOG refuses the map while the flag is set, opens it when clear`);
+    }
     // The user's save: the map was open over the minefield; closed, it stays closed.
     const u = load('minefield_map.state.json', [[S.nosp2, S.nomap], [0x5258, S.ENDHELPEND]]), um = u.m, U = um.ram;
     const wasOpen = U[S.MAPSHOWN] === 1 && U[S.MSSTATE] === 16;
