@@ -196,12 +196,13 @@ var SentinelDebugger = (function () {
     return Dis.range(function (a) { return m.peek(a); }, addr, count, function (a) { return self.label(a); });
   };
 
-  D.dump = function (addr, rows) {
+  // bank: undefined for the CPU's view, 0 / 1 for a RAM bank of the C128
+  D.dump = function (addr, rows, bank) {
     var out = [];
     for (var r = 0; r < rows; r++) {
       var a = (addr + r * 16) & 0xFFFF, hx = [], tx = '';
       for (var i = 0; i < 16; i++) {
-        var v = this.m.peek(a + i);
+        var v = bank === undefined ? this.m.peek(a + i) : this.m.peekBank(bank, a + i);
         hx.push(h2(v));
         tx += (v >= 0x20 && v < 0x7F) ? String.fromCharCode(v) : '.';
       }
@@ -216,7 +217,9 @@ var SentinelDebugger = (function () {
     'r                     registers',
     'd [addr] [n]          disassemble (default: PC)',
     'm [addr] [rows]       memory',
+    'm1 [addr] [rows]      memory of C128 RAM bank 1 (m0: bank 0)',
     '> addr b1 b2 ...      write bytes (RAM)',
+    '>1 addr b1 b2 ...     write bytes into C128 RAM bank 1',
     'io addr b             write an I/O register',
     'bk addr | bl | del addr|all     PC breakpoints',
     'w addr [end] | uw addr|all      stop when the program writes there',
@@ -250,6 +253,12 @@ var SentinelDebugger = (function () {
         });
       }
       case 'm': return this.dump(addrOr(0, 0), args[1] ? parseInt(args[1], 10) : 8);
+      case 'm0': case 'm1': return this.dump(addrOr(0, 0), args[1] ? parseInt(args[1], 10) : 8, cmd === 'm1' ? 1 : 0);
+      case '>1': {
+        var b1 = this.parse(args[0]);
+        args.slice(1).forEach(function (v, i) { m.pokeBank(1, b1 + i, parseInt(v.replace('$', ''), 16)); });
+        return this.dump(b1, 1, 1);
+      }
       case '>': {
         var b = this.parse(args[0]);
         args.slice(1).forEach(function (v, i) { m.poke(b + i, parseInt(v.replace('$', ''), 16)); });

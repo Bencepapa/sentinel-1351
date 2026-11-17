@@ -10,6 +10,15 @@
 //   c64   C64 memory map from the processor port $00/$01, used by the full
 //         patched game (Sentinel-1351_v10.prg)
 //
+// The C128 model has the MMU of the real machine: configuration register $FF00 /
+// $D500, the four preconfiguration registers $D501-$D504 (loaded into it by any
+// access to $FF01-$FF04), RCR $D506 (common RAM at the bottom / top, 1/4/8/16 KB; bit 6
+// selects the RAM bank the VIC reads), page 0 / page 1 pointers $D507-$D50A, and two
+// 64 KB RAM banks (ram, ram1; CR bit 6 selects the CPU's). Zero page and stack are the
+// physical pages the pointers name (bank 0 by default, whatever CR says), as measured
+// in VICE x128 (briefs/memory-overlay-plan.md, "Measurements"). The VDC RAM is 16 KB
+// (addresses wrap at $3FFF) unless the machine is made with { vdcKb: 64 }.
+//
 // No ROMs: the programs bank them out or never call them. ROM areas read as RAM,
 // except $C000-$CFFF on the C128 while the MMU shows the KERNAL there (it reads
 // $FF, so a program that forgets to bank it out jams); the character ROM is an
@@ -29,10 +38,16 @@ var C128 = (function () {
   var FRAME_CYCLES = PAL_LINES * PAL_LINE_CYCLES;   // 19656 at 1 MHz
   var RETURN_TRAP = 0xFFF0;                         // RTS from START lands here (C128 tests)
 
-  function Machine(model) {
+  // MMU registers as VICE x128 3.9 shows them when a SYS runs from BASIC ($D500-$D50B)
+  var MMU_DEFAULTS = [0x00, 0x3F, 0x7F, 0x01, 0x41, 0x37, 0x04, 0x00, 0x00, 0x01, 0x00, 0x20];
+  var COMMON_SIZE = [0x400, 0x1000, 0x2000, 0x4000];
+
+  function Machine(model, opts) {
     var m = this;
     this.model = model === 'c64' ? 'c64' : 'c128';
     this.ram = new Uint8Array(0x10000);
+    this.ram1 = new Uint8Array(0x10000);   // C128 RAM bank 1 (CR bit 6); empty until used
+    this.setVdcKb(opts && opts.vdcKb === 64 ? 64 : 16);
     this.colorRam = new Uint8Array(0x400);
     this.vic = new Uint8Array(0x40);
     this.sid = new Uint8Array(0x20);
@@ -64,13 +79,15 @@ var C128 = (function () {
 
   P.reset = function () {
     this.ram.fill(0);
+    this.ram1.fill(0);
     this.colorRam.fill(14);
     this.vic.fill(0);
     this.sid.fill(0);
     this.vdcRam.fill(0);
     this.vdcReg.fill(0);
-    this.mmu.fill(0);
+    this.mmuDefaults();
     this.mmuCR = 0x00;            // C128 after RUN from BASIC: ROMs + I/O
+    this.mmuChanged();
     this.port0 = 0x2F;            // C64 processor port: DDR, data
     this.port1 = 0x37;
     // VIC as BASIC leaves it: text at $0400
@@ -111,6 +128,68 @@ var C128 = (function () {
     this.frameOpen = false;
     this.lastLine = 0;
   };
+
+  // ---- MMU and the RAM banks ------------------------------------------------------
+
+  P.setVdcKb = function (kb) {
+    this.vdcKb = kb === 64 ? 64 : 16;
+    this.vdcMask = this.vdcKb === 64 ? 0xFFFF : 0x3FFF;
+  };
+
+  P.mmuDefaults = function () { for (var i = 0; i < 12; i++) this.mmu[i] = MMU_DEFAULTS[i]; };
+
+  // Derived state: which RAM array the CPU sees (a flat fast path while bank 0 is selected
+  // and the zero page / stack pointers are the defaults), the common RAM limits, the
+  // physical pages 0 and 1.
+  P.mmuChanged = function () {
+    var r = this.mmu, rcr = r[6];
+    var size = COMMON_SIZE[rcr & 3];
+    this.commonLow = (rcr & 4) ? size : 0;                      // addresses below: bank 0
+    this.commonHigh = (rcr & 8) ? 0x10000 - size : 0x10000;     // addresses from: bank 0
+    var p0 = r[7] | ((r[8] & 0x0F) << 8), p1 = r[9] | ((r[10] & 0x0F) << 8);
+    this.p0Bank = (p0 >> 8) & 1; this.p0Base = (p0 & 0xFF) << 8;
+    this.p1Bank = (p1 >> 8) & 1; this.p1Base = (p1 & 0xFF) << 8;
+    this.cpuBank = (this.mmuCR >> 6) & 1;                       // (bit 7 is ignored, as on 128 KB)
+    this.bankedRam = this.cpuBank !== 0 || p0 !== 0 || p1 !== 1;
+    this.vicBank1 = (rcr & 0x40) !== 0;
+  };
+
+  // The RAM array of a CPU address in the current configuration; the index is this.pa.
+  P.ramRef = function (a) {
+    var bank;
+    if (a < 0x200) {
+      if (a < 0x100) { bank = this.p0Bank; this.pa = this.p0Base | a; }
+      else { bank = this.p1Bank; this.pa = this.p1Base | (a & 0xFF); }
+      return bank ? this.ram1 : this.ram;
+    }
+    this.pa = a;
+    if (a < this.commonLow || a >= this.commonHigh) return this.ram;
+    return this.cpuBank ? this.ram1 : this.ram;
+  };
+
+  // The RAM bank the VIC reads: RCR bit 6.
+  P.vicRam = function () { return (this.model === 'c128' && this.vicBank1) ? this.ram1 : this.ram; };
+
+  // Debugger access to a RAM bank by number, whatever the configuration.
+  P.peekBank = function (bank, a) { return (bank ? this.ram1 : this.ram)[a & 0xFFFF]; };
+  P.pokeBank = function (bank, a, v) { (bank ? this.ram1 : this.ram)[a & 0xFFFF] = v & 0xFF; };
+
+  // $D500 + r (r < 12). The unused high bits of the page pointers' upper bytes read as 1.
+  P.mmuRegRead = function (r) {
+    if (r === 0) return this.mmuCR;
+    if (r === 8 || r === 10) return this.mmu[r] | 0xF0;
+    return this.mmu[r];
+  };
+
+  P.mmuRegWrite = function (r, v) {
+    if (r === 0) this.mmuCR = v;
+    else if (r === 11) return;                                  // the version is read only
+    else this.mmu[r] = v;
+    this.mmuChanged();
+  };
+
+  // $FF01-$FF04: any access (the value written is ignored) loads CR from the register.
+  P.mmuLoad = function (k) { this.mmuCR = this.mmu[k]; this.mmuChanged(); return this.mmu[k]; };
 
   // ---- loading -------------------------------------------------------------
 
@@ -188,7 +267,8 @@ var C128 = (function () {
     this.vicLog.length = 0;
     this.ptrLog.length = 0;
     this.vicStart.set(this.vic);
-    for (var b = 0; b < 64; b++) this.ptrStart.set(this.ram.subarray(b * 0x400 + 0x3F8, b * 0x400 + 0x400), b * 8);
+    var vr = this.vicRam();
+    for (var b = 0; b < 64; b++) this.ptrStart.set(vr.subarray(b * 0x400 + 0x3F8, b * 0x400 + 0x400), b * 8);
     this.video.beginFrame();
     this.frameOpen = true;
     this.lastLine = 0;
@@ -309,8 +389,9 @@ var C128 = (function () {
       return this.ram[a];
     }
     if (a >= 0xD000 && a < 0xE000 && this.ioVisible()) return this.ioRead(a);
-    if (a >= 0xFF00 && a <= 0xFF04) return a === 0xFF00 ? this.mmuCR : 0;
+    if (a >= 0xFF00 && a <= 0xFF04) return a === 0xFF00 ? this.mmuCR : this.mmuLoad(a - 0xFF00);
     if (a >= 0xC000 && a < 0xD000 && (this.mmuCR & 0x30) !== 0x30) return 0xFF;
+    if (this.bankedRam) return this.ramRef(a)[this.pa];
     return this.ram[a];
   };
 
@@ -352,8 +433,15 @@ var C128 = (function () {
       if (a >= 0xD000 && a < 0xE000 && this.ioVisible()) { this.ioWrite(a, v); return; }
     } else {
       if (a >= 0xD000 && a < 0xE000 && this.ioVisible()) { this.ioWrite(a, v); return; }
-      if (a === 0xFF00) { this.mmuCR = v; return; }
-      if (a > 0xFF00 && a <= 0xFF04) { this.mmuCR = this.mmu[a - 0xFF00]; return; }
+      if (a === 0xFF00) { this.mmuCR = v; this.mmuChanged(); return; }
+      if (a > 0xFF00 && a <= 0xFF04) { this.mmuLoad(a - 0xFF00); return; }
+      if (this.bankedRam) {
+        var arr = this.ramRef(a), pa = this.pa;
+        if (arr === this.ram && this.frozenAt[a]) return;
+        if (arr === this.vicRam() && (pa & 0x3F8) === 0x3F8) this.logAt(this.ptrLog, pa, v);
+        arr[pa] = v;
+        return;
+      }
     }
     if (this.frozenAt[a]) return;
     if ((a & 0x3F8) === 0x3F8) this.logAt(this.ptrLog, a, v);
@@ -366,7 +454,7 @@ var C128 = (function () {
       if (a < 0xD800) return this.sidRead(a & 0x1F);
     } else {
       if (a < 0xD500) return this.sidRead(a & 0x1F);
-      if (a < 0xD600) return (a & 0xFF) === 0 ? this.mmuCR : this.mmu[(a & 0x0F) % 12];
+      if (a < 0xD600) return (a & 0xFF) < 12 ? this.mmuRegRead(a & 0xFF) : 0xFF;
       if (a < 0xD700) return (a & 1) ? this.vdcRead(this.vdcIndex) : 0x80 | 0x02;  // status: ready, version 2
       if (a < 0xD800) return 0xFF;
     }
@@ -382,7 +470,7 @@ var C128 = (function () {
       if (a < 0xD800) { this.sidWrite(a & 0x1F, v); return; }
     } else {
       if (a < 0xD500) { this.sidWrite(a & 0x1F, v); return; }
-      if (a < 0xD600) { if ((a & 0xFF) === 0) this.mmuCR = v; else this.mmu[(a & 0x0F) % 12] = v; return; }
+      if (a < 0xD600) { if ((a & 0xFF) < 12) this.mmuRegWrite(a & 0xFF, v); return; }
       if (a < 0xD700) { if (a & 1) this.vdcWrite(this.vdcIndex, v); else this.vdcIndex = v & 0x3F; return; }
       if (a < 0xD800) return;
     }
@@ -544,7 +632,7 @@ var C128 = (function () {
     reg[r] = v;
     if (r === 31) {
       a = this.vdcAddr();
-      this.vdcRam[a] = v;
+      this.vdcRam[a & this.vdcMask] = v;
       this.vdcSetAddr(a + 1);
     } else if (r === 30) {
       // word count: N more writes (fill with R31) or copies (R24 bit 7)
@@ -552,10 +640,10 @@ var C128 = (function () {
       a = this.vdcAddr();
       if (reg[24] & 0x80) {
         var src = (reg[32] << 8) | reg[33];
-        for (i = 0; i < n; i++) this.vdcRam[(a + i) & 0xFFFF] = this.vdcRam[(src + i) & 0xFFFF];
+        for (i = 0; i < n; i++) this.vdcRam[(a + i) & this.vdcMask] = this.vdcRam[(src + i) & this.vdcMask];
         src += n; reg[32] = (src >> 8) & 0xFF; reg[33] = src & 0xFF;
       } else {
-        for (i = 0; i < n; i++) this.vdcRam[(a + i) & 0xFFFF] = reg[31];
+        for (i = 0; i < n; i++) this.vdcRam[(a + i) & this.vdcMask] = reg[31];
       }
       this.vdcSetAddr(a + n);
     }
@@ -563,7 +651,7 @@ var C128 = (function () {
 
   P.vdcRead = function (r) {
     if (r === 31) {
-      var a = this.vdcAddr(), v = this.vdcRam[a];
+      var a = this.vdcAddr(), v = this.vdcRam[a & this.vdcMask];
       this.vdcSetAddr(a + 1);
       return v;
     }
@@ -594,7 +682,7 @@ var C128 = (function () {
 
   // ---- save / load state -------------------------------------------------------
 
-  var ARRAYS = ['ram', 'colorRam', 'vic', 'sid', 'vdcRam', 'vdcReg', 'mmu', 'vicStart', 'ptrStart', 'keys'];
+  var ARRAYS = ['ram', 'ram1', 'colorRam', 'vic', 'sid', 'vdcRam', 'vdcReg', 'mmu', 'vicStart', 'ptrStart', 'keys'];
   var SCALARS = ['model', 'mmuCR', 'port0', 'port1', 'vicIrq', 'collSS', 'collSB', 'vdcIndex', 'joy2',
                  'noise', 'noisePhase', 'osc3Time', 'stopped', 'frame', 'frameStart', 'frameEnd', 'vCycle', 'lastCpu',
                  'frameOpen', 'lastLine'];
@@ -605,7 +693,12 @@ var C128 = (function () {
               vicLog: this.vicLog.slice(), ptrLog: this.ptrLog.slice(), sidLog: this.sidLog.slice()};
     var self = this;
     ['a', 'x', 'y', 'sp', 'pc', 'p', 'cycles'].forEach(function (k) { s.cpu[k] = self.cpu[k]; });
-    ARRAYS.forEach(function (k) { if (!(k === 'vdcRam' && self.model === 'c64')) s.arrays[k] = self[k].slice(); });
+    ARRAYS.forEach(function (k) {
+      if (k === 'vdcRam' && self.model === 'c64') return;
+      if (k === 'ram1' && (self.model === 'c64' || !self.ram1.some(function (v) { return v; }))) return;   // bank 1 empty: not saved
+      s.arrays[k] = self[k].slice();
+    });
+    s.banks = 1;                       // states from before bank 1 have no such field
     SCALARS.forEach(function (k) { s[k] = self[k]; });
     return s;
   };
@@ -616,12 +709,15 @@ var C128 = (function () {
     ['a', 'x', 'y', 'sp', 'pc', 'p', 'cycles'].forEach(function (k) { self.cpu[k] = s.cpu[k]; });
     this.cpu.jam = null;
     ARRAYS.forEach(function (k) { if (s.arrays[k]) self[k].set(s.arrays[k]); });
+    if (!s.arrays.ram1) this.ram1.fill(0);      // (old states, and states with bank 1 empty)
+    if (!s.banks) this.mmuDefaults();           // old states: the MMU registers were zeros that nothing read
     SCALARS.forEach(function (k) { self[k] = s[k]; });
     if (s.vCycle === undefined) { this.vCycle = s.cpu.cycles - s.frameStart; this.lastCpu = s.cpu.cycles; }
     this.cia1 = Object.assign({}, s.cia1); this.cia2 = Object.assign({}, s.cia2);
     Object.assign(this.mouse, s.mouse);
     this.vicLog = s.vicLog.slice(); this.ptrLog = s.ptrLog.slice(); this.sidLog = s.sidLog.slice();
     // frozen addresses are debugger settings, not machine state: they stay and win
+    this.mmuChanged();
     for (var a in this.frozen) this.ram[a] = this.frozen[a];
     this.writeLog = null; this.watchHit = null; this.breakInfo = null; this.skipBreakAt = this.cpu.pc;
     if (this.hooks) this.hooks.resetPending();

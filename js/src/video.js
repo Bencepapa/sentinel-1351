@@ -73,11 +73,14 @@ var SentinelVideo = (function () {
 
   // The C64's VIC sees the character ROM at VIC address $1000-$1FFF in banks 0
   // and 2; the C128's VIC-IIe, as found on the real machine, in banks 0-2.
+  // When the VIC reads RAM bank 1 (RCR bit 6) there is no character ROM image, as VICE
+  // x128 shows it (measured with sprite-background collisions, briefs/memory-overlay-plan.md).
   V.vicByte = function (bank, off) {
-    if (off >= 0x1000 && off < 0x2000 && (this.m.model === 'c64' ? (bank === 0 || bank === 0x8000) : bank !== 0xC000)) {
+    var ram = this.m.vicRam();
+    if (ram === this.m.ram && off >= 0x1000 && off < 0x2000 && (this.m.model === 'c64' ? (bank === 0 || bank === 0x8000) : bank !== 0xC000)) {
       return Font.rom[off & 0x7FF];
     }
-    return this.m.ram[bank + off];
+    return ram[bank + off];
   };
 
   // Draw every raster line before 'raster'.
@@ -149,7 +152,7 @@ var SentinelVideo = (function () {
       var cr = m.colorRam[i] & 15;
       o = x0 + cx * 8;
       if (bmm) {
-        b = m.ram[bank + bmBase + i * 8 + ln];
+        b = m.vicRam()[bank + bmBase + i * 8 + ln];
         if (mcm) {
           for (x = 0; x < 4; x++) {
             var pv = (b >> (6 - x * 2)) & 3;
@@ -190,7 +193,8 @@ var SentinelVideo = (function () {
       if (dy >= (ye ? 42 : 21) || raster > 300) continue;
       var row = ye ? dy >> 1 : dy;
       var data = bank + this.ptrs[ptrBase + s] * 64 + row * 3;
-      var bits = (m.ram[data] << 16) | (m.ram[data + 1] << 8) | m.ram[data + 2];
+      var vram = m.vicRam();
+      var bits = (vram[data] << 16) | (vram[data + 1] << 8) | vram[data + 2];
       if (!bits) continue;
       if (!any) { spr.fill(0); any = true; }
       var sx = v[s * 2] | (((v[0x10] >> s) & 1) << 8);
@@ -222,7 +226,7 @@ var SentinelVideo = (function () {
   // ---- VDC -------------------------------------------------------------------
 
   function renderVdc(m, px, blinkOn) {   // px: Uint32Array(VDC_W * VDC_H)
-    var r = m.vdcReg, ram = m.vdcRam;
+    var r = m.vdcReg, ram = m.vdcRam, vm = m.vdcMask || 0xFFFF;
     var cols = r[1] || 80, rows = Math.min(r[6] || 25, 25);
     var stride = cols + r[27];
     var disp = (r[12] << 8) | r[13];
@@ -236,14 +240,14 @@ var SentinelVideo = (function () {
     for (var cy = 0; cy < rows; cy++) {
       for (var cx = 0; cx < Math.min(cols, 80); cx++) {
         var off = cy * stride + cx;
-        var ch = ram[(disp + off) & 0xFFFF];
-        var at = attrsOn ? ram[(attr + off) & 0xFFFF] : fgDefault;
+        var ch = ram[(disp + off) & vm];
+        var at = attrsOn ? ram[(attr + off) & vm] : fgDefault;
         var set = (at & 0x80) ? 0x1000 : 0;
         var fgc = VDCC[at & 15];
         var rev = ((at >> 6) & 1) ^ (reverseAll ? 1 : 0);
         var hide = (at & 0x10) && !blinkOn;
         for (var line = 0; line < 8; line++) {
-          var b = hide ? 0 : ram[(charBase + set + ch * 16 + line) & 0xFFFF];
+          var b = hide ? 0 : ram[(charBase + set + ch * 16 + line) & vm];
           if ((at & 0x20) && line === 7) b = 0xFF;
           if (rev) b ^= 0xFF;
           var o = (cy * 8 + line) * VDC_W + cx * 8;
