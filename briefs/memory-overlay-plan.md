@@ -74,7 +74,8 @@ PRG `$1C01-$F25F`, entry `$1D00`.
 | `$0200-$0C57` | 2,648 | ending workspace (code+state), originals saved in VDC | ending; 360 bytes of it every frame |
 | `$0C58-$0C5F` | 8 | free | - |
 | `$0C60-$19F8` | 3,481 | relocated low block: MS*/MR* base sequences, positioning, enemy proton (M only); battle-message queue `GBT*`, end-event hooks, `MSCOUNT`, `MSARRIVE` (all modes). Frozen symbols. | mixed |
-| `$19F9-$1BFF` | 519 | **untouched** (C128 BASIC's free ML area; the boundary test writes `$B6` at `LOWEND`) | free |
+| `$19F9-$1A09` | 17 | `ENDCROSS` (issue #20), part of the low block (`LOWEND` = `$1A0A`; the boundary test writes `$B6` there) | victory |
+| `$1A0A-$1BFF` | 502 | **untouched** (C128 BASIC's free ML area) | free |
 | `$1C01-$1CFC` | 252 | BASIC stub, ending loader `ENDINIT`/`ENDRESTORE`/VDC I/O | init, EXIT |
 | `$1D00-$52FF` | | cockpit chunk 1, masters, tables, font, screens, sprite slots, matrix master, helpers | resident |
 | `$5300-$5DFE` | 2,815 | glue (frozen) | resident |
@@ -82,16 +83,18 @@ PRG `$1C01-$F25F`, entry `$1D00`.
 | `$8000-$84FF` | 1,280 | type-1 movement streams (mines borrow `$8100-$83FF`) | F/D |
 | `$8500-$BFFC` | 15,101 | cockpit chunk 2, map, repair helper | resident |
 | `$C000-$CFF9` | 4,090 | high glue, hyperspace | resident |
-| `$D000-$DFFF` under I/O | | init staging; runtime `$D200-$DF98` = original low-RAM backup (3,481) | EXIT |
+| `$D000-$DFFF` under I/O | | init staging; runtime `$D200-$DFA9` = original low-RAM backup (3,498) | EXIT |
 | `$E000-$E95F` | 2,400 | proton/type/hyperspace code | resident |
 | `$E960-$EA15` | 182 | `GINIT3` (init), `GLOWCOPY`, `GREXIT` (EXIT) | init/EXIT only |
 | `$EA16-$F6F6` | 3,297 | minefield + tunnel (`MNSTART`..`MNEXTRAEND`, incl. 398 packed art, `MTIRQ`, `MNSTREAM`) | M only (+`MNREQUEST` in the torpedo path, `MNSTREAM*` at reset) |
 | `$F6F7-$F6F8` | 2 | free | - |
 | `$F6F9-$FEFF` | 2,055 | `TORPA` + `TSHOT` | F/D/M |
 
-Truly free bank-0 bytes today: 2 high, 1 glue, 8 workspace, 3 loader, 59 helper pad
-(`$52C5-$52FF`), 519 at `$19F9-$1BFF`, about 150 scattered alignment bytes; under
-I/O `$D000-$D1FF` and `$DF99-$DFFF` after init (data only, MMU `$3F`).
+Truly free bank-0 bytes today (after issues #18-#21): 2 high, 1 glue, 0 workspace, 3 loader,
+9 helper pad (`$52F7-$52FF`), 6 in the old ARRSTEP block (`$5B1B-$5B20`), 502 at `$1A0A-$1BFF`
+(but the low archive's staging has only 1 byte left below `$DF00`, and its backup at most 86
+more below `$E000`), about 150 scattered alignment bytes; under I/O `$D000-$D1FF` and
+`$DFAA-$DFFF` after init (data only, MMU `$3F`).
 
 ### Load-time window (single PRG, KERNAL LOAD stops at `$FF00`)
 

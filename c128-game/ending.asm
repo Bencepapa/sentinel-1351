@@ -129,10 +129,11 @@ end_check:
         STA ENDTIME
         JSR ENDALARM
 ENDSTOP:                ; no input, fire, map key or jump; base hooks and enemy fire off
-        LDA #<g_mt9
-        STA iv1+1
-        LDA #>g_mt9
-        STA iv1+2
+        LDX #<g_mt9
+        LDY #>g_mt9
+ENDSTOPXY:              ; (X/Y: the input hook instead; the victory's ENDCROSS)
+        STX iv1+1
+        STY iv1+2
         LDA #0
         STA FIREFLAG
         STA SHOTARM
@@ -428,7 +429,8 @@ end_colorback:
         BNE end_colorback
         JSR ENDSTREAMS
         JSR MRGLYPHBACK
-        JSR g_gi2
+        LDX #0          ; (MRGLYPHBACK leaves X = $FF: g_gi2 then copied one byte a page,
+        JSR g_gi2       ; leaving a borrowed proton or a type 2/3 fight in the slots)
         LDA #1          ; g_gi2 put type 1 back in the fighter slots: the shape cache, the
         STA SHLT        ; type and the sprites' looks (a type 2/3 fight leaves them set to
         STA SQTYPE      ; its own) must say so, or the fighters never render
@@ -542,13 +544,13 @@ end_charptr:RTS
 ENDWINSTART:
         LDA #2
         STA ENDMODE
-        JSR ENDSTOP
+        LDX #<ENDCROSS  ; the crosshair and the guns still follow the mouse or the
+        LDY #>ENDCROSS  ; joystick (the original's interrupt, $B2D8 / $9568)
+        JSR ENDSTOPXY
         LDA #0
         STA ENDPHASE
         STA TRUN
         STA MAPSPR      ; (the map's planet sprite goes with the map)
-        LDA #$FF        ; no steering
-        STA JOY
         LDA #<ENDMODE   ; stars: pixel 1, only on empty pixels, as over the map
         STA gplmode+1
         STA germode+1
@@ -575,6 +577,9 @@ ew_text:
         DEX
         BNE ew_rank
         DEC ENDTIME     ; 1: a number or the rank into the text a frame; rows 4-14 hidden
+        LDA $D012       ; (a job begun late, the rank names' 114 lines, ran over the
+        CMP #ENDJOBLINE ; gray strip's split: the next frame)
+        BCS ew_print
         LDX ENDJOB
         CPX #8
         BCS ew_print
@@ -1019,6 +1024,7 @@ ENDINGEND:
 ENDDEATHAUTO = 10144
 ENDDEATHKEY = 444
 ENDLASTLINE = 178
+ENDJOBLINE = 108
 ENDREVEAL = 23
 ENDWINAUTO = 18983
 ENDWINKEY = 527

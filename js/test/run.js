@@ -1983,6 +1983,7 @@ require('./mine-parity')({boot,run,check,fs,path,OUT});
 require('./game-end')({boot,run,check,snap,fs,path,OUT});
 require('./c64-arrival')({boot,check,fs,path});
 require('./banks')({boot,run,check,fs,path,ROOT});
+require('./bugs')({boot,run,check,snap,fs,path,OUT});
 
 check(freeMemoryRuns.filter(r=>r.armed).every(r=>r.intact)&&freeMemoryRuns.some(r=>r.frames>1000),
   `memory: $A5-filled free high RAM survives all existing game scenarios (${freeMemoryRuns.filter(r=>r.armed).length} boots)`);

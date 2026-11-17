@@ -38,7 +38,7 @@ It is the browser page's default program.
   points rush to three places with a sound (`$1AF2`), three fighters appear there,
   the warning sounds and the dogfight starts. A squadron of fewer than 3 becomes 3,
   as in the original.
-- In mothership sectors the long range scanner first shows the base's position and X/Y/Z readings. Only sideways steering moves it; pitch input is ignored. Exact 00 side and 00 up in front locks steering, and depth closes at the original base loop's rate. Fire shoots in the mine/settling phase; later base phases refuse phasors. It does not select another target. As in the original, the base is a radar mark without the cyan animated fighter-selection sprite. After the bounded shape loading, near enough in front, the ship settles for about 184 frames, then, while the tunnel fades out (one band pair every 16 frames), waits 64-80 frames before the rings and rectangular opening grow as in the original. Enemy bases flicker and turn white in alternating phases; friendly bases stay white but share the same hidden phase. A proton destroys a base only if its opening has appeared and the phase is on when the torpedo arrives; a miss preserves the base's colours and the approach continues. A kill shows BASESTAR DESTROYED CAPTAIN, a burst and expanding erasing rings, then clears the sector. Every base sequence returns to the map; that sector cannot be selected straight back until you jump elsewhere. A surviving friendly base draws its white tractor rays, types the full-screen eight-system report with coloured scanning blocks and repair beeps, recharges energy, repairs the ship and grants one proton before the map returns. Tractor rays reach the guns; docking restores the cockpit and all sprite shapes for the next fight. An enemy base fires a white incoming proton at radius 25: it cannot be shot down or dodged, takes five shield/system hits, then returns to the map with the same re-entry lock. Friendly bases never fire. Before the rings, four multicolour mines grow and drift through the scanner approach. They can be shot down or dodged sideways; an undodged full-size mine takes a shield and a system point. New stars start on a horizontal band throughout positioning and the visible rings; aligning exact 00/00 in front locks star steering at any depth. The lock remains latched until a new sequence. The ?3 fighter-approach threshold does not apply to bases. DMA comparison found the original slightly faster than the port under sustained horizontal input (65?66 versus 60 steering updates in 60 frames); horizontal speed has been retained. The port clears surviving mines in a short cleanup tail before the rings, restoring the borrowed fighter sprite slots instead of retaining the original frozen-sprite bug. Opening and closing the map before the sequence ends restarts the approach.
+- In mothership sectors the long range scanner first shows the base's position and X/Y/Z readings. Only sideways steering moves it; pitch input is ignored. Exact 00 side and 00 up in front locks steering, and depth closes at the original base loop's rate. Fire shoots in the mine/settling phase; later base phases refuse phasors. It does not select another target. As in the original, the base is a radar mark without the cyan animated fighter-selection sprite. After the bounded shape loading, near enough in front, the ship settles for about 184 frames, then, while the tunnel fades out (one band pair every 16 frames), waits 64-80 frames before the rings and rectangular opening grow as in the original. Enemy bases flicker and turn white in alternating phases; friendly bases stay white but share the same hidden phase. A proton destroys a base only if its opening has appeared and the phase is on when the torpedo arrives; a miss preserves the base's colours and the approach continues. A kill shows BASESTAR DESTROYED CAPTAIN, a burst and expanding erasing rings, then clears the sector. Every base sequence returns to the map; that sector cannot be selected straight back until you jump elsewhere. A surviving friendly base draws its white tractor rays, types the full-screen eight-system report with coloured scanning blocks and repair beeps, recharges energy, repairs the ship and grants one proton before the map returns. Tractor rays reach the guns; docking restores the cockpit and all sprite shapes for the next fight. An enemy base fires a white incoming proton at radius 25: it cannot be shot down or dodged, takes five shield/system hits, then returns to the map with the same re-entry lock. Friendly bases never fire. Before the rings, four multicolour mines grow and drift through the scanner approach. They can be shot down or dodged sideways; an undodged full-size mine takes a shield and a system point. New stars start on a horizontal band throughout positioning and the visible rings; aligning exact 00/00 in front locks star steering at any depth. The lock remains latched until a new sequence. The ?3 fighter-approach threshold does not apply to bases. DMA comparison found the original slightly faster than the port under sustained horizontal input (65?66 versus 60 steering updates in 60 frames); horizontal speed has been retained. The port clears surviving mines in a short cleanup tail before the rings, restoring the borrowed fighter sprite slots instead of retaining the original frozen-sprite bug. As in the original, the map cannot be opened during a base's sequence (positioning, mines, rings, destruction, docking, repair): the original reads C= only in its flight, fight and approach loops ($FB43), never in its base loops ($8C44, $90F3) (issue #19).
 - Strategic warnings (a mothership engaged/destroyed, JARALOBA surrounded/lost) now appear on the cockpit message line even with VDC off.
 - Shield death and the loss of JARALOBA end the game: 255 frames of flashing
   and noise, then the cockpit disappears into a star field with the original
@@ -70,6 +70,7 @@ behind the cockpit, including while closed; its world arrays are never scratch.
 |---|---|
 | `$0200-$0C5F` | Borrowed ending workspace; original bytes saved in VDC RAM and restored on EXIT. |
 | `$0C60-$19F8` | 3,481-byte resident relocated mothership/repair/message/positioning/enemy-proton block. Used in M, message jobs also F/D/H; retained in every mode. Original bank-0 contents saved/restored. |
+| `$19F9-$1A09` | 17 bytes in C128 BASIC's free ML area, installed and backed up with the block: `ENDCROSS`, the victory's input hook (issue #20). `$1A0A-$1BFF` (502 bytes) untouched. |
 | `$1C01-$1C0C` | BASIC SYS stub; init only. |
 | `$1C0D-$1C0F` | Loader-to-entry padding. |
 | `$1C10-$1CFF` | Ending init/exit loader, scene shutdown and stream-reset helpers. |
@@ -113,7 +114,8 @@ behind the cockpit, including while closed; its world arrays are never scratch.
 | `$4BE8-$4BFF` | Text padding and sprite-pointer tail; reserved. |
 | `$4C00-$4FFF` | Crosshair, tracking, guns, approach blips, planet and barrel sprite slots; protected in every mode. |
 | `$5000-$5257` | 600-byte cockpit matrix master for map close; resident F/D/M/H. CPU-only RAM (VIC sees character ROM). |
-| `$5258-$52FF` | Reserved padding. |
+| `$5258-$52F6` | Ending/sector helpers, then `ARROWS`/`ARPIX` (a squadron coming in, issue #18) and `GMAPTOG` (no map in a base's sequence, issue #19). |
+| `$52F7-$52FF` | 9 bytes free. |
 | `$5300-$5DFE` | Glue code/state; resident F/D/M/H. `$5D63-$5DF0` is the init decoder, reclaimed as 142 bytes of frame pointers, mothership state, timing and repair state. UPEND/GSEED/GUNPK2 stay intact. |
 | `$5DFF` | One glue byte free; do not move existing code. |
 | `$5E00-$5FFF` | Packed high-image start at load; becomes 512-byte type-2 Y streams at init, resident F/D. |
@@ -132,11 +134,11 @@ behind the cockpit, including while closed; its world arrays are never scratch.
 | `$CFFA-$CFFF` | Padding. |
 | `$D000-$D051` | RAM beneath I/O: init STR2Y packed stream; dead afterwards. Visible addresses are hardware in gameplay. |
 | `$D052-$D05F` | Staging padding; hidden beneath I/O during gameplay. |
-| `$D060-$DCD4` | 3,189-byte packed low-code stream at load/init, consumed before backup installation. |
-| `$DCD5-$DEFF` | Tunnel stream staging and padding, consumed before backup installation. |
+| `$D060-$DCE5` | 3,206-byte packed low-code stream at load/init, consumed before backup installation. |
+| `$DCE6-$DEFE` | Tunnel stream staging (`MTSTAGE`), consumed before backup installation; `$DEFF` is the one byte left. |
 | `$DF00-$DF8D` | RAM beneath I/O: 142 runtime bytes staged at load, copied to the reclaimed decoder before backup installation. PRG ends here. |
 | `$DF8E-$DFFF` | No load-time payload; reserved staging/backup tail. |
-| `$D200-$DF98` (runtime) | **3,481-byte original low-RAM backup**, replacing consumed staging. Required until EXIT in F/D/M/H; never scratch. I/O remains visible over it. |
+| `$D200-$DFA9` (runtime) | **3,498-byte original low-RAM backup** (`$0C60-$1A09`), replacing consumed staging. Required until EXIT in F/D/M/H; never scratch. I/O remains visible over it. At most 3,584 bytes fit below `$E000`. |
 | `$E000-$E95F` | Resident proton/type/hyperspace code/state; packed then installed at init, F/D/M/H. At load, `$E000-$EA5F` stages the ending workspace and `$EA60-$F25F` the ending's VDC payload (the PRG ends at `$F25F`); both are consumed before the high image is unpacked. |
 | `$E960-$EA15` | Resident init/copy/exit helpers (182 bytes); only init and exit execute them. |
 | `$EA16-$F6F6` | Resident minefield/tunnel code, 398-byte packed mine art, tables and compressed movement master. The temporary 768-byte sprite backup borrows `$8100-$83FF`. |
@@ -571,3 +573,41 @@ alignment); high 2 / packed 91 / glue 1 unchanged. No lower symbol moved.
 `build.py` checks the masters against the PRG bytes, the payload/VDC bounds and
 the number-table layout. Validation: `js/test/out/win-screen-all-checks.log`.
 VICE x128 confirmation remains with the user. No commit or push.
+
+## Issues #18-#21 (2026-11-17)
+
+- **#18, a squadron coming in under fire.** The 24 points (`ARRSTEP`) had no
+  raster limit: 8 points a frame took 45-95 lines (four `PIXADDR` calls a point).
+  After a shot's launch (`LAUNCH`, lines 88-167) or during its flight the points
+  started late and ran over the guns' sprites (line 194) and the gray strip's
+  split (233), into the next frame. Now a point is not begun after line
+  `ARLIM` = 184; the rest wait for the next frame. A point computes its address
+  once for both rows (`ARDRAW`, `ARROWS`, `ARPIX`): about 430 instead of 625
+  cycles, so idle frames still do 8 points (the same pixels frame for frame,
+  60/61 frames). The fighters' set-up (`ARREND`, about 50 lines) waits for a
+  frame where it can begin before line 150 (`ARRFX` 4). The routine was
+  rewritten in place: `ARRSTEP` and `ARREND` keep their addresses (6 spare bytes
+  at `$5B1B-$5B20`); 11 internal labels left `fixed-symbols.json`.
+- **#19, the map in a base's sequence.** `GMAPTOG` refuses C= / the right
+  button while `MSSTATE` is non-zero. The map is never open then (`MSOFF` comes
+  before the automatic `MAPOPEN`).
+- **#20, the victory screen's crosshair.** `ENDWINSTART` points the input hook
+  at `ENDCROSS` instead of an RTS: `INPUT` moves the crosshair and the guns as
+  the original's interrupt does (mouse or joystick, the same 3/2 pixel steps,
+  the glide back to the centre), then fire, the A/T tracking request and
+  steering are cleared (so `ENDWINSTART` no longer sets `JOY` itself). Reset
+  restores the hook from its snapshot. The moving crosshair and guns shift the
+  view's time a little; the text's one-job-a-frame step (job 6, the rank names'
+  unpack, takes about 114 lines) had no raster limit and once ran over the gray
+  strip's split: a job is no longer begun after line `ENDJOBLINE` = 108.
+- **#21, the fighters after a reset.** `ENDRESET` entered `g_gi2` (the type-1
+  slot restore) with X = `$FF` left by `MRGLYPHBACK`, so it copied one byte a
+  page: a borrowed enemy proton ($6000-$607F, the large white "shot" of the
+  report is a near fighter with shape `$81`) or a type 2/3 fight stayed in the
+  slots. `LDX #0` first. The enemy shot itself ($7CC0-$7F3F, hires by design)
+  was never wrong.
+
+Memory: glue unchanged in size; helper pad 9 bytes left (`$52F7-$52FF`); ending
+workspace 0 bytes left; low block +17 bytes into `$19F9-$1BFF` (archive staging now ends
+one byte below `$DF00`). Tests: `js/test/bugs.js` (supplied saves with this
+build's changed code copied in, C64 references, fresh-boot DMA runs).

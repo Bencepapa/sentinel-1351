@@ -23,20 +23,20 @@ Victory (2026-11-17) is now the original's single screen with the HUD and
 cockpit kept: view wipe, energy refill, the original text block with the port's
 statistics, rank and class, then fire or the original timeout; see "Original
 victory screen" below. Current margins: **2 high bytes**, **91 packed bytes**,
-**1 glue byte**, **8 ending-workspace bytes**, **3 loader bytes**, and
+**1 glue byte**, **0 ending-workspace bytes** (8 before issues #18-#21), **3 loader bytes**, and
 **256 VDC bytes** (the display masters, reports and victory text are a packed
 VDC payload staged at `$EA60-$F25F`; the PRG now ends at `$F25F`). Earlier
 margins (2026-11-11) were 32 workspace / 0 loader / 13 VDC. The minefield/tunnel occupies `$EA16-$F6F6`, including
 398 bytes of packed art. Its 768-byte sprite backup borrows `$8100-$83FF`;
 the compressed movement master restores those bytes before flight resumes.
-Low code stays `$0C60-$19F8`; its 3,189-byte archive is staged at
-`$D060-$DCD4`. The ending staging extends the PRG to `$F25F`.
+Low code stays `$0C60-$19F8`, plus 17 bytes at `$19F9-$1A09` (issue #20); its
+3,206-byte archive is staged at `$D060-$DCE5`, the tunnel stream at `$DCE6-$DEFE`. The ending staging extends the PRG to `$F25F`.
 All 2,206 pre-existing lower symbols remain fixed. No commit or push.
 VDC follow-up: blank the hardware at START after banking out BASIC ROM and
 before settling/snapshot writes;
 black foreground/background with attributes and cursor disabled hides the VDC
 backup RAM throughout init, play, endings and restart. Helper padding now has
-59 bytes left (`$52C5-$52FF`); other margins above are unchanged. Dirty-boot,
+9 bytes left (`$52F7-$52FF`, after issues #18/#19); the ending workspace 0. Dirty-boot,
 BASIC ROM mapping and blink-phase regressions live in `js/test/game-end.js`.
 
 
@@ -111,7 +111,7 @@ Left, in a suggested order (each with what is already known):
   entire low block from `$D100-$DD72`, and runtime tables from `$DF00-$DF8D`.
   GINIT3 temporarily saves original low RAM at `$6000-$6D98` after the high
   stream has been consumed, then installs low code and moves that backup to
-  `$D200-$DF98` after consuming all I/O staging. GINIT2 restores sprite slots
+  `$D200-$DFA9` (3,498 bytes with `$19F9-$1A09`; at most `$DFFF`) after consuming all I/O staging. GINIT2 restores sprite slots
   and clears the view. Never overwrite the runtime backup, even in hyperspace.
   The normal EXIT hook restores low RAM before the caller's MMU/IRQs.
   Init/exit alone select MMU `$3F`; gameplay stays `$3E`, with no KERNAL calls.
@@ -1254,7 +1254,8 @@ the `$EA00` overflow mark/60000, and the energy shown one unit less (its
 the trigger, original/port): energy full 28/29, reveal 53/54, rank 56/57,
 held-fire restart 584/584, automatic restart 19,040/19,039. Rows 4-15 match the
 original pixel for pixel; 0 late splits, 0 OVRUN. Not ported: the original's
-1351 interrupt moves the crosshair during the wait; here it stays put.
+1351 interrupt moves the crosshair during the wait; ported since (issue #20,
+`ENDCROSS`: the crosshair and guns follow the mouse or joystick, nothing fires).
 
 Memory: the reset snapshot no longer copies `$4400-$4BFF`/`$7680-$7FFF`
 (equal to the PRG's bytes at snapshot time); run-length masters in a VDC

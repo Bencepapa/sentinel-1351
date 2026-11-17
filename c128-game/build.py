@@ -137,7 +137,7 @@ PATCHES_COCKPIT = [
     ('        LDA CIA1PB\n        AND #$10\n        BNE nospace\n        JMP EXIT\nnospace:LDA #$BF        ; port 2 pots for the next frame\n',
      '        LDA CIA1PB\n        BMI nostop      ; (game) RUN/STOP leaves\n        JMP EXIT\nnostop: AND #$10        ; SPACE: the torpedo (GSPACE while held)\n        BNE nospace\n        JSR GSPACE\n'
      'nospace:LDA #$00\n        STA SPREV\nnosp2:  JSR MAPKEY      ; (game) C= or the right mouse button: the map opens / closes\n'
-     '        BNE nomapk\n        LDA CPREV\n        BNE nomap\n        LDA #$01\n        STA CPREV\n        JSR MAPTOG\n'
+     '        BNE nomapk\n        LDA CPREV\n        BNE nomap\n        LDA #$01\n        STA CPREV\n        JSR GMAPTOG\n'
      '        JMP nomap\nnomapk: LDA #$00\n        STA CPREV\n'
      'nomap:  LDA #$BF        ; port 2 pots for the next frame\n'),
     # the hooks
@@ -331,7 +331,7 @@ def assemble():
         LDA #>MNEXTRA
         STA CDST+1
         JMP g_upb
-MTSTAGE = $DCD5
+MTSTAGE = $DCE6
 MNEXTRA:''')
     import itertools
     stream = bytes(v for value, group in itertools.groupby(open(os.path.join(ROOT, 'c128-gui/ref/streams-e800.bin'), 'rb').read()[256:1024]) for v in (len(list(group)), value))
@@ -668,10 +668,12 @@ def main():
     assert symbols['MNBACKEND'] - symbols['MNBACK'] == 768
     assert 0x6000 + 12 * 64 <= 0x63C0
     assert symbols['LOWSTART'] == 0x0C60
-    assert symbols['LOWEND'] == symbols['LOWSTART'] + len(chunks[0x0C60]) == 0x19F9
+    # The block began at $0C60-$19F8; small additions follow it into BASIC's free
+    # ML area ($19F9-$1BFF), backed up beneath I/O with it (LOWBACK, below $E000).
+    assert symbols['LOWEND'] == symbols['LOWSTART'] + len(chunks[0x0C60]) <= 0x1C00
     assert len(chunks[0x0C60]) == symbols['LOWPAGES'] * 256 + symbols['LOWTAIL']
     assert symbols['MSPOSEND'] - symbols['MSPOS'] == 245
-    assert symbols['ETEND'] == symbols['LOWEND']
+    assert symbols['ETEND'] == 0x19F9 and symbols['ETEND'] <= symbols['LOWEND']
     assert symbols['LOWBACK'] == 0xD200 and symbols['LOWTEMP'] == 0x6000
     assert symbols['LOWBACK'] + len(chunks[0x0C60]) <= 0xE000
     assert symbols['LOWTEMP'] + len(chunks[0x0C60]) <= 0x7680
@@ -780,8 +782,9 @@ def main():
     low_stream = bytes((low_end & 255, low_end >> 8)) + lz_pack(bytes(chunks[0x0C60]))
     assert 0xD100 + len(low_stream) <= 0xDF00, 'low stream overlaps staged runtime tables'
     p(0xD060, low_stream)
-    assert 0xD060 + len(low_stream) <= symbols['MTSTAGE']
+    assert 0xD060 + len(low_stream) <= symbols['MTSTAGE'], f'low stream ends at ${0xD060 + len(low_stream):04X}, past MTSTAGE'
     extra_stream = bytes((symbols['MNEXTRAEND'] & 255, symbols['MNEXTRAEND'] >> 8)) + lz_pack(extra)
+    print(f'low stream ${0xD060:04X}-${0xD060 + len(low_stream) - 1:04X}, tunnel stream ${symbols["MTSTAGE"]:04X}-${symbols["MTSTAGE"] + len(extra_stream) - 1:04X} ({0xDF00 - symbols["MTSTAGE"] - len(extra_stream)} bytes before $DF00)')
     assert symbols['MTSTAGE'] + len(extra_stream) <= 0xDF00, f'tunnel stream {len(extra_stream)} overlaps runtime tables'
     p(symbols['MTSTAGE'], extra_stream)
     end = HIGH2 + len(image)

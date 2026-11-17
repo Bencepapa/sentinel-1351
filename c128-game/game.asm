@@ -32,6 +32,8 @@ PLMAT   = $45A2         ; the planet's three cells (row 10, columns 18-20): matr
 PLCOL   = $D9A2         ; colour RAM,
 PLBMP   = $6D10         ; bitmap
 STARLIM = 28            ; the stars start before line 256 + this
+ARLIM   = 184           ; a squadron coming in: no point begun after this line
+PTRH    = $FC           ; (PTR+1 in zero page: the assembler takes PTR+1 as absolute)
 
         * = $5300       ; the glue: CPU RAM the VIC-IIe cannot use (after MMAT)
 
@@ -874,12 +876,21 @@ g_as1:  TXA
         LDA #$81
         STA $D404
         RTS
-g_as3:  LDA #$08
-        STA ARN
-g_as4:  JSR ARERASE
+g_as3:  LDA #$08        ; up to 8 points a frame, none begun after line ARLIM: a
+        STA ARN         ; shot's launch or flight can take the view's time, and the
+g_as4:  LDA $D012       ; points then ran over the guns (line 194) and the gray strip
+        CMP #ARLIM      ; (233); the rest go on in the next frame
+        BCS g_as9
+        BIT $D011
+        BMI g_as9
+        LDX ARRFX
+        CPX #$04
+        BEQ g_as8
+        LDA #$FF        ; erase (only pixels that still have the point's colour)
+        JSR ARDRAW
         LDA ARRFX
-        CMP #$02
-        BNE g_as5
+        LSR A           ; (3: the last step, only erased)
+        BCS g_as5
         LDX ARI
         TXA
         AND #$07
@@ -892,59 +903,60 @@ g_as4:  JSR ARERASE
         CLC
         ADC ARSY,Y
         STA ARPY,X
-        JSR ARPLOT
+        LDA #$00        ; plot (only into empty pixels)
+        JSR ARDRAW
 g_as5:  DEC ARI
         BPL g_as6
         LDA #23
         STA ARI
         LDA ARRFX
-        CMP #$03
-        BNE g_as7
-        JMP ARREND      ; (the last points erased)
-g_as7:  DEC ARSTP
+        LSR A
+        BCS g_as7       ; (3: the last points erased)
+        DEC ARSTP
         BNE g_as6
-        LDA #$03        ; the last step: only erased
-        STA ARRFX
+g_as7:  INC ARRFX       ; 3: the last step, only erased; 4: the fighters
 g_as6:  DEC ARN
         BNE g_as4
         RTS
+g_as8:  CMP #150        ; the fighters' set-up takes ~50 lines: begun early in the
+        BCC ARREND      ; view only (it ran over the gray strip after a late point)
+g_as9:  RTS
 
-ARSET:  LDX ARI         ; point ARI; only in the 3D view (above and below it the
-        LDA ARPX,X      ; bitmap holds shapes and art). C set: outside
-        STA POSX
-        LDA ARPY,X
-        STA POSY
-        CMP #26
-        BCC g_ast
-        CMP #141
-        RTS
-g_ast:  SEC
-        RTS
-ARERASE:JSR ARSET
-        BCS g_ae9
-        JSR ARE1
-        INC POSY
-ARE1:   JSR PIXADDR
-        LDA (PTR),Y
-        AND MASK3,X
-        CMP MASK1,X
-        BNE g_ae9
-        LDA (PTR),Y
-        AND CLEARM,X
-        STA (PTR),Y
-g_ae9:  RTS
-ARPLOT: JSR ARSET
-        BCS g_ap9
-        JSR ARP1
-        INC POSY
-ARP1:   JSR PIXADDR
-        LDA (PTR),Y
-        AND MASK3,X
-        BNE g_ap9
-        LDA (PTR),Y
-        ORA MASK1,X
-        STA (PTR),Y
-g_ap9:  RTS
+; Point ARI's two pixels (x, y) and (x, y+1), only in the 3D view (above and below
+; it the bitmap holds shapes and art). A = $FF: each that still has the point's
+; colour (value 1) is cleared; A = 0: each that is empty is set (both EOR MASK1).
+; One address for both rows (the old ARSET/ARERASE/ARPLOT took PIXADDR four times
+; a point: 8 points took up to 95 lines).
+ARDRAW: STA ARK
+        LDX ARI
+        LDY ARPY,X
+        CPY #26
+        BCC g_ad9
+        CPY #141
+        BCS g_ad9
+        LDA ARPX,X
+        PHA
+        LSR A
+        LSR A
+        TAX
+        CLC
+        LDA YLO,Y
+        ADC XLO,X
+        STA PTR
+        LDA YHI,Y
+        ADC XHI,X
+        ADC #$60
+        STA PTRH
+        PLA
+        AND #$03
+        TAX
+        TYA
+        AND #$07
+        CMP #$07        ; C set: y+1 starts the next character row
+        LDY #$00
+        JMP ARROWS      ; (the helpers' padding, $5258)
+g_ad9:  RTS
+        .BYTE 0,0,0,0,0,0 ; (free: ARREND stays at $5B21)
 
 ; The fighters ($1B60-$1B92, $1C24-$1C55): at least 3 ships, one group, the dogfight
 ; and the warning.
@@ -990,7 +1002,7 @@ ARENY:  .BYTE $7D,$88,$8C,$88,$9B,$88
 ARENZ:  .BYTE $10,$88,$10,$88,$10,$88
 ARPX:   .BYTE 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
 ARPY:   .BYTE 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-ARRFX:  .BYTE 0         ; 1 starting, 2 flying, 3 the last erase
+ARRFX:  .BYTE 0         ; 1 starting, 2 flying, 3 the last erase, 4 the fighters
 ARI:    .BYTE 0
 ARN:    .BYTE 0
 ARK:    .BYTE 0
@@ -5648,6 +5660,22 @@ ETSOUND:LDA #$0A        ; the launch ($BBB2): noise on voices 1 and 2
         STA $D40B
         RTS
 ETEND:
+
+; C128 BASIC's free ML area after the relocated block ($19F9-$1BFF), borrowed in
+; the same way: installed with the block, the original bytes saved beneath I/O
+; (LOWBACK) and restored on EXIT.
+;
+; The victory (ENDWINSTART's input hook, in the vertical blank): the crosshair and
+; the guns follow the mouse or the joystick, as the original's interrupt keeps doing
+; on its win screen ($B2D8, and $9568 every 16th frame); no fire, no tracking
+; request, no steering (VBWORK).
+ENDCROSS:JSR INPUT
+        LDA #$00
+        STA FIREFLAG
+        STA TPRESS
+        LDA #$FF
+        STA JOY
+        RTS
 LOWEND:
 
 ; Resident init/exit helpers. No KERNAL calls or interrupts while low RAM is
@@ -5658,7 +5686,7 @@ LOWSTART = $0C60
 LOWBACK = $D200
 LOWTEMP = $6000
 LOWPAGES = 13
-LOWTAIL = 153
+LOWTAIL = 170         ; (3,481 bytes to $19F8, then 17 in BASIC's free ML area)
 GINIT3: INC FAST
         LDA #$3F
         STA $FF00
@@ -6100,4 +6128,35 @@ ENDVDCBLANK:
         LDA PTR         ; displaced START instructions, after MMU selects RAM
         STA SAVPTRL
         RTS
+
+; A squadron coming in (ARDRAW, the glue): the point's two rows (C set: y+1 starts
+; the next character row, +320-7); ARPIX keeps C.
+ARROWS: JSR ARPIX
+        BCS g_ad2
+        INC PTR         ; y+1 in the same cell: the next byte
+        BCC ARPIX
+g_ad2:  LDA PTR
+        ADC #$38
+        STA PTR
+        LDA PTRH
+        ADC #$01
+        STA PTRH
+ARPIX:  LDA MASK1,X
+        AND ARK
+        EOR (PTR),Y
+        AND MASK3,X
+        BNE g_ap9
+        LDA (PTR),Y
+        EOR MASK1,X
+        STA (PTR),Y
+g_ap9:  RTS
+
+; C= / the right button (the cockpit's key scan): not in a base's sequence
+; (positioning, mines, rings, docking, repair). The original reads the map key only
+; in its flight, fight and approach loops ($FB43 from $8AF3, $2D17, $C6AF); its
+; base loops ($8C44, $90F3) never do. The map is not open then (MSOFF comes before
+; the automatic MAPOPEN), so closing needs no exception.
+GMAPTOG:LDA MSSTATE
+        BNE g_ap9
+        JMP MAPTOG
 ENDHELPEND:
