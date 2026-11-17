@@ -68,12 +68,16 @@ behind the cockpit, including while closed; its world arrays are never scratch.
 
 | Range | Contents and lifetime |
 |---|---|
-| `$0200-$0C5F` | Borrowed ending workspace; original bytes saved in VDC RAM and restored on EXIT. |
+| `$0100-$0154` | The bank-1 copy stub in common RAM below the stack (`bank1.asm`; the stack never goes below `$01EA`); the original bytes saved in bank 1, restored on EXIT. |
+| `$0200-$0556` | The ending's resident core (`ending.asm`: the checks in play, the death flash, the victory's refill, the statistics hooks, the snapshot copy and its descriptors, the reset's last part). Borrowed: the original `$0200-$1BFF` is saved in bank 1 and restored on EXIT. |
+| `$0557-$0C5F` | **1,801 bytes free** in every mode (borrowed BASIC RAM; since 2026-11-17, plan step 4). |
 | `$0C60-$19F8` | 3,481-byte resident relocated mothership/repair/message/positioning/enemy-proton block. Used in M, message jobs also F/D/H; retained in every mode. Original bank-0 contents saved/restored. |
-| `$19F9-$1A09` | 17 bytes in C128 BASIC's free ML area, installed and backed up with the block: `ENDCROSS`, the victory's input hook (issue #20). `$1A0A-$1BFF` (502 bytes) untouched. |
+| `$19F9-$1A09` | 17 bytes in C128 BASIC's free ML area, installed and backed up with the block: `ENDCROSS`, the victory's input hook (issue #20). |
+| `$1A0A-$1A0F` | 6 bytes free. |
+| `$1A10-$1BF7` | The overlay manager (`overlay.asm`, installed by B1INIT from its staging): S1's owner, the loader, MNREQ, the trampolines. `$1BF8-$1BFF` 8 bytes free. |
 | `$1C01-$1C0C` | BASIC SYS stub; init only. |
 | `$1C0D-$1C0F` | Loader-to-entry padding. |
-| `$1C10-$1CFF` | Ending init/exit loader, scene shutdown and stream-reset helpers. |
+| `$1C10-$1CFF` | Ending init/exit loader (ENDINIT, ELVADR, ENDRESTORE: EXIT from bank 1), scene shutdown, the reset's MINES/stream reload; 14 bytes free. |
 | `$1D00-$28D6` | Cockpit first code/state chunk; resident F/D/M/H. |
 | `$28D7-$28F5` | Repair art-restore helper; resident, executes M. |
 | `$28F6-$28F7` | Padding. |
@@ -138,11 +142,10 @@ behind the cockpit, including while closed; its world arrays are never scratch.
 | `$DCE6-$DEFE` | Tunnel stream staging (`MTSTAGE`), consumed before backup installation; `$DEFF` is the one byte left. |
 | `$DF00-$DF8D` | RAM beneath I/O: 142 runtime bytes staged at load, copied to the reclaimed decoder before backup installation. PRG ends here. |
 | `$DF8E-$DFFF` | No load-time payload; reserved staging/backup tail. |
-| `$D200-$DFA9` (runtime) | **3,498-byte original low-RAM backup** (`$0C60-$1A09`), replacing consumed staging. Required until EXIT in F/D/M/H; never scratch. I/O remains visible over it. At most 3,584 bytes fit below `$E000`. |
+| `$D200-$DFFF` (runtime) | Free RAM beneath I/O after init (data only, MMU `$3F`): the low-RAM backup moved to bank 1 (2026-11-17). |
 | `$E000-$E95F` | Resident proton/type/hyperspace code/state; packed then installed at init, F/D/M/H. At load, `$E000-$EA5F` stages the ending workspace and `$EA60-$F25F` the ending's VDC payload (the PRG ends at `$F25F`); both are consumed before the high image is unpacked. |
-| `$E960-$EA15` | Resident init/copy/exit helpers (182 bytes); only init and exit execute them. |
-| `$EA16-$F6F6` | Resident minefield/tunnel code, 398-byte packed mine art, tables and compressed movement master. The temporary 768-byte sprite backup borrows `$8100-$83FF`. |
-| `$F6F7-$F6F8` | Two resident bytes free in every gameplay mode. |
+| `$E960-$F6F8` | **S1, the overlay slot** (`overlay.asm`): one package at a time, copied from bank 1. At init `GINIT3` runs at `$E960`. MINES (`$EA16-$F6F6`: the minefield/tunnel code, 398-byte packed mine art, tables, compressed movement master; its 768-byte sprite backup borrows `$8100-$83FF`) is in S1 in play; the ENDING package (`$E970-$F0ED`) replaces it from a death or a victory until the reset reloads MINES. |
+| `$F6F7-$F6F8` | Two bytes free in every mode (no package uses them). |
 | `$F6F9-$FE7F` | Unchanged 1,927-byte TORPA stream; resident, player and enemy protons. |
 | `$FE80-$FEFF` | TSHOT, 128 bytes of original shot masters; resident, F/D/M restoration. End of decoded high image. |
 | `$FF00-$FF04` | MMU configuration registers, never ordinary payload. |
@@ -611,3 +614,51 @@ Memory: glue unchanged in size; helper pad 9 bytes left (`$52F7-$52FF`); ending
 workspace 0 bytes left; low block +17 bytes into `$19F9-$1BFF` (archive staging now ends
 one byte below `$DF00`). Tests: `js/test/bugs.js` (supplied saves with this
 build's changed code copied in, C64 references, fresh-boot DMA runs).
+
+## Bank 1 store, the overlay slot S1, the ENDING package (2026-11-17, plan steps 2-4)
+
+`briefs/memory-overlay-plan.md` steps 2, 3 and 4 (its section 9 has the details and
+the bank-1 map). The game behaves as before; the ending timings against the original
+are unchanged (death report/rating 613/615, original 612; victory 29/54/57, original
+28/53/56; resets 711/10410/584/19039 frames).
+
+- **Bank 1 is the store** (`bank1.asm`). An 85-byte copy stub in common RAM at
+  `$0100-$0154`: `B1GET`/`B1PUT` (pages, 24 cycles a byte), `ELREAD`/`ELWRITE` (a byte
+  at the address `ELVADR` set, moving on, as the VDC's address register did), `NMIB1`
+  (an RTI). `B1INIT` (init only, staged above the payload) saves `$0100-$0154`,
+  `$D501-$D504` and bank 1's `$FFFA-$FFFF`, sets PCRA `$3E` / PCRB `$7F` and bank 1's
+  vectors to `NMIB1`, then copies `$0200-$1BFF`, the ENDING package and the payload
+  into bank 1 and installs the overlay manager. EXIT (`ENDRESTORE`) puts all of it
+  back. VDC RAM is not written any more (its display stays blanked: `ENDVDCBLANK`);
+  `GINIT3` no longer saves low RAM (no `$D200` backup, no `$6000` temp).
+- **S1** (`overlay.asm`): `OVOWNER` (`$80` MINES, `$40` ENDING), `OVSTART`/`OVSTEP`
+  (a resumable copy, 32 bytes between raster checks, pieces only begun in lines
+  78-175), `OVLOAD` (all at once), `OVINIT` (MINES' image and `$8100-$83FF` into bank 1
+  with the snapshot). `OVSTART` refuses (`OVREFUSE`) while `$D01A` bit 0 is set or
+  `vv2`/`sprcj` point into MINES, and points `$FFFE` back at `NMIRTI`. MINES keeps every
+  byte and address (`$EA16-$F6F6`). The reset snapshot leaves S1 out: the reset
+  reloads MINES and the borrowed streams from bank 1 (`ENDSTREAMS`). The torpedo's
+  request check is resident (`MNREQ`); a sector's arrival calls `MNOFF` through
+  `OVMNOFF` (with MINES out of S1 it does the rest of MNOFF itself) and a base
+  sector's arrival goes through `OVBASEIN` (loads MINES if it is missing, counting
+  `OVMISS`); the base sequence's own calls into MINES stay direct (no cycle added in
+  the positioning loop). `build.py` (`audit_s1`) fails on any other resident
+  instruction with an operand in S1.
+- **The ENDING package** (`ending.asm`): a resident core at `$0200-$0556` (with the
+  snapshot copy `ENDCOPY`, now whole pages through the stub, and its descriptors) and
+  the package linked at `$E970` (1,918 bytes). `ENDSTOP` (death and victory) starts
+  the load; the death flash loads it a piece a frame (in S1 after 17 of the 255
+  frames), the victory in its first 13 frames (the wipe takes 15). `ENDSCENE` and the
+  victory's text are entered through trampolines (`OVENDING`) that complete a load
+  that is not complete. Init is shorter (play begins at frame 48, was 53).
+
+Memory left: `$0557-$0C5F` **1,801 bytes** (all modes), `$1A0A-$1A0F` 6, `$1BF8-$1BFF`
+8, loader 14, high 2, packed 168, glue 1, helper pad 9. The PRG ends at `$F932`.
+Tests: `js/test/overlay.js` (S1 filled with `$A5` while MINES is out: flight, map,
+torpedo and a fight frame for frame as with MINES in; a base reloads it; refusal
+while the tunnel runs; the reset's reload; the ENDING package's background load,
+its pieces' raster lines, no miss), `js/test/banks.js` (the game's bank-1 use, the
+stub below the stack), `run.js` (EXIT restores the stub's page, bank 1's vectors and
+the PCRs), `game-end.js` (no VDC RAM written). Old browser saves (`briefs/ref`) get
+this build's bank 1, stub and ending core in the tests (`js/test/old-state.js`).
+VICE x128: see the plan's section 9 for what to check. No commit or push.

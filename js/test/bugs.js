@@ -15,14 +15,17 @@ module.exports = function ({boot, run, check, snap, fs, path, OUT}) {
   const line = m => m.read(0xd012) + (m.read(0xd011) & 0x80 ? 256 : 0);
   // A browser save state embeds the code of the build that saved it. Code ranges
   // changed since are copied from a fresh boot of this build (pure code only).
-  let freshRam = null;
-  const fresh = () => { if (!freshRam) { const g = boot('game', 'trace'); run(g.m, g.hooks, 80); freshRam = g.m.ram.slice(); } return freshRam; };
+  // (States from before the bank-1 store also get this build's bank 1: old-state.js.)
+  let freshRam = null, freshBanks = null;
+  const fresh = () => { if (!freshRam) { const g = boot('game', 'trace'); run(g.m, g.hooks, 80); freshRam = g.m.ram.slice();
+    freshBanks = {ram: freshRam, ram1: g.m.ram1.slice(), mmu: g.m.mmu.slice()}; } return freshRam; };
   const load = (name, ranges) => {
     const saved = JSON.parse(fs.readFileSync(path.join(REF, name), 'utf8'));
     const k = boot(saved.program, 'trace');
     k.m.loadState(k.m.stateFromText(JSON.stringify(saved.state))); k.m.dma = true;
     if (k.m.freeMemoryRecord) k.m.freeMemoryRecord.armed = false;
     const F = fresh();
+    if (saved.program === 'game') require('./old-state')(k.m, freshBanks, k.p.symbols);
     for (const [s, e] of ranges || []) k.m.ram.set(F.subarray(s, e), s);
     return k;
   };

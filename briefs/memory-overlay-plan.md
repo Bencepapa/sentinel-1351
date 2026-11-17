@@ -1,8 +1,9 @@
 # Survey and plan: bank 1 overlays for the C128 game
 
-Status: survey and plan only (2026-11-17). No game code was changed; the build was
-run into a scratch directory and produced a PRG byte-identical to
-`c128-game/sentinel-c128-game.prg`. Read first: `PLAN-C128-COCKPIT.md` ("Status",
+Status (2026-11-17, later): steps 0-1 (measurements, bank 1 in the JS machine) and
+**steps 2-4 are done** (the bank-1 store, the overlay slot S1 with MINES, the ENDING
+package): see section 9 for what was built, where it differs from this plan, the new
+memory map and the free bytes. Sections 1-8 are the survey as written before. Read first: `PLAN-C128-COCKPIT.md` ("Status",
 "Handing the work on"), `c128-game/README.md` ("How it is built", the memory map
 and the 2026-11-11/15/17 sections), `briefs/memory-rearrangement.md`.
 
@@ -571,3 +572,125 @@ Spare = processor cycles spent in the frame loop's polling loops (`frame`, `WAIT
   (relocation is modelled from the pointers; VICE was not asked to relocate); that a real C128 equals VICE for the
   RCR grid, the `$FF01` read side effect and the missing character ROM image in VIC bank 1; the VIC reading the
   common area.
+
+## 9. Steps 2-4 done (2026-11-17)
+
+Built in three verified increments; after each, `python c128-game/build.py`,
+`python js/build.py`, `python js/bundle.py` and the full `node js/test/run.js` ended
+with "all checks passed" (step 2: 103 boots keep the free-memory pattern, step 3:
+107, step 4: see the README). Not committed.
+
+### 9.1 Step 2: bank 1 is the store
+
+- `c128-game/bank1.asm`: the stub at `$0100-$0154` (85 bytes, not 64: `B1GET`/`B1PUT`
+  23 bytes each, with `B1GETY`/`B1PUTY` entries for tails; `ELREAD`/`ELWRITE` 19/18
+  bytes, the same contract as the old VDC routines: a byte at a moving address, X/Y/C
+  kept, and `ELREAD` sets N/Z from the byte, as `LDA $D601` did: `ENDUNPACK` tests them;
+  `NMIB1` at `$0154`). The lowest stack pointer stays `$EA` (`banks.js`).
+- `B1INIT` (staged after the payload, init only, before `GINIT2`): `$0100-$0154`,
+  PCRs, bank 1's vectors into a temp page (`$FE00`), then into bank 1 `$2A00`; PCRA
+  `$3E`, PCRB `$7F`; bank 1's `$FFFA-$FFFF` = `NMIB1`; `$0200-$1BFF` (26 pages) into
+  bank 1 `$1000`; the payload. `ENDRESTORE` (EXIT): `$0200-$1BFF`, the vectors, the PCRs,
+  then the stack page's bottom (from a copy at `$6000`, game RAM), then `SAVFAST`.
+- The snapshot keeps exactly the descriptors it had in VDC RAM (the gap-bridging
+  budget is still the 16K VDC's formula), so a reset restores the same bytes.
+- Cost: bank-1 byte reads are 32 cycles against the VDC's 22; the ending's timings did
+  not change (the per-frame text jobs have raster limits).
+
+### 9.2 Step 3: the overlay manager, MINES
+
+- `c128-game/overlay.asm` at `$1A10` (after the low block, in BASIC's free ML area;
+  installed by `B1INIT`, restored by EXIT with `$0200-$1BFF`). Package table: MINES
+  (bank 1 `$7000`, run `$EA16`), ENDING (bank 1 `$7E00`, run `$E970`).
+- **Differences from 5.3**: (1) no guard on the base sequence's own calls (`MSVIEW`'s
+  `JMP MNVIEW`, `mp_pass`'s `MNPASS`, `MNSTEER`, `MSPREAD`'s `MNREAD`): a trampoline
+  there cost ~20 cycles a pass and changed the measured steering rate (59 -> 53 calls in
+  60 frames). The check is at the base's arrival instead (`OVBASEIN` replaces MSECTOR's
+  `JSR MSPOSON`), and `build.py`'s audit allows exactly these four. (2) `MNOFF`, called at
+  every sector's arrival, does not load MINES: with MINES out of S1 `OVMNOFF` does what
+  MNOFF does besides restoring MINES' own hooks (which are restored already: MINES only
+  leaves S1 after `ENDQUIET`'s MNOFF). (3) No background load at `HYPSTART`: only an
+  ending empties S1 and the reset reloads MINES (screen blanked), so a base arrival
+  never finds S1 empty in play; `OVBASEIN`'s synchronous load (~4.5 frames) is the
+  fallback (tested). The hyperspace background load is needed once TITLE/INTRO share
+  S1 (steps 8/9). (4) `MNREQUEST` stays in MINES (its bytes unchanged); a resident copy
+  `MNREQ` serves the torpedo path. (5) The stream master for the reset is a raw copy of
+  `$8100-$83FF` in bank 1 `$6400` (taken at init), not MINES' packed stream.
+- MINES' image goes to bank 1 at init (`OVINIT`, with the snapshot), so a reload is the
+  state a reset restored before. The snapshot leaves `$E960-$F6F8` out (clipped after
+  the same gap bridging).
+
+### 9.3 Step 4: the ENDING package
+
+- Core `$0200-$0556` (855 bytes): `ENDSETUP`, `ENDVIEW` (the per-frame check, the win
+  poll), `ENDSTOP`, `ENDFLASH`, `ENDWINSTART`, the victory's phase 0 (`ENDWINFRAME`,
+  `ENDREFILL`), `ENDONE`, `ENDPROTONUSED`, `ENDALARM`, `ENDRATTLE`, `ENDRESET2` (MINES
+  and the streams back, the fresh game), `ENDCOPY` with `ENDRANGES` (22 descriptors),
+  the trampolines, and the variables used in play, the flash and across endings
+  (`ENDPAL`, `ENDPULSE`, `ENDFREQ` keep their values from one ending to the next).
+  `ENDCOPY` is resident so that init needs no package swap (a first version loaded
+  ENDING into S1 at init for the snapshot: init then took 59 frames instead of 53 and
+  tests that start 56-60 frames after boot found no world yet). It now copies whole
+  pages with `B1PUT`/`B1GET` (24 cycles a byte instead of ~45): play begins at frame
+  48 (53 before); the reset's restore is faster too (screen blanked).
+- Package `$E970-$F0ED` (1,918 bytes): `ENDUNPACK`, the scene, the report, the rank,
+  `ENDLOOP`, `ENDTICK`, the reset's first part, the letters, the victory's
+  text/rank/wait, the numbers, the rating (`$F440`), its inputs.
+- Loading: `ENDSTOP` starts it (after `ENDQUIET`); `ENDFLASH` and the victory's phase 0
+  (and `ENDWINSTART`'s own frame) call `OVSTEP`; pieces begin in lines 78-175
+  (`OVLIM` 176) and end by line 190. Death: in S1 after 17 of the 255 flash frames.
+  Victory: after 13 frames, and phase 1 waits for it (needed when the 15-frame wipe
+  ends: two frames of margin; no frame lost in any test).
+- Staging: core at `$E000` (ENDINIT copies 4 pages), package `$E400`, payload `$EE00`,
+  `B1INIT` `$F600`, stub image, the manager's 496-byte area; the PRG ends at `$F932`.
+- Timings (DMA frames, unchanged against the build before step 2): death report/rating
+  613/616 (original 612), victory energy/text/rank 29/54/57 (original 28/53/56), resets
+  711/10410/584/19039 (C64 715/10410/584/19040).
+
+### 9.4 The memory map now
+
+Bank 0 (changed rows; the rest as in 2):
+
+| Range | Bytes | Contents |
+|---|---|---|
+| `$0100-$0154` | 85 | the copy stub (common RAM) |
+| `$0200-$0556` | 855 | ending core |
+| `$0557-$0C5F` | **1,801** | **free**, every mode |
+| `$1A0A-$1A0F` | 6 | free |
+| `$1A10-$1BF7` | 488 | overlay manager, MNREQ, trampolines |
+| `$1BF8-$1BFF` | 8 | free |
+| `$D200-$DFFF` | | free RAM beneath I/O after init (the backup left) |
+| `$E960-$F6F8` | 3,481 | S1: GINIT3 at init; MINES `$EA16-$F6F6` in play; ENDING `$E970-$F0ED` from a death/victory to the reset; `$F6F7-$F6F8` free |
+
+Bank 1:
+
+| Bank 1 | Bytes | Contents |
+|---|---|---|
+| `$1000-$29FF` | 6,656 | bank-0 `$0200-$1BFF` as at SYS |
+| `$2A00-$2A69` | 106 | `$0100-$0154`, PCRs, bank 1's vectors as at SYS |
+| `$2C00-$4C93` | 8,340 | reset snapshot (22 ranges, S1 left out) |
+| `$4D00-$54FF` | 2,048 | payload (1,895 used) |
+| `$6400-$66FF` | 768 | `$8100-$83FF` (the streams the mines borrow) |
+| `$7000-$7CE0` | 3,297 | MINES |
+| `$7E00-$85FF` | 2,048 | ENDING (1,918 used) |
+| `$FFFA-$FFFF` | 6 | `NMIB1` |
+
+Free in bank 1: `$0400-$0FFF`, `$2B00-$2BFF`, `$5500-$63FF`, `$6700-$6FFF`,
+`$7D00-$7DFF`, `$8600-$EFFF` (about 34 KB; `$F000-$FEFF` left to BASIC 7).
+
+Free resident bank 0: **1,801 + 6 + 8 + 2 bytes** plus loader 14, glue 1, helper pad 9,
+packed 168 (load time). The plan's ~2.6 KB counted all of `$1A0A-$1BFF` (the manager
+took 488 of it) and a 360-byte core (it is 855: the snapshot copy and descriptors, the
+victory's first phase, the trampolines).
+
+### 9.5 Uncertain, and what to check in VICE x128
+
+- Real hardware/VICE vs the JS model: the stub (checked in VICE in step 0), PCRA `$3E`
+  with I/O; that the KERNAL's bank-1 `$FFxx` copy is not needed while the game runs
+  (bank 1's vectors are restored at EXIT); an NMI (RESTORE) during a transfer.
+- The victory's phase 1 waits for the package; with a slow view slot (a very full map
+  when the win fires) the text could come a frame or two later than before.
+- Check in VICE: cold LOAD and start; a minefield and its tunnel; death in the minefield
+  (flash, scene, report, restart, then another base: mines and tunnel again); a
+  victory (text, rank, restart); RUN/STOP back to BASIC, then `LIST`, `PRINT FRE(1)`,
+  a string operation (BASIC 7 strings in bank 1) and RESTORE; `RUN` again.

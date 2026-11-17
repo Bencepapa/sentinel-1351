@@ -22,7 +22,7 @@ $3800-$3FFF (c128-map/build.py):
   $2900  type-1 masters (VDC is disabled); $3800-$3BBF type-2/3 masters,
          $3E00-$3FFF type-2 X streams. The map shares the cockpit address tables.
   $5E00  packed $E000 image, after glue and over sprite slots restored at init
-  $0C60  resident mothership/message/repair code; original RAM saved at $D200
+  $0C60  resident mothership/message/repair code; original RAM saved in bank 1 (B1LOW)
   $D000  init-only packed STR2Y; $D100 low-code stream; $DF00 runtime tables
   $EA16  resident minefield code/art/slot backup, full through $F6F8
   $xx00  the map's code: right after the cockpit's second chunk
@@ -298,14 +298,19 @@ def assemble():
     glue = glue.replace('        LDY HUDE+3      ; the ones digit',
                         '        JSR ENDONE      ; the ones digit')
     # Same-size entry replacements; every existing lower symbol stays fixed.
+    # The minefield is the MINES package in S1 (overlay.asm). A sector's arrival
+    # (MSECTOR -> MSOFF) calls it through the trampoline OVMNOFF, which loads it if
+    # it is missing; the base sequence's own calls after that are direct (no cycle
+    # added in the timed positioning loop; audit_s1 lists them).
     glue = glue.replace('        JMP MSPOS\n', '        JMP MNVIEW\n')
-    glue = glue.replace('        JSR MSPOSOFF\n', '        JSR MNOFF\n', 1)
+    glue = glue.replace('        JSR MSPOSOFF\n', '        JSR OVMNOFF\n', 1)
     # Preserve every low-code address: helpers live in the minefield's high tail.
     glue = glue.replace('mp_pass:LDA $D012', 'mp_pass:JSR MNPASS')
     glue = glue.replace('        JSR STEER\nmp_depth:', '        JSR MNSTEER\nmp_depth:')
     glue = glue.replace('MSPREAD:JMP lr7', 'MSPREAD:JMP MNREAD')
     glue = glue.replace('        JSR APINIT\n        LDA EVIS', '        BIT APINIT\n        LDA EVIS')
-    glue = glue.replace('g_tp6:  LDA TREQ', 'g_tp6:  JSR MNREQUEST')
+    glue = glue.replace('g_tp6:  LDA TREQ', 'g_tp6:  JSR MNREQ')
+    glue = patch(glue, [('g_ms0:  STA MSKIND\n        JSR MSPOSON\n', 'g_ms0:  STA MSKIND\n        JSR OVBASEIN\n')], 'base arrival')
     mine_source = read('c128-game', 'mines.asm')
     sprites = open(os.path.join(ROOT, 'c128-gui/ref/sprites-4800.bin'), 'rb').read()
     mine_raw = sprites[65*64:77*64]  # shape $71-$7C in the reference's order
@@ -344,7 +349,10 @@ MNEXTRA:''')
     for _ in range(3):              # the map's code goes right after the cockpit's second chunk
         source = cockpit + '\n' + mapsrc.replace('        * = $1D00\n', '        * = $%04X\n' % MAPCODE) + '\n' + glue
         source += '\n' + ending_source(source, read) + '\n' + read('c128-game', 'end-loader.asm') + '\n' + read('c128-game', 'end-events.asm')
-        chunks, symbols = asm(source)
+        source += '\n' + read('c128-game', 'bank1.asm') + '\nB1STUBLEN = B1STUBEND-256\n'
+        source += '\n' + read('c128-game', 'overlay.asm')
+        LISTING.clear()
+        chunks, symbols = asm(source, LISTING)
         end = CODE2 + len(chunks[CODE2])
         want = (end + 0x0F) & 0xFFF0    # (a page boundary here would waste what the map needs)
         if want == MAPCODE:
@@ -358,6 +366,32 @@ MNEXTRA:''')
             return chunks, symbols
         MAPCODE = want
     raise SystemExit('the map code address does not settle')
+
+
+LISTING = []
+
+
+def audit_s1(symbols):
+    """Every resident instruction with an operand in S1 must be a trampoline's
+    (overlay.asm): a call into S1 checks that its package is loaded. The slot's
+    own code (GINIT3 at init, the packages) and the init staging are not resident."""
+    init = (symbols['B1INITAT'], symbols['ENDSTUBIMG'])
+    bad = []
+    for pc, mn, mode, value in LISTING:
+        if S1BASE <= pc < S1END or init[0] <= pc < init[1]:
+            continue
+        if mode in ('abs', 'abx', 'aby', 'ind') and S1BASE <= value < S1END:
+            init_only = (value == symbols['GINIT3'] and symbols['GUNPK2'] <= pc < symbols['GUNPK2'] + 16) or \
+                (symbols['ENDINIT'] <= pc < symbols['ELVADR'] and value in (symbols['B1INIT'], 0xEA00)) or \
+                (value == symbols['MTINIT'] and symbols['MSUNPACK'] <= pc < symbols['MSPOS'])   # (retired MSUNPACK, overwritten by the events)
+            # The base sequence after MSECTOR's check: MSVIEW's JMP MNVIEW (MSSTATE 16), and MSPOS
+            # (called only from MINES) into MINES' helpers.
+            in_sequence = value in (symbols['MNVIEW'], symbols['MNPASS'], symbols['MNSTEER'], symbols['MNREAD']) and                 symbols['MSVIEW'] <= pc < symbols['MSPOSEND']
+            tramp = symbols['OVTRAMP'] <= pc < symbols['OVTRAMPEND'] or symbols['ENDTRAMP'] <= pc < symbols['ENDTRAMPEND']
+            if not init_only and not in_sequence and not tramp:
+                bad.append(f'${pc:04X} {mn} ${value:04X}')
+    if bad:
+        raise SystemExit('resident references into S1 outside the trampolines: ' + ', '.join(bad))
 
 
 def ending_source(source, read):
@@ -398,7 +432,7 @@ def ending_source(source, read):
                         ('ENDLOSTTEXT', '  JARALOBA IS LOST')]:
         text = text.replace('; '+name+'DATA', '.BYTE '+','.join(map(str, value.encode()+b'\0')))
     ranks = bytes(v for i in range(0,104,13) for v in ref['ranks'][i:i+13].ljust(13).encode()+b'\0')
-    # The four death reports live in VDC RAM; ENDSCENE unpacks them into the
+    # The four death reports live in bank 1; ENDSCENE unpacks them into the
     # text screen's hidden rows (restored from its master at reset).
     reports = bytes(v for header in ref['headers'] for j in range(0,100,20) for v in header[j:j+20]+[0])
     heads = [ENDHEADS + 105*i for i in range(4)]
@@ -429,7 +463,8 @@ def ending_source(source, read):
     # END references in that source require placeholders during this address pass.
     placeholder = '\n'.join(n+' = $0200' for n in
         ('ELREG','ENDINIT','ENDRESTORE','ENDVIEW','ENDBORROW','ENDENER','ENDPROTONUSED','ENDONE',
-         'ENDSECTOR','ENDHIDE','ENDSHOW','ENDKILL','ENDMSOFF','ENDSHIPFLAG','ENDPLANETFLAG','ENDBASETALLY'))
+         'ENDSECTOR','ENDHIDE','ENDSHOW','ENDKILL','ENDMSOFF','ENDSHIPFLAG','ENDPLANETFLAG','ENDBASETALLY',
+         'OVMNOFF','MNREQ','OVBASEIN'))
     _, sym = asm(source+'\n'+placeholder)
     packed_ranges, used = [], set()
     readonly = [(0xE960,0xEA16), (sym['MSUNPACK'],sym['MSPOS']),
@@ -460,10 +495,11 @@ def ending_source(source, read):
     ranks_at = len(rle_stream([(ENDHEADS, reports)])) - 3
     payload = win + reports_stream + rle_stream([(0x4400, masters[0]), (0x7680, masters[1])])
     pages = (len(payload)+255)//256
-    # Spend spare VDC bytes on the gaps between states: fewer descriptors leave
-    # more workspace. Up to 255 bytes may go to the payload's page alignment.
+    # Spend spare bytes on the gaps between states: fewer descriptors leave more
+    # workspace. (The budget is still the 16K VDC's of 2026-11-17, when the store
+    # moved to bank 1: the same descriptors, the same bytes restored at a reset.)
     spare = 0x4000-0xA60-len(used)-pages*256-255-ENDVDCRESERVE
-    assert spare >= 0, f'ending VDC RAM short by {-spare} bytes'
+    assert spare >= 0, f'ending snapshot budget short by {-spare} bytes'
     ordered = sorted(packed_ranges)
     gaps = sorted((ordered[i+1][0]-ordered[i][0]-ordered[i][1], i) for i in range(len(ordered)-1))
     bridged = set()
@@ -481,23 +517,41 @@ def ending_source(source, read):
             merged[-1][1] = a+n-merged[-1][0]
         else:
             merged.append([a, n])
+    # S1 (overlay.asm) is left out: its package is reloaded from bank 1 at a reset
+    # (MINES' image is taken with the snapshot). The bytes restored elsewhere are the
+    # same as before S1 existed (the gaps were chosen with it).
+    clipped = []
+    for a, n in merged:
+        for lo, hi in ((a, min(a+n, S1BASE)), (max(a, S1END), a+n)):
+            if lo < hi:
+                clipped.append([lo, hi-lo])
+    merged = clipped
+    assert not any(a < S1END and a+n > S1BASE for a, n in merged)
     snapshot = sum(n for a,n in merged)
-    vpay = (0xA60+snapshot+255) & 0xFF00
-    assert vpay + pages*256 <= 0x4000
+    vpay = (ENDB1SNAP+snapshot+255) & 0xFF00
+    assert vpay + pages*256 <= ENDB1LIMIT, f'bank 1: the payload ends at ${vpay + pages*256:04X}'
     PAYLOAD[:] = payload + bytes(pages*256-len(payload))
     descriptors = []
     for a,n in merged:
         descriptors += [a&255,a>>8,n&255,n>>8]
-    constants = {'ENDSTAGE': 0xE000+0xA60, 'ENDVPAY': vpay, 'ENDVTEXT': vpay, 'ENDVRANK': vpay+220,
+    # Bank-1 addresses (bank1.asm): the snapshot at ENDB1SNAP, the payload after it.
+    constants = {'ENDSTAGE': ENDSTAGE, 'ENDPKGSTAGE': ENDPKGSTAGE, 'ENDPKG': ENDPKG, 'ENDBPAY': vpay, 'ENDVTEXT': vpay, 'ENDVRANK': vpay+220,
                  'ENDVHEAD': vpay+240, 'ENDVRANKS': vpay+240+ranks_at, 'ENDRANKTEXT': ENDHEADS+420, 'ENDVMASTER': vpay+240+len(reports_stream),
-                 'ENDPAYPAGES': pages, 'ENDVDCSIZE': vpay+pages*256, 'ENDVSNAPEND': 0xA60+snapshot,
-                 'ENDPAYLEN': len(payload), 'ENDHEADS': ENDHEADS}
-    return text.replace('; ENDRANGEDATA', '.BYTE '+','.join(map(str,descriptors))) + '\n' + \
-        '\n'.join(f'{k} = {v}' for k, v in constants.items()) + '\n'
+                 'ENDPAYPAGES': pages, 'ENDB1END': vpay+pages*256, 'ENDB1SNAP': ENDB1SNAP, 'ENDB1SNAPEND': ENDB1SNAP+snapshot,
+                 'ENDPAYLEN': len(payload), 'ENDHEADS': ENDHEADS, 'B1INITAT': ENDSTAGE+pages*256}
+    # (the constants first: the package's origin, * = ENDPKG, needs ENDPKG defined)
+    return '\n'.join(f'{k} = {v}' for k, v in constants.items()) + '\n' + \
+        text.replace('; ENDRANGEDATA', '.BYTE '+','.join(map(str,descriptors))) + '\n'
 
 
 ENDHEADS = 0x4900           # hidden text-screen rows 6-16 while an ending runs
-ENDVDCRESERVE = 0           # VDC bytes kept free; the rest bridges the smallest snapshot gaps
+ENDVDCRESERVE = 0           # bytes kept free; the rest bridges the smallest snapshot gaps
+ENDB1SNAP = 0x2C00          # bank 1: the reset snapshot, then the payload (bank1.asm)
+ENDPKG = 0xE970             # the ENDING package's run address in S1 (ending.asm)
+ENDPKGSTAGE = 0xE400        # load-time staging: the core at $E000, the package, the payload
+ENDSTAGE = 0xEE00
+ENDB1LIMIT = 0x6400         # bank 1: the first byte after the snapshot and payload area (B1STREAM)
+S1BASE, S1END = 0xE960, 0xF6F9   # the slot (overlay.asm)
 PAYLOAD = bytearray()
 
 
@@ -652,13 +706,17 @@ def main():
         fixed = json.load(f)
     for name, address in fixed.items():
         assert symbols.get(name) == address, f'fixed symbol {name} moved from ${address:04X}'
-    if set(chunks) != {ENTRY, CODE2, MAPCODE, GLUE, HIGH, HIGH2, 0x0C60, 0xE960, 0x3D60, 0x3BD8, 0x3768, 0x3BC0, 0x2CDE, 0x2FEE, 0x33E8, 0x28D7, 0xBFC3, 0x3BD1, 0x3681, 0x0200, 0x1C10, 0x5258}:
+    if set(chunks) != {ENTRY, CODE2, MAPCODE, GLUE, HIGH, HIGH2, 0x0C60, 0xE960, 0x3D60, 0x3BD8, 0x3768, 0x3BC0, 0x2CDE, 0x2FEE, 0x33E8, 0x28D7, 0xBFC3, 0x3BD1, 0x3681, 0x0200, 0x1C10, 0x5258,
+                       0x0100, symbols['B1INITAT'], symbols['OVBASE'], ENDPKG}:
         raise SystemExit(f'unexpected assembly chunks: {[hex(c) for c in chunks]}')
     for start, limit in ((0x5258, 0x5300), (ENTRY, 0x28D7), (CODE2, MAPCODE), (MAPCODE, 0xBFC3), (GLUE, HIGH2SRC), (HIGH, 0xD000), (HIGH2, 0xF6F9), (0x3D60, 0x3E00), (0x3BD8, 0x3C00), (0x3768, 0x3800), (0x3BC0, 0x3BD8), (0x2CDE, 0x2D00), (0x2FEE, 0x3000), (0x33E8, 0x3400), (0x28D7, 0x2900), (0xBFC3, 0xC000), (0x3BD1, 0x3BD8), (0x3681, 0x3690)):
         if start + len(chunks[start]) > limit:
             raise SystemExit(f'code from ${start:04X} ends at ${start + len(chunks[start]):04X}, past ${limit:04X}')
     assert HIGH2 + len(chunks[HIGH2]) == 0xE960
-    assert symbols['ENDINGEND'] <= 0x0C60, 'ending workspace overlaps resident low code'
+    assert symbols['ENDCOREEND'] <= 0x0C60 and symbols['ENDCOREEND'] - 0x0200 <= 0x400, 'the ending core is staged in 4 pages'
+    assert symbols['ENDPKGSTART'] == ENDPKG and symbols['ENDINGEND'] <= symbols['MINEFREE'], 'the ENDING package outgrows S1'
+    assert ENDPKGSTAGE + symbols['ENDPKGPAGES'] * 256 <= ENDSTAGE and len(chunks[ENDPKG]) <= symbols['ENDPKGPAGES'] * 256
+    assert symbols['B1ENDING'] >= symbols['B1MINES'] + 13 * 256 and symbols['B1ENDING'] + symbols['ENDPKGPAGES'] * 256 <= 0xF000
     assert symbols['ENDLOADEREND'] <= ENTRY, 'ending loader overlaps cockpit entry'
     assert 0xE960 + len(chunks[0xE960]) == symbols['MINEFREE']
     assert symbols['MNSTART'] == 0xEA16
@@ -669,14 +727,32 @@ def main():
     assert 0x6000 + 12 * 64 <= 0x63C0
     assert symbols['LOWSTART'] == 0x0C60
     # The block began at $0C60-$19F8; small additions follow it into BASIC's free
-    # ML area ($19F9-$1BFF), backed up beneath I/O with it (LOWBACK, below $E000).
+    # ML area ($19F9-$1BFF), backed up in bank 1 with it (B1LOW).
     assert symbols['LOWEND'] == symbols['LOWSTART'] + len(chunks[0x0C60]) <= 0x1C00
     assert len(chunks[0x0C60]) == symbols['LOWPAGES'] * 256 + symbols['LOWTAIL']
     assert symbols['MSPOSEND'] - symbols['MSPOS'] == 245
     assert symbols['ETEND'] == 0x19F9 and symbols['ETEND'] <= symbols['LOWEND']
-    assert symbols['LOWBACK'] == 0xD200 and symbols['LOWTEMP'] == 0x6000
-    assert symbols['LOWBACK'] + len(chunks[0x0C60]) <= 0xE000
-    assert symbols['LOWTEMP'] + len(chunks[0x0C60]) <= 0x7680
+    # Bank 1 (bank1.asm): the copy stub in common RAM below the stack, the layout.
+    stub = chunks[0x0100]
+    assert len(stub) == symbols['B1STUBLEN'] <= symbols['B1SPCR'] and 0x0100 + len(stub) <= 0x0180, 'the stub outgrows its page'
+    assert symbols['B1SPCR'] + 4 <= symbols['B1SVEC'] and symbols['B1SVEC'] + 6 <= 256
+    assert symbols['B1LOW'] + 26 * 256 <= symbols['B1STACK'] and symbols['B1STACK'] + 256 <= symbols['ENDB1SNAP']
+    assert symbols['ENDB1SNAPEND'] <= symbols['ENDBPAY'] and symbols['ENDB1END'] <= ENDB1LIMIT
+    assert 0x0400 <= symbols['B1LOW'] and ENDB1LIMIT <= 0xF000, 'bank 1: common RAM below, BASIC 7 strings above'
+    b1init = chunks[symbols['B1INITAT']]
+    assert symbols['B1INITAT'] + len(b1init) == symbols['ENDSTUBIMG']
+    assert symbols['ENDSTUBIMG'] + len(stub) <= symbols['OVLIMG'] == symbols['ENDSTUBIMG'] + 128
+    assert symbols['OVLIMG'] + symbols['OVAREALEN'] <= symbols['B1TEMP'] and symbols['B1TEMP'] + 256 <= 0xFF00
+    # The overlay manager (overlay.asm) after the low block, in BASIC's free ML area.
+    ovl = chunks[symbols['OVBASE']]
+    assert symbols['LOWEND'] < symbols['OVBASE'] and symbols['OVBASE'] + symbols['OVAREALEN'] == symbols['OVAREAEND'] == 0x1C00
+    assert symbols['OVEND'] == symbols['OVBASE'] + len(ovl) <= symbols['OVAREAEND'] and symbols['OVAREALEN'] > 256
+    # S1 and its packages: MINES at $EA16 (unchanged), its image fits the bank-1 area.
+    assert (symbols['S1BASE'], symbols['S1END']) == (S1BASE, S1END) == (0xE960, symbols['MINEEND'])
+    assert symbols['MNSTART'] == 0xEA16 and symbols['MNEXTRAEND'] <= symbols['MINEFREE'] <= S1END
+    assert symbols['MNEXTRAEND'] - symbols['MNSTART'] <= 13 * 256 and symbols['B1MINES'] + 13 * 256 <= 0xF000
+    assert symbols['B1STREAM'] >= ENDB1LIMIT and symbols['B1STREAM'] + 768 <= symbols['B1MINES']
+    audit_s1(symbols)
 
     body = bytearray(cockpit_build.basic_stub())
     p = lambda address, data: put(body, address, data)
@@ -684,8 +760,11 @@ def main():
     map_build.place_assets(p, VDC=VDCDATA, PL5=0x7FC0)   # (the planet's fifth frame: pointer $FF, behind the bottom strip)
     cockpit_build.place_assets(p)                   # the cockpit's picture wins where they meet
     for address, data in chunks.items():
-        if address not in (HIGH2, 0xE960, 0x0C60, 0x0200):
+        if address not in (HIGH2, 0xE960, 0x0C60, 0x0200, 0x0100, symbols['OVBASE'], ENDPKG):
             p(address, data)
+    p(symbols['ENDSTUBIMG'], chunks[0x0100])      # B1INIT copies it to $0100
+    # B1INIT copies the overlay manager's whole area (OVBASE-$1BFF) from here
+    p(symbols['OVLIMG'], chunks[symbols['OVBASE']] + bytes(symbols['OVAREALEN'] - len(chunks[symbols['OVBASE']])))
     # The packed $E000 image: code, torpedo frames and borrowed shot shapes.
     # Fighter masters / STR2X are loaded directly into reclaimed lower RAM.
     ref = os.path.join(ROOT, 'c128-gui', 'ref')
@@ -802,14 +881,13 @@ def main():
     p(HIGH2SRC, packed)
     # Consumed by ENDINIT before the high decoder overwrites this staging.
     # Native LOAD can reach the whole payload (never beyond $FF00).
-    ending = chunks[0x0200]
-    assert len(ending) <= 0xA60
-    p(0xE000, ending + bytes(0xA60-len(ending)))
-    # Then the ending payload, which ENDSETUP saves to VDC RAM before GINIT2.
-    assert symbols['ENDSTAGE'] == 0xEA60 and len(PAYLOAD) == symbols['ENDPAYPAGES'] * 256
+    p(0xE000, chunks[0x0200])           # ENDINIT copies 4 pages to $0200
+    p(ENDPKGSTAGE, chunks[ENDPKG])      # B1INIT puts it into bank 1 (B1ENDING)
+    # Then the ending payload, which B1INIT puts into bank 1 before GINIT2.
+    assert symbols['ENDSTAGE'] == ENDSTAGE and len(PAYLOAD) == symbols['ENDPAYPAGES'] * 256
     p(symbols['ENDSTAGE'], bytes(PAYLOAD))
-    assert symbols['ENDVDCSIZE'] <= 0x4000 and symbols['ENDVSNAPEND'] <= symbols['ENDVPAY']
-    assert symbols['ENDVPAY'] & 255 == 0 and symbols['ENDVRANK'] == symbols['ENDVTEXT'] + 220
+    assert symbols['ENDBPAY'] & 255 == 0 and symbols['ENDVRANK'] == symbols['ENDVTEXT'] + 220
+    assert symbols['B1INITAT'] == symbols['ENDSTAGE'] + len(PAYLOAD)
     assert ENDHEADS >= 0x4828 + 40 * 3 and ENDHEADS + 420 <= 0x4800 + 40 * 21, 'reports outside hidden text rows'
     # Numbers: ENDNUMSRC offsets from ENDHITS.
     assert [symbols[n] - symbols['ENDHITS'] for n in ('ENDRENER', 'ENDHITS', 'ENDKILLS', 'ENDRPROTON', 'ENDSHOTS')] == [4, 0, 2, 7, 9]
@@ -817,7 +895,7 @@ def main():
     p(symbols['MMAT'], bytes(body[0x4478 - LOAD:0x4478 - LOAD + 600]))
     # The reset unpacks these display masters instead of snapshotting them:
     # they must be exactly the program's own bytes there.
-    vm = symbols['ENDVMASTER'] - symbols['ENDVPAY']
+    vm = symbols['ENDVMASTER'] - symbols['ENDBPAY']
     unpacked = rle_unpack(PAYLOAD[vm:])
     assert sorted(unpacked) == list(range(0x4400, 0x4C00)) + list(range(0x7680, 0x8000))
     assert all(body[a - LOAD] == v for a, v in unpacked.items()), 'display masters differ from the PRG'
@@ -831,9 +909,13 @@ def main():
         f.write(bytes((LOAD & 255, LOAD >> 8)) + body)
     ends = ', '.join(f'${a:04X}-${a + len(c) - 1:04X}' for a, c in sorted(chunks.items()))
     print(f'memory left: high {symbols["MINEEND"] - symbols["MINEFREE"]} bytes (${symbols["MINEFREE"]:04X}-${symbols["MINEEND"]-1:04X}, all modes), packed {0x7680 - HIGH2SRC - len(packed)} bytes, glue {HIGH2SRC - GLUE - len(chunks[GLUE])} bytes; low stream {len(low_stream)} bytes')
-    print(f'ending memory: workspace {0xC60-symbols["ENDINGEND"]} bytes free, loader {ENTRY-symbols["ENDLOADEREND"]} bytes free, VDC {0x4000-symbols["ENDVDCSIZE"]} bytes free of 16K '
-          f'(snapshot ${0xA60:04X}-${symbols["ENDVSNAPEND"]-1:04X}, payload ${symbols["ENDVPAY"]:04X} {symbols["ENDPAYLEN"]} bytes in {symbols["ENDPAYPAGES"]} pages), '
-          f'{(symbols["ENDINGEND"] - 2 - symbols["ENDRANGES"]) // 4} snapshot ranges')
+    print(f'ending memory: core $0200-${symbols["ENDCOREEND"]-1:04X}, {0xC60-symbols["ENDCOREEND"]} bytes free after it (to $0C5F); '
+          f'ENDING package ${ENDPKG:04X}-${symbols["ENDINGEND"]-1:04X} ({symbols["ENDINGEND"]-ENDPKG} bytes), MINES ${symbols["MNSTART"]:04X}-${symbols["MNEXTRAEND"]-1:04X}; '
+          f'overlay manager ${symbols["OVBASE"]:04X}-${symbols["OVEND"]-1:04X}, {0x1C00-symbols["OVEND"]} bytes free after it; '
+          f'loader {ENTRY-symbols["ENDLOADEREND"]} bytes free; '
+          f'bank 1: low RAM ${symbols["B1LOW"]:04X}-${symbols["B1LOW"]+26*256-1:04X}, stack page ${symbols["B1STACK"]:04X}, '
+          f'snapshot ${symbols["ENDB1SNAP"]:04X}-${symbols["ENDB1SNAPEND"]-1:04X}, payload ${symbols["ENDBPAY"]:04X} {symbols["ENDPAYLEN"]} bytes in {symbols["ENDPAYPAGES"]} pages, '
+          f'{(symbols["ENDRANGESEND"] - 2 - symbols["ENDRANGES"]) // 4} snapshot ranges; stub $0100-${0x0100+len(stub)-1:04X}, init ${symbols["B1INITAT"]:04X}-${symbols["ENDSTUBIMG"]+len(stub)-1:04X}')
     print(f'wrote {OUT} (${LOAD:04X}-${LOAD + len(body) - 1:04X}, code {ends}, entry ${symbols["START"]:04X})')
     return symbols
 

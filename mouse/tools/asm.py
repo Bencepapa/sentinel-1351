@@ -22,7 +22,9 @@ def isconst8(t,sym):
     t=t.strip()
     return re.fullmatch(r'\$[0-9A-Fa-f]{1,2}',t) is not None or (t in sym and sym[t]<256 and t in ZPSYM)
 ZPSYM=set()
-def asm(src):
+def asm(src, listing=None):
+    """listing: a list that gets (pc, mnemonic, mode, operand value) for every
+    instruction of the second pass (c128-game/build.py audits operands with it)."""
     sym={}; out={}
     for p2 in (False,True):
         pc=0; chunks={}; cur=None
@@ -64,5 +66,6 @@ def asm(src):
                     zm={'':'zp','x':'zpx','y':'zpy'}[idx]; am={'':'abs','x':'abx','y':'aby'}[idx]
                     if isconst8(arg,sym) and (mn,zm) in OPC: b=bytes([OPC[(mn,zm)],v])
                     else: b=bytes([OPC[(mn,am)],v&255,v>>8])
+                if p2 and listing is not None and len(b)==3: listing.append((pc,mn,ops[b[0]][1],b[1]|b[2]<<8))
             chunks[cur]+=b; pc+=len(b)
     return chunks,sym

@@ -35,25 +35,28 @@ let failures = 0;
 function check(cond, msg) { console.log((cond ? 'ok   ' : 'FAIL ') + msg); if (!cond) failures++; }
 const freeMemoryRuns = [];
 
-function boot(name, mode) {
+function boot(name, mode, opts) {
   const p = PROGRAMS[name];
   const m = new C128(p.model);
   m.loadPrg(new Uint8Array(Buffer.from(p.prg, 'base64')));
   const hooks = new Hooks(m, p.symbols);
   const ported = Native.install(hooks, mode);
   m.start(p.entry);
-  if (name === 'game') {
+  if (name === 'game' && !(opts && opts.noFill)) {
     const s=p.symbols, record={armed:false, intact:true, frames:0};
     m.freeMemoryRecord=record;
     freeMemoryRuns.push(record);
     const frame=m.runFrame.bind(m);
     m.runFrame=function() {
       const result=frame();
+      // (free: the high bytes after MINES, the ending core's tail, the overlay manager's;
+      // the last two are BASIC's again after EXIT, which restores PCRA $3F)
+      const free=[[s.MINEFREE,s.MINEEND],[s.ENDCOREEND,0xC60],[s.OVEND,0x1C00]];
       if (!record.armed && m.mmuCR===0x3E && m.ram[s.GUNPACK]===(s.TORPA&255)) {
-        m.ram.fill(0xA5,s.MINEFREE,s.MINEEND);
+        for(const [lo,hi] of free) m.ram.fill(0xA5,lo,hi);
         record.armed=true;
       } else if (record.armed) {
-        for(let a=s.MINEFREE;a<s.MINEEND;a++) if(m.ram[a]!==0xA5) record.intact=false;
+        for(const [lo,hi] of free) if(lo>=0xE000||m.mmu[1]===0x3E) for(let a=lo;a<hi;a++) if(m.ram[a]!==0xA5) record.intact=false;
         record.frames++;
       }
       return result;
@@ -1043,7 +1046,7 @@ require('./mine-parity')({boot,run,check,fs,path,OUT});
 
 // ---- game: permanent low-RAM relocation and BASIC workspace restoration -------
 {
-  const g=boot('game','trace'),m=g.m,A=m.ram,S=g.p.symbols;
+  const g=boot('game','trace',{noFill:true}),m=g.m,A=m.ram,S=g.p.symbols;
   const fixed=JSON.parse(fs.readFileSync(path.join(ROOT,'../c128-game/fixed-symbols.json'),'utf8'));
   check(Object.entries(fixed).every(([name,address])=>S[name]===address),
     'memory: every pre-existing symbol below $E000 retains its address');
@@ -1053,6 +1056,10 @@ require('./mine-parity')({boot,run,check,fs,path,OUT});
   for(let i=0;i<original.length;i++) original[i]=(i*73+(i>>8)*19+0x37)&255;
   A.set(original,S.LOWSTART);
   A[S.LOWSTART-1]=0x6B;A[S.LOWEND]=0xB6;
+  // The stack page's bottom (the stub's place) and bank 1's vectors as BASIC left them.
+  const stackPage=Buffer.from(Uint8Array.from({length:S.B1STUBLEN},(_,i)=>(i*29+5)&255));
+  A.set(stackPage,0x100);
+  const vectors1=[0x17,0xFF,0x3D,0xFF,0x65,0xFF];m.ram1.set(vectors1,0xFFFA);
   // Independent decoder for the third stream, before init consumes its staging.
   let src=0xD060,end=A[src]|A[src+1]<<8;src+=2;
   const decoded=[];
@@ -1068,15 +1075,24 @@ require('./mine-parity')({boot,run,check,fs,path,OUT});
   for(let f=0;f<200&&m.cpu.pc!==S.frame;f++)m.runFrame();
   check(m.cpu.pc===S.frame&&Buffer.from(A.subarray(S.LOWSTART,S.LOWEND)).equals(Buffer.from(decoded)),
     'memory: CPU unpacks every relocated byte exactly before gameplay');
-  check(Buffer.from(A.subarray(S.LOWBACK,S.LOWBACK+original.length)).equals(original),
-    'memory: original low RAM survives in RAM beneath I/O');
-  check(A[S.LOWSTART-1]===0&&A[S.LOWEND]===0xB6&&m.mmuCR===0x3E&&!(m.vic[0x30]&1),
+  const lowAt=S.B1LOW+S.LOWSTART-0x200;
+  check(Buffer.from(m.ram1.subarray(lowAt,lowAt+original.length)).equals(original),
+    'memory: original low RAM survives in bank 1');
+  check(A[S.LOWSTART-1]===0x6B&&A[S.LOWEND]===0xB6&&m.mmuCR===0x3E&&!(m.vic[0x30]&1),
     'memory: relocation respects both bounds and restores MMU/1 MHz');
+  const stubImage=Buffer.from(A.subarray(0x100,0x100+S.B1STUBLEN));
+  check(m.mmu[1]===0x3E&&m.mmu[2]===0x7F&&m.mmu[3]===0x01&&m.mmu[4]===0x41&&m.mmu[6]===0x04&&
+    [0,2,4].every(i=>(m.ram1[0xFFFA+i]|m.ram1[0xFFFB+i]<<8)===S.NMIB1)&&m.ram[S.NMIB1]===0x40&&
+    Buffer.from(m.ram1.subarray(S.B1STACK,S.B1STACK+S.B1STUBLEN)).equals(stackPage),
+    'memory: init sets PCRA $3E / PCRB $7F, bank 1\'s vectors to the stub\'s RTI, saves the stack page\'s bottom (RCR untouched)');
   m.setBreak(S.frame,false);m.stopped=null;
   const c=m.cpu;c.push(0xFF);c.push(0xF3);c.pc=S.EXIT;
   for(let i=0;i<1e6&&c.pc!==0xFFF4;i++)c.step();
   check(c.pc===0xFFF4&&Buffer.from(A.subarray(S.LOWSTART,S.LOWEND)).equals(original)&&m.mmuCR===A[S.SAVMMU],
     'memory: normal EXIT restores every borrowed byte and the caller MMU');
+  check(Buffer.from(A.subarray(0x100,0x100+S.B1STUBLEN)).equals(stackPage)&&vectors1.every((v,i)=>m.ram1[0xFFFA+i]===v)&&
+    m.mmu[1]===0x3F&&m.mmu[2]===0x7F&&m.mmu[3]===0x01&&m.mmu[4]===0x41&&!stubImage.equals(stackPage),
+    'memory: EXIT restores the stack page under the stub, bank 1\'s vectors and the preconfigurations');
 }
 
 // ---- game: mothership preliminary scanner positioning, original $8C44-$8D56 ----
@@ -1337,8 +1353,9 @@ require('./mine-parity')({boot,run,check,fs,path,OUT});
   const saved=JSON.parse(fs.readFileSync(path.join(ROOT,'../briefs/img-torpedo/before-torpedo.state.json'),'utf8'));
   const replay=boot('game','trace'),sm=replay.m,SA=sm.ram;
   run(sm,replay.hooks,60);
-  const current=SA.slice();
+  const current=SA.slice(),currentBanks={ram:current,ram1:sm.ram1.slice(),mmu:sm.mmu.slice()};
   sm.loadState(sm.stateFromText(JSON.stringify(saved.state)));sm.dma=true;
+  require('./old-state')(sm,currentBanks,S);
   const delta=0xDD00, oldStart=S.LOWSTART+delta, oldEnd=S.LOWEND+delta;
   const old=SA.slice();
   // Only words which changed by the relocation are rewritten in fixed code.
@@ -1362,7 +1379,7 @@ require('./mine-parity')({boot,run,check,fs,path,OUT});
     if(ret>=oldStart&&ret<oldEnd){SA[a+1]-=delta>>8;a++;}
   }
   SA.set(current.subarray(0xE960,S.MINEFREE),0xE960);
-  SA.set(old.subarray(S.LOWSTART,S.LOWEND),S.LOWBACK);
+  sm.ram1.set(old.subarray(S.LOWSTART,S.LOWEND),S.B1LOW+S.LOWSTART-0x200);
   sm.freeMemoryRecord.armed=false;
   const trace=[];let replayArt=true,replayLayout=true;
   const raw=fs.readFileSync(path.join(ROOT,'../c128-gui/ref/torpedo-a000.bin'));
@@ -1984,8 +2001,9 @@ require('./game-end')({boot,run,check,snap,fs,path,OUT});
 require('./c64-arrival')({boot,check,fs,path});
 require('./banks')({boot,run,check,fs,path,ROOT});
 require('./bugs')({boot,run,check,snap,fs,path,OUT});
+require('./overlay')({boot,run,check,fs,path,OUT});
 
 check(freeMemoryRuns.filter(r=>r.armed).every(r=>r.intact)&&freeMemoryRuns.some(r=>r.frames>1000),
-  `memory: $A5-filled free high RAM survives all existing game scenarios (${freeMemoryRuns.filter(r=>r.armed).length} boots)`);
+  `memory: $A5-filled free RAM (high, ending core tail, overlay manager tail) survives all existing game scenarios (${freeMemoryRuns.filter(r=>r.armed).length} boots)`);
 console.log(failures ? failures + ' check(s) failed' : 'all checks passed');
 process.exit(failures ? 1 : 0);

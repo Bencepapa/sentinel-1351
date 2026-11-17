@@ -212,12 +212,19 @@ module.exports=function({boot,run,check,fs,path,ROOT}) {
     }
   }
 
-  // ---- the game never touches bank 1, RCR or the preconfigurations -----------------------------------------------
+  // ---- the game: bank 1 is its store; RCR and the page pointers stay the KERNAL's -----------------------------
   {
-    const g=boot('game','trace'),m=g.m;
+    const g=boot('game','trace'),m=g.m,S=g.p.symbols;
+    m.vdcRam.fill(0x5C);
+    let minSp=0xFF;const step=m.cpu.step.bind(m.cpu);
+    m.cpu.step=function(){const r=step();if(this.sp<minSp)minSp=this.sp;return r;};
     run(m,g.hooks,300);
-    check(!m.ram1.some(v=>v)&&m.mmu[6]===4&&m.mmu[1]===0x3F&&m.mmu[2]===0x7F&&m.mmu[3]===1&&m.mmu[4]===0x41&&m.mmu[7]===0&&m.mmu[9]===1,
-      'banks: the game leaves bank 1 empty and the MMU registers at their defaults while it plays (300 frames)');
+    m.cpu.step=step;
+    const used=m.ram1.reduce((n,v)=>n+(v?1:0),0);
+    check(used>10000&&m.mmu[6]===4&&m.mmu[1]===0x3E&&m.mmu[2]===0x7F&&m.mmu[3]===1&&m.mmu[4]===0x41&&m.mmu[7]===0&&m.mmu[9]===1&&
+      m.mmuCR===0x3E&&!m.bankedRam&&m.vdcRam.every(v=>v===0x5C),
+      `banks: the game keeps its store in bank 1 (${used} non-zero bytes), PCRA $3E / PCRB $7F, RCR and the page pointers untouched, no VDC RAM written (300 frames)`);
+    check(minSp>=0x80&&0x100+S.B1STUBLEN<=0x180,`banks: the stub ($0100-$${(0xFF+S.B1STUBLEN).toString(16)}) stays below the stack (lowest stack pointer $${minSp.toString(16)}, rule: above $80)`);
   }
 
   // ---- debugger ------------------------------------------------------------------------------------------------

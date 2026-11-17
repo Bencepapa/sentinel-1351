@@ -6,7 +6,12 @@ is ported from the C64 code and checked against it.
 
 ## Status
 
-Updated 2026-11-17 (working tree; not committed). Everything below is built into
+Updated 2026-11-17 (working tree; not committed). **Memory, plan steps 2-4 done**
+(`briefs/memory-overlay-plan.md` section 9): bank 1 is the store (EXIT backup, reset
+snapshot, payload; no VDC RAM written), the overlay slot S1 (`$E960-$F6F8`) holds MINES
+in play and the ENDING package from a death/victory to the reset, the ending's resident
+core is `$0200-$0556`: **1,801 bytes free at `$0557-$0C5F`** in every mode for new
+features (plus 6 at `$1A0A`, 8 at `$1BF8`). Everything below is built into
 `c128-game/sentinel-c128-game.prg` and the browser page (`js/dist/sentinel.html`),
 and `node js/test/run.js` ends with "all checks passed".
 
@@ -68,12 +73,17 @@ Left, in a suggested order (each with what is already known):
 
 ## Handing the work on (for another agent)
 
-- Game-end workspace (2026-11-11): `$0200-$0C5F` and `$1C10-$1CFF` are
-  now reserved. VDC RAM holds the workspace, the reset snapshot and the ending payload (`$0000-$3EFF`).
-  Read the game-end section before changing the snapshot or enabling VDC.
+- Bank 1 and overlays (2026-11-17): bank 1 holds the EXIT backup of `$0200-$1BFF`, the
+  reset snapshot, the payload and the packages (MINES, ENDING); the copy stub is at
+  `$0100-$0154` (common RAM), the overlay manager at `$1A10-$1BF7`. Any new reference
+  from resident code into S1 (`$E960-$F6F8`) must go through a trampoline (`build.py`
+  `audit_s1` fails otherwise); the reset snapshot leaves S1 out. Old browser saves need
+  `js/test/old-state.js` (bank 1, stub, ending core of this build) in tests.
+  Read `briefs/memory-overlay-plan.md` section 9 before changing the snapshot, S1 or
+  enabling VDC (its RAM is free now; the display stays blanked).
   Entry blanks VDC via registers 25/26 before any delay or snapshot write;
   keep this early blanking when changing the entry or reusing VDC RAM.
-  The PRG extends to `$F25F` for init-only ending staging (workspace image, then the VDC payload).
+  The PRG extends to `$F932` for init-only staging (ending core, ENDING package, payload, B1INIT, stub, manager).
 
 - Read first: `README.md`, `c128-game/README.md`, this file, `MAP-LOGIC.md`,
   `FINDINGS.md`, `SHIP-STATUS.md`. The task briefs in `briefs/` show the expected
@@ -99,8 +109,8 @@ Left, in a suggested order (each with what is already known):
   230-245, cycles 16-55) and `OVRUN`; both must stay 0. A blanked screen must keep
   the bad lines: use an invalid VIC mode (`$D011 = $7B`, ECM+BMM, black), not
   DEN=0, which removes the line-75 bad line the top split is timed by.
-- **Current memory:** the minefield uses `$EA16-$F6F8`; `$F6F9` =
-  $F6F8 is the one free resident byte; 246 packed bytes before `$7680`; glue 1 byte.
+- **Current memory:** see `c128-game/README.md` (2026-11-17, bank 1) for the margins:
+  `$0557-$0C5F` 1,801 bytes free; the minefield (MINES, in S1) uses `$EA16-$F6F6`.
   See the complete lifetime map in `c128-game/README.md`. The minefield is included from `mines.asm` before GINIT3END; append new high code
   before GINIT3END, use the existing hooks, and keep MINEEND/TORPA at `$F6F9`.
   The 3,481-byte mothership/message/repair block now lives at `$0C60-$19F8`.
@@ -109,12 +119,12 @@ Left, in a suggested order (each with what is already known):
   ending exactly at TSHOT `$FE80`; decoded art is unchanged.
   Init loads packed high code from `$5E00`, STR2Y from `$D000-$D051`, the
   entire low block from `$D100-$DD72`, and runtime tables from `$DF00-$DF8D`.
-  GINIT3 temporarily saves original low RAM at `$6000-$6D98` after the high
-  stream has been consumed, then installs low code and moves that backup to
-  `$D200-$DFA9` (3,498 bytes with `$19F9-$1A09`; at most `$DFFF`) after consuming all I/O staging. GINIT2 restores sprite slots
-  and clears the view. Never overwrite the runtime backup, even in hyperspace.
-  The normal EXIT hook restores low RAM before the caller's MMU/IRQs.
-  Init/exit alone select MMU `$3F`; gameplay stays `$3E`, with no KERNAL calls.
+  B1INIT saves the original `$0200-$1BFF` into bank 1 before GINIT2 (since
+  2026-11-17; the old `$6000` temp and `$D200` backup are gone, `$D200-$DFFF` is free
+  beneath I/O after init). GINIT2 restores sprite slots and clears the view.
+  The normal EXIT hook restores low RAM from bank 1 before the caller's MMU/IRQs.
+  Init alone selects MMU `$3F`; gameplay stays `$3E` (PCRA `$3E`, PCRB `$7F` for the
+  stub), with no KERNAL calls.
   Init uses 2 MHz and returns at 1 MHz. GUNPACK's 142-byte reclamation remains
   unchanged; UPEND, GSEED and GUNPK2 stay intact. The first 74 retired MSUNPACK bytes hold the ending event hooks; all
   following labels retain their offsets. GUNPK2 still calls GINIT3.

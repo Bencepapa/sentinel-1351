@@ -50,8 +50,8 @@ module.exports = function ({boot, run, check, snap, fs, path, OUT}) {
     write(r,v);
   };
   for(let f=0;f<80;f++){sm.runFrame();startupBlack=startupBlack&&vdcBlack(sm);}
-  check(snapshotWrites>0&&!visibleWrite&&startupBlack,
-    'game: every startup VDC snapshot write stays black in both blink phases');
+  check(snapshotWrites===0&&!visibleWrite&&startupBlack,
+    'game: startup writes no VDC RAM (the store is bank 1) and the VDC stays black in both blink phases');
   const state=JSON.parse(fs.readFileSync(path.join(__dirname,'../../briefs/ref/c64-minefield.state.json'),'utf8'));
   const o=boot('c64game','trace'),g=ready(),m=g.m,A=m.ram,S=g.p.symbols,R=o.m.ram;
   o.m.loadState(o.m.stateFromText(JSON.stringify(state.state)));o.m.dma=true;
@@ -104,7 +104,7 @@ module.exports = function ({boot, run, check, snap, fs, path, OUT}) {
       const expected=[];for(let row=0;row<5;row++)expected.push(...R.subarray(address+20*row,address+20*row+20),0);
       return Buffer.from(expected).equals(Buffer.from(B.subarray(T.ENDHEADS+105*i,T.ENDHEADS+105*i+105)));
     })&&[0,1,2,3].every(i=>(B[T.ENDHEADERLO+i]|B[T.ENDHEADERHI+i]<<8)===T.ENDHEADS+105*i),
-      'game: the four death reports, unpacked from VDC RAM, match the original text bytes');
+      'game: the four death reports, unpacked from bank 1, match the original text bytes');
     let pixels=true;
     for(const [row,text] of titles){
       for(let i=0;i<text.length;i++){
@@ -126,6 +126,9 @@ module.exports = function ({boot, run, check, snap, fs, path, OUT}) {
     check(vdcBlack(n),'game: '+kind+' restart keeps the VDC black');
     check(!B[T.ENDMODE]&&!B[T.OVRUN], 'game: '+kind+' transition resumes flight without OVRUN');
   }
+  // The rating, the statistics and the letters are the ENDING package's (S1): load it.
+  m.cpu.x=2;call(m,S.OVLOAD);
+  check(A[S.OVOWNER]===0x40,'game: the ENDING package loads into S1 for the direct calls below');
   let cases=0,match=true;
   const put=(r,a,v,n=2)=>{for(let i=0;i<n;i++)r[a+i]=(v>>>(8*i))&255;};
   for(let diff=0;diff<5;diff++)for(let win=0;win<2;win++)for(let planet=0;planet<2;planet++)for(let seed=0;seed<12;seed++){
@@ -162,9 +165,10 @@ module.exports = function ({boot, run, check, snap, fs, path, OUT}) {
     'game: death alarm and pulse-rattle SID setup match original $3350/$274C');
   const workspace=boot('game','trace'),wm=workspace.m,WA=wm.ram,WS=workspace.p.symbols;
   const before=Buffer.from(Uint8Array.from({length:0xa60},(_,i)=>(i*73+(i>>8)*19+0x37)&255));
-  WA.set(before,0x200);wm.vdcRam[0x4000]=0xA5;wm.dma=true;run(wm,workspace.hooks,80);
-  check(WS.ENDINGEND<=0xc60&&WS.ENDLOADEREND<=0x1d00&&WS.ENDVDCSIZE<=0x4000&&wm.vdcRam[0x4000]===0xA5,
-    'game: ending workspace, loader and complete VDC reset snapshot fit their checked bounds');
+  WA.set(before,0x200);wm.vdcRam.fill(0xA5);wm.dma=true;run(wm,workspace.hooks,80);
+  check(WS.ENDCOREEND<=0xc60&&WS.ENDLOADEREND<=0x1d00&&WS.ENDB1END<=0x6400&&wm.vdcRam.every(v=>v===0xA5)&&
+    Buffer.from(wm.ram1.subarray(WS.B1LOW,WS.B1LOW+0xa60)).equals(before),
+    'game: ending core, loader and the bank-1 snapshot/payload fit their checked bounds; the borrowed bytes are in bank 1, VDC RAM untouched');
   call(wm,WS.EXIT);
   check(before.equals(Buffer.from(WA.subarray(0x200,0xc60))),
     'game: RUN/STOP restores every borrowed ending-workspace byte, including the partial tail');
@@ -365,7 +369,7 @@ module.exports = function ({boot, run, check, snap, fs, path, OUT}) {
     check(Buffer.from(fresh.subarray(0x7680,0x8000)).equals(Buffer.from(B.subarray(0x7680,0x8000)))&&
       Buffer.from(fresh.subarray(0x48c8,0x4b40)).equals(Buffer.from(B.subarray(0x48c8,0x4b40)))&&
       Buffer.from(fresh.subarray(0x4400,0x47e8)).equals(Buffer.from(B.subarray(0x4400,0x47e8))),
-      'game: restart unpacks the cockpit art, bottom sprites, matrix and hidden text rows from VDC RAM');
+      'game: restart unpacks the cockpit art, bottom sprites, matrix and hidden text rows from bank 1');
   }
 
   const waits=[];
