@@ -6,7 +6,7 @@ is ported from the C64 code and checked against it.
 
 ## Status
 
-Updated 2026-11-15 (working tree; not committed). Everything below is built into
+Updated 2026-11-17 (working tree; not committed). Everything below is built into
 `c128-game/sentinel-c128-game.prg` and the browser page (`js/dist/sentinel.html`),
 and `node js/test/run.js` ends with "all checks passed".
 
@@ -19,13 +19,18 @@ The birth band stays through the visible rings. The original lock is exact 00/00
 See "Minefield before the rings" below for original findings,
 scheduling differences and the decision about frozen sprites.
 
-Current margins (2026-11-11): **2 high bytes**, **91 packed bytes**,
-**1 glue byte**, **32 ending-workspace bytes**, **0 loader bytes**, and
-**13 VDC bytes**. The minefield/tunnel occupies `$EA16-$F6F6`, including
+Victory (2026-11-17) is now the original's single screen with the HUD and
+cockpit kept: view wipe, energy refill, the original text block with the port's
+statistics, rank and class, then fire or the original timeout; see "Original
+victory screen" below. Current margins: **2 high bytes**, **91 packed bytes**,
+**1 glue byte**, **8 ending-workspace bytes**, **3 loader bytes**, and
+**256 VDC bytes** (the display masters, reports and victory text are a packed
+VDC payload staged at `$EA60-$F25F`; the PRG now ends at `$F25F`). Earlier
+margins (2026-11-11) were 32 workspace / 0 loader / 13 VDC. The minefield/tunnel occupies `$EA16-$F6F6`, including
 398 bytes of packed art. Its 768-byte sprite backup borrows `$8100-$83FF`;
 the compressed movement master restores those bytes before flight resumes.
 Low code stays `$0C60-$19F8`; its 3,189-byte archive is staged at
-`$D060-$DCD4`. The ending loader extends the PRG to `$EA5F`.
+`$D060-$DCD4`. The ending staging extends the PRG to `$F25F`.
 All 2,206 pre-existing lower symbols remain fixed. No commit or push.
 VDC follow-up: blank the hardware at START after banking out BASIC ROM and
 before settling/snapshot writes;
@@ -64,11 +69,11 @@ Left, in a suggested order (each with what is already known):
 ## Handing the work on (for another agent)
 
 - Game-end workspace (2026-11-11): `$0200-$0C5F` and `$1C10-$1CFF` are
-  now reserved. VDC RAM `$0000-$3FF2` holds the workspace/reset snapshot.
+  now reserved. VDC RAM holds the workspace, the reset snapshot and the ending payload (`$0000-$3EFF`).
   Read the game-end section before changing the snapshot or enabling VDC.
   Entry blanks VDC via registers 25/26 before any delay or snapshot write;
   keep this early blanking when changing the entry or reusing VDC RAM.
-  The PRG extends to `$EA5F` for init-only ending-code staging.
+  The PRG extends to `$F25F` for init-only ending staging (workspace image, then the VDC payload).
 
 - Read first: `README.md`, `c128-game/README.md`, this file, `MAP-LOGIC.md`,
   `FINDINGS.md`, `SHIP-STATUS.md`. The task briefs in `briefs/` show the expected
@@ -115,7 +120,7 @@ Left, in a suggested order (each with what is already known):
   following labels retain their offsets. GUNPK2 still calls GINIT3.
   All 2,206 pre-existing symbols below `$E000` are frozen in
   `c128-game/fixed-symbols.json` and checked by build and tests.
-  The PRG now ends at `$EA5F`, inside the C128 KERNAL LOAD range (below `$FF00`).
+  The PRG now ends at `$F25F`, inside the C128 KERNAL LOAD range (below `$FF00`).
   Never stage anything at `$FF05-$FFF9`: the KERNAL does not load it. Keep all
   build bounds, including staging overlaps, backup/copy sizes and reclaimed decoder size.
 - Assembler (`mouse/tools/asm.py`): no `label+n` for forward labels, no long
@@ -1228,3 +1233,35 @@ Validation: `python c128-game/build.py`, `python js/build.py`,
 `js/test/out/game-end-fixes-all-checks.log` ends with `all checks passed`;
 84 game boots retain the free-memory pattern. Victory automatic restart is
 22,679 DMA frames, matching the C64 reference exactly. No commit or push.
+
+## Original victory screen (2026-11-17)
+
+Original: `$2D92` calls `$F5B9` every 64 loops; after 60 qualifying checks
+`$F5ED` fills the matrix, `$F6A7` refills the energy a unit a pass (counting
+`$F436`), `$F635` closes the map (`$FBFB`), draws the 11 rows at `$D100`
+(cell rows 4-14) hidden (matrix `$10`), reveals rows 4-16 (`$14`), `$D505`
+draws the numbers; `$F3CE` rates and prints rank/CLASS on row 15; `$F606-$F631`
+waits (fire once `Y < $C8`, or the outer counter). The ENDROW question is
+resolved: rows 4/6 for the titles and 15 for the rank, as in the original.
+
+Port (`ENDWINSTART`/`ENDWINFRAME` in `ending.asm`): runs in the frame loop's
+3D-view time, one bounded job a frame, raster-limited printing from a VDC
+text template; input off as in death; MAPCLOSE wipes the view; stars use the
+protected pixel-1 plotter (`gplmode`/`germode` slots, in the reset snapshot).
+`$D505` quirks kept: leading-zero rules per row, PHASORS always two digits,
+the `$EA00` overflow mark/60000, and the energy shown one unit less (its
+`$D1F0` call starts with carry clear). Timing vs the supplied save (frames from
+the trigger, original/port): energy full 28/29, reveal 53/54, rank 56/57,
+held-fire restart 584/584, automatic restart 19,040/19,039. Rows 4-15 match the
+original pixel for pixel; 0 late splits, 0 OVRUN. Not ported: the original's
+1351 interrupt moves the crosshair during the wait; here it stays put.
+
+Memory: the reset snapshot no longer copies `$4400-$4BFF`/`$7680-$7FFF`
+(equal to the PRG's bytes at snapshot time); run-length masters in a VDC
+payload restore them. The death reports and rank names moved into the same
+payload (unpacked into hidden text rows `$4900-$4B13` when needed), and the
+freed VDC bridges small snapshot gaps (23 descriptors instead of 44, never
+through I/O). Cheapest further room if needed: move death-only ENDALARM/
+ENDRATTLE/ENDFLASH (121 bytes) into the payload, or reserve less VDC slack.
+Validation: `js/test/out/win-screen-all-checks.log`. VICE x128 confirmation
+remains with the user. No commit or push.

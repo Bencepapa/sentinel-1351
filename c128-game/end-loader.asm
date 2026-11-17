@@ -38,8 +38,7 @@ el_copytail:LDA $EA00,Y
         STA $0C00,Y
         DEY
         BPL el_copytail
-        JSR GINIT2
-        JMP ENDSETUP
+        JMP ENDSETUP    ; (it saves the staged payload, then calls GINIT2)
 ELVADR: PHA
         TXA
         LDX #19

@@ -43,9 +43,14 @@ It is the browser page's default program.
 - Shield death and the loss of JARALOBA end the game: 255 frames of flashing
   and noise, then the cockpit disappears into a star field with the original
   large ending text, report, rank and class. Clearing every enemy and pending
-  mothership attack wins after the original 60 qualifying checks in flight. Fire restarts after the original
+  mothership attack wins after the original 60 qualifying checks in flight (or
+  on the map). Victory is the original's single screen: the HUD, cockpit,
+  crosshair and stars stay, the view (or the open map) wipes clear, the energy
+  refills to 9999, then VICTORY IS YOURS / JARALOBA IS SAFE, the six statistics
+  (energy used, shields lost, enemy killed, protons and phasors fired, base
+  stations) and SPACE DROID ... CLASS n appear as in the original. Fire restarts after the original
   waiting interval; otherwise it restarts automatically (about 3.5 minutes for
-  death and 7.6 for victory at PAL speed). Restart restores the cockpit, world,
+  death and 6.3 for victory at PAL speed). Restart restores the cockpit, world,
   ship, sprite slots and movement streams in sector 05.03.
 - The ship (systems, shields, hits, difficulty) is one: the cockpit's model.
 - The second display (VDC) is off in this program for now: its updates take more
@@ -104,7 +109,7 @@ behind the cockpit, including while closed; its world arrays are never scratch.
 | `$4000-$43FF` | VIC character font; displayed HUD/text F/D/M/H. |
 | `$4400-$47E7` | Bitmap screen matrix; live F/D/M/H. |
 | `$47E8-$47FF` | Matrix padding and sprite pointers; reserve the whole tail. |
-| `$4800-$4BE7` | HUD/bottom text and docking report screen; live F/D/M/H. |
+| `$4800-$4BE7` | HUD/bottom text and docking report screen; live F/D/M/H. During an ending the hidden rows hold the death reports and rank names (`$4900-$4B13`), unpacked from VDC RAM; reset unpacks the whole screen's master. |
 | `$4BE8-$4BFF` | Text padding and sprite-pointer tail; reserved. |
 | `$4C00-$4FFF` | Crosshair, tracking, guns, approach blips, planet and barrel sprite slots; protected in every mode. |
 | `$5000-$5257` | 600-byte cockpit matrix master for map close; resident F/D/M/H. CPU-only RAM (VIC sees character ROM). |
@@ -132,7 +137,7 @@ behind the cockpit, including while closed; its world arrays are never scratch.
 | `$DF00-$DF8D` | RAM beneath I/O: 142 runtime bytes staged at load, copied to the reclaimed decoder before backup installation. PRG ends here. |
 | `$DF8E-$DFFF` | No load-time payload; reserved staging/backup tail. |
 | `$D200-$DF98` (runtime) | **3,481-byte original low-RAM backup**, replacing consumed staging. Required until EXIT in F/D/M/H; never scratch. I/O remains visible over it. |
-| `$E000-$E95F` | Resident proton/type/hyperspace code/state; packed then installed at init, F/D/M/H. |
+| `$E000-$E95F` | Resident proton/type/hyperspace code/state; packed then installed at init, F/D/M/H. At load, `$E000-$EA5F` stages the ending workspace and `$EA60-$F25F` the ending's VDC payload (the PRG ends at `$F25F`); both are consumed before the high image is unpacked. |
 | `$E960-$EA15` | Resident init/copy/exit helpers (182 bytes); only init and exit execute them. |
 | `$EA16-$F6F6` | Resident minefield/tunnel code, 398-byte packed mine art, tables and compressed movement master. The temporary 768-byte sprite backup borrows `$8100-$83FF`. |
 | `$F6F7-$F6F8` | Two resident bytes free in every gameplay mode. |
@@ -525,3 +530,44 @@ the original entry restored and pass with this build; see
 `js/test/out/vdc-startup-before-after.log`. The PRG, browser export and bundle
 match. Local VICE launch exits before emulation because the sandbox blocks
 its user state directory under `AppData/Roaming/vice`.
+
+## Original victory screen and the VDC payload (2026-11-17)
+
+Victory now follows the original's one screen (`$F5B9`/`$F5ED`), inside the
+normal frame loop so the HUD, cockpit, crosshair and stars stay. At the 60th
+qualifying check `ENDWINSTART` stops input, fire, the map key and jumps (as
+death does), closes the map if it is open and wipes the view back a row a frame
+(`MAPCLOSE`), and points the star plotter at its protected pixel-1 mode. Then,
+one bounded step per frame in the 3D view's time (`ENDWINFRAME`):
+
+- the energy refills, 154 units a frame (`$F6A7` adds one a main-loop pass;
+  measured 4,170 passes in 27 DMA frames);
+- the original's 220-byte text block (`$D100`, rows 4-14) is drawn hidden,
+  16-pixel letters as `$0816`, with the six numbers (`$D505`, including its
+  leading-zero rules, the `$EA00`/60000 overflow mark and the one-less energy
+  value its carry-clear `$D1F0` call shows) and then rows 4-16 turn purple
+  (`$F696`);
+- the rank's row (`$F3CE`: 13-character name, CLASS, digit) is drawn visible;
+- the wait: fire after 527 frames, or the timeout after 18,983 (`$F60D`).
+
+Port vs original from `briefs/ref/c64-last-enemy-map-then-win.state.json`
+(the map is open at the trigger), DMA frames from the trigger: energy full
+29/28, text revealed 54/53, rank done 57/56, held-fire restart 584/584,
+automatic restart 19,039/19,040. Bitmap rows 4-15 match the original pixel for
+pixel. The crosshair does not follow the mouse during the wait (the original's
+1351 interrupt moves it; the port keeps all input off, as death does).
+
+Memory re-plan: the old short victory scene is gone and the reset no longer
+snapshots `$4400-$4BFF` (2,048) and `$7680-$7FFF` (2,432): these hold exactly
+their load-time bytes at the snapshot, so `build.py` packs them (run-length,
+`ENDUNPACK`) into a VDC payload. The payload, staged at `$EA60` and saved by
+`ENDSETUP` before GINIT2, also holds the victory text template (read and
+written in place, the numbers and rank are written into it) and the four death
+reports plus the eight rank names (unpacked into the hidden text rows at the
+death scene / the victory's rank step). The freed VDC RAM bridges the smallest
+gaps between snapshot ranges (never through I/O), cutting 44 descriptors to 23.
+Margins: workspace 8, loader 3, VDC 256 bytes (plus up to 255 of payload
+alignment); high 2 / packed 91 / glue 1 unchanged. No lower symbol moved.
+`build.py` checks the masters against the PRG bytes, the payload/VDC bounds and
+the number-table layout. Validation: `js/test/out/win-screen-all-checks.log`.
+VICE x128 confirmation remains with the user. No commit or push.

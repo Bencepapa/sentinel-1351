@@ -395,21 +395,20 @@ def ending_source(source, read):
               'ENDVICTORY: .BYTE 0']
     text = read('c128-game', 'ending.asm').replace('; ENDRATINGDATA', '\n'.join(lines))
     for name, value in [('ENDDEATHTEXT', ' THE BATTLE IS OVER'),
-                        ('ENDLOSTTEXT', '  JARALOBA IS LOST'),
-                        ('ENDWINTEXT', '  VICTORY IS YOURS'),
-                        ('ENDSAFETEXT', '  JARALOBA IS SAFE')]:
+                        ('ENDLOSTTEXT', '  JARALOBA IS LOST')]:
         text = text.replace('; '+name+'DATA', '.BYTE '+','.join(map(str, value.encode()+b'\0')))
-    ranks = [ref['ranks'][i:i+13].ljust(13) for i in range(0,104,13)]
-    text = text.replace('; ENDRANKTEXTDATA', '.BYTE '+','.join(str(v) for t in ranks for v in t.encode()+b'\0'))
-    headers = []
-    for i, header in enumerate(ref['headers']):
-        values = [v for j in range(0,100,20) for v in header[j:j+20]+[0]]
-        headers.append(f'ENDHEADER{i}: .BYTE '+','.join(map(str,values)))
-    text = text.replace('; ENDHEADERDATA', '\n'.join(headers))
+    ranks = bytes(v for i in range(0,104,13) for v in ref['ranks'][i:i+13].ljust(13).encode()+b'\0')
+    # The four death reports live in VDC RAM; ENDSCENE unpacks them into the
+    # text screen's hidden rows (restored from its master at reset).
+    reports = bytes(v for header in ref['headers'] for j in range(0,100,20) for v in header[j:j+20]+[0])
+    heads = [ENDHEADS + 105*i for i in range(4)]
+    text = text.replace('; ENDHEADERDATA', 'ENDHEADERLO: .BYTE '+','.join(str(a & 255) for a in heads)
+                        + '\nENDHEADERHI: .BYTE '+','.join(str(a >> 8) for a in heads))
     # Snapshot reset state and self-modified slots. Tables, code and existing
-    # high/low resident blocks are never moved.
-    ranges = [(0xE000, 'MNART', 0xE000), ('MNARTEND', 'MINEFREE', 'MNARTEND'), (0x0C60, 3481, 0),
-              (0x4400, 2048, 0), (0x7680, 2432, 0)]
+    # high/low resident blocks are never moved. The matrix/HUD text screen and
+    # the cockpit art/bottom sprite slots hold their load-time bytes at the
+    # snapshot (checked by the tests): their packed masters are in the payload.
+    ranges = [(0xE000, 'MNART', 0xE000), ('MNARTEND', 'MINEFREE', 'MNARTEND'), (0x0C60, 3481, 0)]
     for line in source.splitlines():
         match = re.match(r'^(\w+):\s*\.BYTE\s+([^;]+)', line)
         if match:
@@ -423,7 +422,8 @@ def ending_source(source, read):
     for name, count in [('sprcj',3),('shpj',3),('torpj',3),('vv2',3),('g_vs2',3),
                         ('VBWORK',6),('MRMODE',2),('MRATTR',2),('MRWAIT',2),
                         ('MRGUN',3),('iv1',3),('shj',3),('plshp',3),
-                        ('sprmc',2),('sprxe',2),('g_hk2',8),('nov3',3)]:
+                        ('sprmc',2),('sprxe',2),('g_hk2',8),('nov3',3),
+                        ('gplmode',3),('germode',3)]:
         ranges.append((name,count,0))
     # Filter by address after assembling the original joined source alone.
     # END references in that source require placeholders during this address pass.
@@ -450,22 +450,113 @@ def ending_source(source, read):
                 else:
                     packed_ranges.append([a,1])
                 used.add(a)
-    assert 0xA60+len(used) <= 0x4000, f'ending VDC backup needs {0xA60+len(used)} bytes'
-    # Spend a few otherwise-unused VDC bytes on the small gaps between states;
-    # fewer descriptors leave more executable workspace without moving code.
+    # The payload: the victory text (the original's 11 rows from $D100, then the
+    # rank's row, written at run time), the reports and the display masters.
+    win = bytes(ref['win']) + b' '*20
+    assert len(win) == 240
+    masters = display_masters()
+    # One stream: the reports, then the rank names (the victory starts there).
+    reports_stream = rle_stream([(ENDHEADS, reports), (ENDHEADS+420, ranks)])
+    ranks_at = len(rle_stream([(ENDHEADS, reports)])) - 3
+    payload = win + reports_stream + rle_stream([(0x4400, masters[0]), (0x7680, masters[1])])
+    pages = (len(payload)+255)//256
+    # Spend spare VDC bytes on the gaps between states: fewer descriptors leave
+    # more workspace. Up to 255 bytes may go to the payload's page alignment.
+    spare = 0x4000-0xA60-len(used)-pages*256-255-ENDVDCRESERVE
+    assert spare >= 0, f'ending VDC RAM short by {-spare} bytes'
+    ordered = sorted(packed_ranges)
+    gaps = sorted((ordered[i+1][0]-ordered[i][0]-ordered[i][1], i) for i in range(len(ordered)-1))
+    bridged = set()
+    for gap, i in gaps:
+        if gap > spare:
+            break
+        lo, hi = ordered[i][0]+ordered[i][1], ordered[i+1][0]
+        if hi > 0xD000 and lo < 0xE000:
+            continue    # never through I/O (and the low-RAM backup beneath it)
+        bridged.add(i)
+        spare -= gap
     merged = []
-    spare = 0x4000-0xA60-len(used)
-    for a,n in sorted(packed_ranges):
-        gap = a-(merged[-1][0]+merged[-1][1]) if merged else 999
-        if 0 <= gap <= min(32,spare):
-            merged[-1][1] += gap+n
-            spare -= gap
+    for i, (a, n) in enumerate(ordered):
+        if i-1 in bridged:
+            merged[-1][1] = a+n-merged[-1][0]
         else:
-            merged.append([a,n])
+            merged.append([a, n])
+    snapshot = sum(n for a,n in merged)
+    vpay = (0xA60+snapshot+255) & 0xFF00
+    assert vpay + pages*256 <= 0x4000
+    PAYLOAD[:] = payload + bytes(pages*256-len(payload))
     descriptors = []
     for a,n in merged:
         descriptors += [a&255,a>>8,n&255,n>>8]
-    return text.replace('; ENDRANGEDATA', '.BYTE '+','.join(map(str,descriptors))) + f'\nENDVDCSIZE = {0x4000-spare}\n'
+    constants = {'ENDSTAGE': 0xE000+0xA60, 'ENDVPAY': vpay, 'ENDVTEXT': vpay, 'ENDVRANK': vpay+220,
+                 'ENDVHEAD': vpay+240, 'ENDVRANKS': vpay+240+ranks_at, 'ENDRANKTEXT': ENDHEADS+420, 'ENDVMASTER': vpay+240+len(reports_stream),
+                 'ENDPAYPAGES': pages, 'ENDVDCSIZE': vpay+pages*256, 'ENDVSNAPEND': 0xA60+snapshot,
+                 'ENDPAYLEN': len(payload), 'ENDHEADS': ENDHEADS}
+    return text.replace('; ENDRANGEDATA', '.BYTE '+','.join(map(str,descriptors))) + '\n' + \
+        '\n'.join(f'{k} = {v}' for k, v in constants.items()) + '\n'
+
+
+ENDHEADS = 0x4900           # hidden text-screen rows 6-16 while an ending runs
+ENDVDCRESERVE = 0           # VDC bytes kept free; the rest bridges the smallest snapshot gaps
+PAYLOAD = bytearray()
+
+
+def display_masters():
+    """Load-time bytes of $4400-$4BFF and $7680-$7FFF (assets only)."""
+    body = bytearray(cockpit_build.basic_stub())
+    p = lambda address, data: put(body, address, data)
+    cockpit_build.place_assets(p)
+    map_build.place_assets(p, VDC=VDCDATA, PL5=0x7FC0)
+    cockpit_build.place_assets(p)
+    return (bytes(body[0x4400-LOAD:0x4C00-LOAD]), bytes(body[0x7680-LOAD:0x8000-LOAD]))
+
+
+def rle_stream(segments):
+    """ENDUNPACK's format: 0, address (a new destination; high byte 0 ends);
+    1-$7F literal bytes; $81-$FF a run of the next byte ($80 less)."""
+    out = bytearray()
+    for dest, data in segments:
+        out += bytes((0, dest & 255, dest >> 8))
+        literal = bytearray()
+        def flush():
+            for k in range(0, len(literal), 127):
+                part = literal[k:k+127]
+                out.append(len(part))
+                out.extend(part)
+            literal.clear()
+        i = 0
+        while i < len(data):
+            j = i
+            while j < len(data) and data[j] == data[i] and j-i < 127:
+                j += 1
+            if j-i >= 3:
+                flush()
+                out.extend((0x80 + j-i, data[i]))
+                i = j
+            else:
+                literal.append(data[i])
+                i += 1
+        flush()
+    return bytes(out + bytes(3))
+
+
+def rle_unpack(stream):
+    """Python model of ENDUNPACK, for the build's check: {address: byte}."""
+    out, i, dest = {}, 0, 0
+    while True:
+        t = stream[i]; i += 1
+        if t == 0:
+            dest = stream[i] | stream[i+1] << 8; i += 2
+            if dest < 256:
+                return out
+        elif t < 0x80:
+            for v in stream[i:i+t]:
+                out[dest] = v; dest += 1
+            i += t
+        else:
+            for _ in range(t-0x80):
+                out[dest] = stream[i]; dest += 1
+            i += 1
 
 
 def lz_pack(data):
@@ -711,8 +802,24 @@ def main():
     ending = chunks[0x0200]
     assert len(ending) <= 0xA60
     p(0xE000, ending + bytes(0xA60-len(ending)))
+    # Then the ending payload, which ENDSETUP saves to VDC RAM before GINIT2.
+    assert symbols['ENDSTAGE'] == 0xEA60 and len(PAYLOAD) == symbols['ENDPAYPAGES'] * 256
+    p(symbols['ENDSTAGE'], bytes(PAYLOAD))
+    assert symbols['ENDVDCSIZE'] <= 0x4000 and symbols['ENDVSNAPEND'] <= symbols['ENDVPAY']
+    assert symbols['ENDVPAY'] & 255 == 0 and symbols['ENDVRANK'] == symbols['ENDVTEXT'] + 220
+    assert ENDHEADS >= 0x4828 + 40 * 3 and ENDHEADS + 420 <= 0x4800 + 40 * 21, 'reports outside hidden text rows'
+    # Numbers: ENDNUMSRC offsets from ENDHITS.
+    assert [symbols[n] - symbols['ENDHITS'] for n in ('ENDRENER', 'ENDHITS', 'ENDKILLS', 'ENDRPROTON', 'ENDSHOTS')] == [4, 0, 2, 7, 9]
     # master copy of the colour matrix's view rows for MAPCLOSE (game.asm)
     p(symbols['MMAT'], bytes(body[0x4478 - LOAD:0x4478 - LOAD + 600]))
+    # The reset unpacks these display masters instead of snapshotting them:
+    # they must be exactly the program's own bytes there.
+    vm = symbols['ENDVMASTER'] - symbols['ENDVPAY']
+    unpacked = rle_unpack(PAYLOAD[vm:])
+    assert sorted(unpacked) == list(range(0x4400, 0x4C00)) + list(range(0x7680, 0x8000))
+    assert all(body[a - LOAD] == v for a, v in unpacked.items()), 'display masters differ from the PRG'
+    reports = rle_unpack(PAYLOAD[240:vm])
+    assert sorted(reports) == list(range(ENDHEADS, ENDHEADS + 532))
 
     # The KERNAL's LOAD stops at $FF00 (its store loop ends when AEL reaches $FF),
     # so nothing may be placed there: the tail above is staged beneath I/O instead.
@@ -721,7 +828,9 @@ def main():
         f.write(bytes((LOAD & 255, LOAD >> 8)) + body)
     ends = ', '.join(f'${a:04X}-${a + len(c) - 1:04X}' for a, c in sorted(chunks.items()))
     print(f'memory left: high {symbols["MINEEND"] - symbols["MINEFREE"]} bytes (${symbols["MINEFREE"]:04X}-${symbols["MINEEND"]-1:04X}, all modes), packed {0x7680 - HIGH2SRC - len(packed)} bytes, glue {HIGH2SRC - GLUE - len(chunks[GLUE])} bytes; low stream {len(low_stream)} bytes')
-    print(f'ending memory: workspace {0xC60-symbols["ENDINGEND"]} bytes free, loader {ENTRY-symbols["ENDLOADEREND"]} bytes free, VDC {0x4000-symbols["ENDVDCSIZE"]} bytes free of 16K')
+    print(f'ending memory: workspace {0xC60-symbols["ENDINGEND"]} bytes free, loader {ENTRY-symbols["ENDLOADEREND"]} bytes free, VDC {0x4000-symbols["ENDVDCSIZE"]} bytes free of 16K '
+          f'(snapshot ${0xA60:04X}-${symbols["ENDVSNAPEND"]-1:04X}, payload ${symbols["ENDVPAY"]:04X} {symbols["ENDPAYLEN"]} bytes in {symbols["ENDPAYPAGES"]} pages), '
+          f'{(symbols["ENDINGEND"] - 2 - symbols["ENDRANGES"]) // 4} snapshot ranges')
     print(f'wrote {OUT} (${LOAD:04X}-${LOAD + len(body) - 1:04X}, code {ends}, entry ${symbols["START"]:04X})')
     return symbols
 

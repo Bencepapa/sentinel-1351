@@ -85,10 +85,9 @@ module.exports = function ({boot, run, check, snap, fs, path, OUT}) {
     fs.writeFileSync(path.join(OUT,name+'-registers.json'),JSON.stringify(regs,null,2));
   };
   // Watch the live transition rather than only the settled title/rank screen.
-  for(const kind of ['death','win']){
+  for(const kind of ['death']){   // (victory keeps the cockpit: see the original win screen below)
     const k=ready(),n=k.m,B=n.ram,T=k.p.symbols;
-    if(kind==='death'){B[T.SHIPLOST]=1;call(n,T.ENDARM);}
-    else {B.fill(0,T.M_STATE,T.M_STATE+60);B.fill(0,T.M_FLG,T.M_FLG+4);B[T.ENDQUAL]=1;call(n,T.ENDTRYWIN);}
+    B[T.SHIPLOST]=1;call(n,T.ENDARM);
     n.setBreak(T.end_clear,true);
     for(let f=0;f<300&&!n.breakInfo;f++)n.runFrame();
     dump(n,'game-end-'+kind+'-preclear');
@@ -99,8 +98,13 @@ module.exports = function ({boot, run, check, snap, fs, path, OUT}) {
     check(n.vic[0x11]===0x3b&&n.vic[0x18]===0x18&&n.vicBank()===0x4000,
       'game: '+kind+' reveals the completed bitmap title in the correct VIC bank');
     R.fill(0,0x6000,0x8000);
-    const titles=kind==='win'?[[5,'  VICTORY IS YOURS'],[7,'  JARALOBA IS SAFE']]:
-      [[8,' THE BATTLE IS OVER'],[12,'  JARALOBA IS LOST']];
+    const titles=[[8,' THE BATTLE IS OVER'],[12,'  JARALOBA IS LOST']];
+    const reports=[0xd25a,0xd639,0xd69d,0xd704];
+    check(reports.every((address,i)=>{
+      const expected=[];for(let row=0;row<5;row++)expected.push(...R.subarray(address+20*row,address+20*row+20),0);
+      return Buffer.from(expected).equals(Buffer.from(B.subarray(T.ENDHEADS+105*i,T.ENDHEADS+105*i+105)));
+    })&&[0,1,2,3].every(i=>(B[T.ENDHEADERLO+i]|B[T.ENDHEADERHI+i]<<8)===T.ENDHEADS+105*i),
+      'game: the four death reports, unpacked from VDC RAM, match the original text bytes');
     let pixels=true;
     for(const [row,text] of titles){
       for(let i=0;i<text.length;i++){
@@ -135,11 +139,6 @@ module.exports = function ({boot, run, check, snap, fs, path, OUT}) {
     match=match&&original.a===ported.a&&original.x===ported.x&&R[0xf43d]===A[S.ENDSCORE]&&R[0xf43e]===A[S.ENDSCORE+1];cases++;
   }
   check(match,`game: ${cases} original/port ratings match, all difficulties, victory/planet flags, kills, bases, energy, hits, shots and protons`);
-  const reports=[0xd25a,0xd639,0xd69d,0xd704];
-  check(reports.every((address,i)=>{
-    const expected=[];for(let row=0;row<5;row++)expected.push(...R.subarray(address+20*row,address+20*row+20),0);
-    return Buffer.from(expected).equals(Buffer.from(A.subarray(S['ENDHEADER'+i],S['ENDHEADER'+i]+105)));
-  }),'game: all four complete death reports match original text bytes');
   R.fill(0x79,0x543e,0x5442);R[0xf34b]=4;R[0xf86b]=1;put(R,0xf436,173,3);
   call(o.m,0xf9d6);
   A[S.ENDMODE]=2;A.fill(0,S.ENDENER,S.ENDENER+3);A.fill(0x79,S.HUDE,S.HUDE+4);
@@ -252,8 +251,8 @@ module.exports = function ({boot, run, check, snap, fs, path, OUT}) {
   W[V.M_FLG]=0;run(win.m,win.hooks,35);
   check(!W[V.ENDMODE]&&W[V.ENDQUAL]>0&&W[V.ENDQUAL]<60,
     'game: clearing every enemy starts the original 60-qualified-check victory countdown');
-  run(win.m,win.hooks,470);
-  check(W[V.ENDMODE]===2&&W[V.ENDVICTORY]===4&&win.m.vic[0x15]===0,
+  run(win.m,win.hooks,520);
+  check(W[V.ENDMODE]===2&&W[V.ENDVICTORY]===4&&W[V.ENDPHASE]>=1,
     'game: clearing every enemy and pending attack enters victory with the original rating bonus');
   snap(win.m,'game-end-victory');
 
@@ -301,15 +300,90 @@ module.exports = function ({boot, run, check, snap, fs, path, OUT}) {
   check(streams.equals(Buffer.from(L.subarray(0x8100,0x8400)))&&!L[LS.ENDMODE],
     'game: reset after minefield death restores all 768 borrowed movement-stream bytes');
 
+  {   // The original victory ($F5B9) from the supplied C64 save: the map is open and
+      // the last enemy gone. The port replays its sectors, statistics and energy.
+    const save=JSON.parse(fs.readFileSync(path.join(__dirname,'../../briefs/ref/c64-last-enemy-map-then-win.state.json'),'utf8'));
+    const c=boot('c64game','trace'),cm=c.m,C=cm.ram;
+    cm.loadState(cm.stateFromText(JSON.stringify(save.state)));cm.dma=true;
+    const pts={0xf5ed:'trigger',0xf600:'text',0xf696:'reveal',0xf606:'wait'};
+    for(const a of Object.keys(pts))cm.setBreak(+a,true);
+    const oe={},at={};let t0=0;
+    for(let f=0;f<400&&oe.wait===undefined;f++){
+      cm.runFrame();
+      while(cm.breakInfo){
+        const pc=cm.breakInfo.pc;cm.setBreak(pc,false);cm.breakInfo=null;
+        if(pts[pc]==='trigger'){
+          t0=cm.frame;at.energy=Array.from(C.subarray(0x543e,0x5442));at.diff=C[0xe0];at.map=C[0xb8];
+          at.sectors=Array.from(C.subarray(0x33c,0x378));at.hits=C[0xf432]|C[0xf433]<<8;
+          at.kills=C[0xf434]|C[0xf435]<<8;at.protons=C[0xf439]|C[0xf43a]<<8;at.shots=C[0xf43b]|C[0xf43c]<<8;
+        }
+        if(pts[pc]==='text')at.used=C[0xf436]|C[0xf437]<<8|C[0xf438]<<16;
+        oe[pts[pc]]=cm.frame-t0;
+      }
+      if(oe.trigger!==undefined&&oe.full===undefined&&[0,1,2,3].every(i=>C[0x543e+i]===0x79))oe.full=cm.frame-t0;
+    }
+    run(cm,c.hooks,10);
+    const letters=r=>{const out=[];for(let a=0x6000+4*320;a<0x6000+16*320;a++)for(let s=0;s<8;s+=2)out.push(((r[a]>>s)&3)===2?1:0);return out.join('');};
+    const originalText=letters(C);
+    snap(cm,'game-end-win-original');
+    const k=ready(),n=k.m,B=n.ram,T=k.p.symbols;
+    run(n,k.hooks,4,()=>n.setKey(7,5,true));n.setKey(7,5,false);run(n,k.hooks,40);
+    const mapOpen=B[T.MAPSHOWN]===1&&!B[T.WIPE];
+    B.set(at.sectors,T.M_STATE);B.fill(0,T.M_FLG,T.M_FLG+4);B[T.DIFF]=at.diff;B.set(at.energy,T.HUDE);
+    put(B,T.HITS,at.hits);put(B,T.KILLS,at.kills-1);put(B,T.SHOTS,at.shots);put(B,T.ENDPROTON,at.protons);
+    put(B,T.ENDENER,at.used-0xae,3);
+    B[T.ENDQUAL]=1;call(n,T.ENDTRYWIN);
+    n.setBreak(T.ENDWINSTART,true);let p0=-1;
+    for(let f=0;f<40&&p0<0;f++){n.runFrame();if(n.breakInfo){p0=n.frame;n.setBreak(T.ENDWINSTART,false);n.breakInfo=null;}}
+    const pe={};let lateCount=0,hud=0;
+    for(let f=0;f<120;f++){
+      n.runFrame();lateCount+=late(n);
+      const d=n.frame-p0;
+      if(pe.full===undefined&&[0,1,2,3].every(i=>B[T.HUDE+i]===0x79))pe.full=d;
+      if(pe.reveal===undefined&&B[0x44a0]===0x14)pe.reveal=d;
+      if(pe.wait===undefined&&B[T.ENDPHASE]===3)pe.wait=d;
+      for(let i=0;i<n.vicLog.length;i+=4)if(n.vicLog[i+2]===0x18&&n.vicLog[i+3]===0x20)hud++;
+    }
+    let stars=0;for(let a=0x63c0;a<0x7680;a++)for(let s=0;s<8;s+=2)if(((B[a]>>s)&3)===1)stars++;
+    snap(n,'game-end-win-port');
+    fs.writeFileSync(path.join(OUT,'game-end-win-timeline.json'),JSON.stringify({original:oe,port:pe,stats:at},null,2));
+    check(p0>0&&mapOpen&&!B[T.MAPSHOWN]&&B[T.ENDMODE]===2,
+      `game: victory fires over the open map as in the save (map ${at.map}) and closes it`);
+    check(['full','reveal','wait'].every(e=>Math.abs(pe[e]-oe[e])<=3),
+      `game: victory energy full / text revealed / rank done at ${pe.full}/${pe.reveal}/${pe.wait} frames, original ${oe.full}/${oe.reveal}/${oe.wait} (3-frame bound)`);
+    const portText=letters(B),cells=new Set();
+    for(let i=0;i<portText.length;i++)if(portText[i]!==originalText[i]){const a=(i>>2);cells.add(`${4+Math.floor(a/320)}:${(a%320)>>4}`);}
+    check(portText===originalText,
+      `game: victory text block, numbers and rank (bitmap rows 4-15) match the original pixel for pixel${cells.size?' (row:character differing '+[...cells].join(' ')+')':''}`);
+    check(hud>=200&&stars>0&&[0,1,2,3].every(i=>B[T.HUDE+i]===0x79)&&B[0x4400+4*40]===0x14&&B[0x4400+17*40]===0x1e,
+      `game: victory keeps the HUD split (${hud} text-mode writes), cockpit and ${stars} star pixels; energy 9999, rows 4-16 purple`);
+    check(lateCount===0&&!B[T.OVRUN],`game: victory scene has ${lateCount} late splits and ${B[T.OVRUN]} OVRUN`);
+    const fresh=ready().m.ram;
+    B[T.ENDTIME]=1;B[T.ENDTIME+1]=0;run(n,k.hooks,100);
+    check(!B[T.ENDMODE]&&(B[T.gplmode+1]|B[T.gplmode+2]<<8)===T.MAPSHOWN&&(B[T.germode+1]|B[T.germode+2]<<8)===T.MAPSHOWN,
+      'game: victory restart restores the star plotter and a fresh game');
+    check(Buffer.from(fresh.subarray(0x7680,0x8000)).equals(Buffer.from(B.subarray(0x7680,0x8000)))&&
+      Buffer.from(fresh.subarray(0x48c8,0x4b40)).equals(Buffer.from(B.subarray(0x48c8,0x4b40)))&&
+      Buffer.from(fresh.subarray(0x4400,0x47e8)).equals(Buffer.from(B.subarray(0x4400,0x47e8))),
+      'game: restart unpacks the cockpit art, bottom sprites, matrix and hidden text rows from VDC RAM');
+  }
+
   const waits=[];
   for(const kind of ['death','win'])for(const button of [true,false]){
     const k=ready(),n=k.m,B=n.ram,T=k.p.symbols;
     if(kind==='death'){B[T.SHIPLOST]=1;call(n,T.ENDARM);}
     else {B.fill(0,T.M_STATE,T.M_STATE+60);B.fill(0,T.M_FLG,T.M_FLG+4);B[T.ENDQUAL]=1;call(n,T.ENDTRYWIN);}
+    if(kind==='win'){   // victory: from the trigger ($F5ED), as the original's trace below
+      n.setBreak(T.ENDWINSTART,true);for(let f=0;f<20&&!n.breakInfo;f++)n.runFrame();
+      n.setBreak(T.ENDWINSTART,false);n.breakInfo=null;
+      B.set([0x75,0x78,0x73,0x70],T.HUDE);   // the save's energy at the trigger: 5830
+    }
     n.mouse.left=button;n.setBreak(T.ENDRESET,true);
     const start=n.frame;let at=-1;
     for(let f=0;f<23500;f++){n.runFrame();if(n.breakInfo){at=n.frame-start;break;}}
-    const original=kind==='death'?(button?715:10410):(button?653:22679);
+    // C64 references: death from the minefield save; victory from the supplied
+    // last-enemy save (fire held from the trigger: 584; untouched: 19,040)
+    const original=kind==='death'?(button?715:10410):(button?584:19040);
     waits.push({kind,button,original,port:at});
     check(Math.abs(at-original)<=10,
       `game: ${kind} ${button?'held-button':'automatic'} reset ${at} DMA frames, C64 reference ${original}`);
