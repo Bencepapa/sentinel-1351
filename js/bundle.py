@@ -11,7 +11,7 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 SCRIPTS = ['programs.js', 'src/cpu6502.js', 'src/font.js', 'src/video.js', 'src/machine.js',
            'src/hooks.js', 'src/native.js', 'src/disasm.js', 'src/debugger.js', 'src/profiles.js',
-           'src/audio.js', 'src/app.js']
+           'src/audio.js', 'src/input.js', 'src/app.js']
 HEAD = ('<!doctype html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n'
         '<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">\n')
 

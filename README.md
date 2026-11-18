@@ -9,12 +9,12 @@ Software). This is not related to Geoff Crammond's *The Sentinel*.
 ## C128 game
 
 [`c128-game`](c128-game) is the port: the cockpit and the sector map as one native
-C128 program, rewritten routine by routine and checked against the original. The
-dogfight, the approach with the long range scanner, type-1 fighters, the tracking
-computer, the map with the moving squadrons and the ship's damage work. Not ported
-yet: hyperspace (a jump is instant), proton torpedoes, squadron types 2 and 3,
-motherships and bases, what most destroyed systems disable, and the game-over
-sequence. See [`PLAN-C128-COCKPIT.md`](PLAN-C128-COCKPIT.md). Ideas beyond the original, such as
+C128 program, rewritten routine by routine and checked against the original. It
+includes the long-range approach, three fighter types, the tracking computer,
+the live sector map, ship damage, hyperspace, proton torpedoes, motherships,
+bases and both endings. The TIME display advances every 60 gameplay frames
+and resets after game over. See [`PLAN-C128-COCKPIT.md`](PLAN-C128-COCKPIT.md).
+Ideas beyond the original, such as
 online multiplayer, are [GitHub issues](https://github.com/Bencepapa/sentinel-1351/issues).
 
 ```powershell

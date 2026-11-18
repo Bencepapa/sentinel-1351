@@ -23,6 +23,7 @@
 ; Friendly repair, destruction and the enemy proton follow; build.py joins mines.asm.
 
 HUDSEC  = $4865         ; the HUD's sector digits (row 2, column 21)
+HUDTIME = $484A         ; TIME MM:SS (original $544A-$544E)
 MATRIX  = $4400         ; the bitmap's colour matrix
 CDST    = $FD           ; pointers (the map's MP and PTR)
 CSRC    = $FB

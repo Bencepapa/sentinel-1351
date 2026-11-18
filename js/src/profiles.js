@@ -52,7 +52,7 @@ var SentinelProfiles = {
       { label: 'RUN/STOP', key: 'Escape' },
     ],
     pad: { map: { mouse: 'right' }, proton: { mouse: 'both' } },   // full screen buttons
-    help: 'Mouse: crosshair. Left: fire, right: map, both: torpedo. Arrows + Right Ctrl: joystick. Alt = C= key.',
+    help: 'Joystick: arrows steer, Right Ctrl / Numpad 0 fires, Left Alt opens the map, Space launches a proton. Mouse: move to aim, left fires, right opens the map, both launch a proton.',
     fastStart: 'GAMEENTRY',     // run at full speed until the depacker reaches the game
   },
   cockpit: {

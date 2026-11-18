@@ -1,13 +1,14 @@
 #!/bin/sh
 # Rebuild the JS runtime's embedded PRGs when the C128 sources change, so the
-# browser version never lags behind (js/programs.js and js/dist/sentinel.html).
+# browser version never lags behind (js/programs.js, js/dist/sentinel.html and the itch.io page js/dist/itch.html + itch.zip).
 # Enable once per clone:  git config core.hooksPath .githooks
-if git diff --cached --name-only | grep -E '^(c128-(flight|map|gui|game)/.*\.(asm|py)|js/build\.py|js/bundle\.py|js/page\.html|js/c64-symbols\.txt|js/src/|Sentinel-1351_v9\.prg)' >/dev/null; then
+if git diff --cached --name-only | grep -E '^(c128-(flight|map|gui|game)/.*\.(asm|py)|js/build\.py|js/bundle\.py|js/itch\.py|js/page\.html|js/itch-page\.html|js/c64-symbols\.txt|js/src/|Sentinel-1351_v9\.prg)' >/dev/null; then
     echo "pre-commit: C128 sources changed, rebuilding js/ ..."
     PY=$(command -v python3 || command -v python)
     "$PY" js/build.py >/dev/null || { echo "js/build.py failed"; exit 1; }
     "$PY" js/bundle.py >/dev/null || { echo "js/bundle.py failed"; exit 1; }
-    git add js/programs.js js/index.html js/dist/sentinel.html \
+    "$PY" js/itch.py >/dev/null || { echo "js/itch.py failed"; exit 1; }
+    git add js/programs.js js/index.html js/dist/sentinel.html js/dist/itch.html js/dist/itch.zip \
         c128-flight/*.prg c128-map/*.prg c128-game/*.prg c128-gui/cockpit/sentinel-c128-cockpit.prg 2>/dev/null
 fi
 exit 0

@@ -2028,9 +2028,13 @@ require('./c64-arrival')({boot,check,fs,path});
 require('./banks')({boot,run,check,fs,path,ROOT});
 require('./bugs')({boot,run,check,snap,fs,path,OUT});
 require('./overlay')({boot,run,check,fs,path,OUT});
+require('./joystick')({boot,run,check});
+const itchDone=require('./itch')({boot,run,check,fs,path,ROOT});   // (its audio checks are asynchronous)
 
 for(const r of freeMemoryRuns) if(!r.intact) console.log(`     free RAM written: ${r.bad} (boot${r.at})`);
 check(freeMemoryRuns.every(r=>r.intact)&&freeMemoryRuns.some(r=>r.frames>1000),
   `memory: $A5-filled free RAM (high, ending core tail, overlay manager tail, loader tail, the old EXIT/START saves, zero page, stack page) survives all existing game scenarios (${freeMemoryRuns.filter(r=>r.frames).length} boots)`);
-console.log(failures ? failures + ' check(s) failed' : 'all checks passed');
-process.exit(failures ? 1 : 0);
+Promise.resolve(itchDone).then(()=>{
+  console.log(failures ? failures + ' check(s) failed' : 'all checks passed');
+  process.exit(failures ? 1 : 0);
+});

@@ -14,6 +14,9 @@ It is the browser page's default program.
 ## How it plays
 
 - The ship starts in sector 05.03 (map cell 4,2), empty as in the original.
+- **TIME** starts at `00:00`, advances one game second per 60 gameplay frames,
+  and wraps after `59:59`. The colon blinks every 30 frames. The clock freezes
+  when either ending starts and clears when the game restarts.
 - **C=** (Alt in the page) or the **right mouse button** (held alone for 5 frames, as
   in the C64 patch) opens the map **in the cockpit's 3D view**, as in the
   original in flight: the view wipes a row a frame, and the grid
@@ -71,7 +74,8 @@ behind the cockpit, including while closed; its world arrays are never scratch.
 | `$0002-$002A`, `$002D-$00FA`, `$00FF` | **Zero page, 248 bytes free** (the game uses `$FB-$FE`, and the relocated original rating `$F440` its temp `$2B/$2C`; BASIC's/the KERNAL's zero page is not kept: no return to BASIC). |
 | `$0100-$0154` | The bank-1 copy stub in common RAM below the stack (`bank1.asm`; the stack never goes below `$01EA`). `$0155-$01BF` (107 bytes) is free common RAM below the stack. |
 | `$0200-$0556` | The ending's resident core (`ending.asm`: the checks in play, the death flash, the victory's refill, the statistics hooks, the snapshot copy and its descriptors, the reset's last part). BASIC's RAM: not saved (no return to BASIC). |
-| `$0557-$0C5F` | **1,801 bytes free** in every mode (BASIC's RAM; since 2026-11-17, plan step 4). |
+| `$0557-$05CC` | Resident TIME clock (`ending.asm`), staged with the ending core. 111 code bytes and 7 data bytes. |
+| `$05CD-$0C5F` | **1,683 bytes free** in every mode. |
 | `$0C60-$19F8` | 3,481-byte resident relocated mothership/repair/message/positioning/enemy-proton block. Used in M, message jobs also F/D/H; retained in every mode. |
 | `$19F9-$1A09` | 17 bytes in C128 BASIC's free ML area, installed with the block: `ENDCROSS`, the victory's input hook (issue #20). |
 | `$1A0A-$1A0F` | 6 bytes free. |

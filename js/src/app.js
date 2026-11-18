@@ -19,16 +19,14 @@
     Backslash: [6, 0], BracketRight: [6, 1], Quote: [6, 2], Home: [6, 3], ShiftRight: [6, 4], Slash: [6, 7],
     Digit1: [7, 0], Backquote: [7, 1], ControlLeft: [7, 2], Digit2: [7, 3], Space: [7, 4], AltLeft: [7, 5], KeyQ: [7, 6], Escape: [7, 7],
   };
-  // Joystick in port 2 (not part of the matrix): arrows + Right Ctrl / Numpad 0
-  var JOY = { ArrowUp: 1, ArrowDown: 2, ArrowLeft: 4, ArrowRight: 8, ControlRight: 16, Numpad0: 16 };
-
   var m = null, hooks = null, dbg = null, prog = null, progName = 'game', profile = null;
+  var input = null;
   var audio = new SentinelAudio(), audioFrame = 0;
   var vicCtx = $('vic').getContext('2d'), vdcCtx = $('vdc').getContext('2d');
   var vicImg = vicCtx.createImageData(Video.VIC_W, Video.VIC_H);
   var vdcImg = vdcCtx.createImageData(Video.VDC_W, Video.VDC_H);
   var vicPx = new Uint32Array(vicImg.data.buffer), vdcPx = new Uint32Array(vdcImg.data.buffer);
-  var pendX = 0, pendY = 0, sens = 0.5;
+  var sens = 0.5;
   var running = true, fast = false, framesLeft = 0, mode = 'verify';
   var lastBreak = null;
 
@@ -39,6 +37,8 @@
     m = new C128(prog.model);
     m.loadPrg(base64(prog.prg));
     hooks = new SentinelHooks(m, prog.symbols);
+    input = new SentinelInput(m, name === 'c64game' ? hooks : null);
+    lastTouch = null;
     SentinelNative.install(hooks, mode);
     if (name === 'c64game') hooks.fixC64Original();
     hooks.onMismatch = function (r) { dbg.say('mismatch in ' + r.name + ' (frame ' + r.frame + '): ' + r.diffs.join('; '), 'mismatch'); };
@@ -105,12 +105,13 @@
     var speed = $('speed').value, budgetEnd = performance.now() + 14, n;
     if (fast || speed === 'max') n = 1000;
     else { acc = Math.min(acc + dt * +speed, FRAME_MS * 4 * +speed); n = Math.floor(acc / FRAME_MS); acc -= n * FRAME_MS; }
-    var ran = 0;
+    var ran = 0, wasFast = fast;
     for (var i = 0; i < n; i++) {
       if (!oneFrame()) break;
       ran++;
       if (framesLeft && --framesLeft === 0) { pause(); break; }
       if ((fast || speed === 'max') && performance.now() > budgetEnd) break;
+      if (wasFast && !fast) break;         // the unpacker just ended: the rest of the 1000 frames would run with no time budget
     }
     if (ran) draw();
     if (ran && m.frame % 5 === 0) refresh(false);
@@ -118,7 +119,7 @@
 
   // Run to the end of the frame. Returns false when the machine stopped or broke.
   function oneFrame() {
-    feedMouse();
+    input.feed();
     var r = m.run();
     if (r === 'frame') {
       if (!fast && $('speed').value === '1') audio.frame(m, audioFrame++ * 19656);
@@ -171,14 +172,6 @@
     lastBreak = null;
     for (var i = 0; i < n; i++) if (!oneFrame()) return;
     draw(); refresh(true);
-  }
-
-  function feedMouse() {
-    // the 1351 reports 6 bits per axis; keep each frame's step inside that
-    var dx = Math.max(-24, Math.min(24, Math.trunc(pendX)));
-    var dy = Math.max(-24, Math.min(24, Math.trunc(pendY)));
-    pendX -= dx; pendY -= dy;
-    m.moveMouse(dx, dy);
   }
 
   function draw() {
@@ -387,7 +380,10 @@
     if (line.trim()) { history.push(line); hpos = history.length; }
     con('> ' + line, 'cmd');
     var out;
-    try { out = dbg.exec(line); } catch (err) { out = [err.message]; }
+    try {
+      out = dbg.exec(line);
+      if (/^load(?:\s|$)/i.test(line.trim())) afterLoad();
+    } catch (err) { out = [err.message]; }
     out.forEach(function (l) { con(l); });
     if (dbg.stepRequest) {
       var s = dbg.stepRequest; dbg.stepRequest = null;
@@ -410,24 +406,27 @@
     audio.start();
     if (!document.pointerLockElement && screenEl.requestPointerLock) {
       try { var p = screenEl.requestPointerLock(); if (p && p.catch) p.catch(function () {}); } catch (err) { /* not allowed */ }
-      return;
+      if (!input.mode) return;
     }
-    if (e.button === 0) m.mouse.left = true;
-    if (e.button === 2) m.mouse.right = true;
+    if (e.button === 0) input.setButton('mouse', 'left', true);
+    if (e.button === 2) input.setButton('mouse', 'right', true);
     e.preventDefault();
   });
   window.addEventListener('mouseup', function (e) {
     if (!m) return;
-    if (e.button === 0) m.mouse.left = false;
-    if (e.button === 2) m.mouse.right = false;
+    if (e.button === 0) input.setButton('mouse', 'left', false);
+    if (e.button === 2) input.setButton('mouse', 'right', false);
   });
   screenEl.addEventListener('contextmenu', function (e) { e.preventDefault(); });
   document.addEventListener('mousemove', function (e) {
-    if (document.pointerLockElement !== screenEl || !running) return;
-    pendX += e.movementX * sens; pendY -= e.movementY * sens;
+    if (!running || !input) return;
+    if (document.pointerLockElement === screenEl || (!document.pointerLockElement && input.mode && screenEl.contains(e.target))) {
+      input.move(e.movementX * sens, -e.movementY * sens);
+    }
   });
   document.addEventListener('pointerlockchange', function () {
     $('lockhint').style.display = document.pointerLockElement ? 'none' : '';
+    if (document.pointerLockElement !== screenEl && input) input.clearButtons('mouse');
   });
 
   // touch: drag moves the mouse, buttons below the screen click it
@@ -438,10 +437,11 @@
   }, { passive: false });
   screenEl.addEventListener('touchmove', function (e) {
     var t = e.touches[0];
-    if (lastTouch && running) { pendX += (t.clientX - lastTouch.x) * sens * 1.5; pendY -= (t.clientY - lastTouch.y) * sens * 1.5; }
+    if (lastTouch && running) input.move((t.clientX - lastTouch.x) * sens * 1.5, (lastTouch.y - t.clientY) * sens * 1.5);
     lastTouch = { x: t.clientX, y: t.clientY }; e.preventDefault();
   }, { passive: false });
   screenEl.addEventListener('touchend', function () { lastTouch = null; });
+  screenEl.addEventListener('touchcancel', function () { lastTouch = null; });
 
   function buildKeys() {
     var box = $('keys');
@@ -450,27 +450,19 @@
       var b = document.createElement('button');
       b.type = 'button'; b.textContent = k.label;
       if (k.mouse) b.className = 'mouse';
-      var down = function () {
-        if (k.mouse === 'left' || k.mouse === 'both') m.mouse.left = true;
-        if (k.mouse === 'right' || k.mouse === 'both') m.mouse.right = true;
-        if (k.key) { var c = KEYS[k.key]; m.setKey(c[0], c[1], true); }
-      };
-      var up = function () {
-        if (k.mouse) { m.mouse.left = false; m.mouse.right = false; }
-        if (k.key) { var c = KEYS[k.key]; m.setKey(c[0], c[1], false); }
-      };
-      var on = function (e) { audio.start(); e.preventDefault(); down(); };
-      var off = function (e) { e.preventDefault(); up(); };
+      var on = function (e) { audio.start(); e.preventDefault(); padPress(k, true, b); };
+      var off = function (e) { e.preventDefault(); padPress(k, false, b); };
       b.addEventListener('touchstart', on, { passive: false }); b.addEventListener('mousedown', on);
-      b.addEventListener('touchend', off); b.addEventListener('mouseup', off); b.addEventListener('mouseleave', off);
+      b.addEventListener('touchend', off); b.addEventListener('touchcancel', off);
+      b.addEventListener('mouseup', off); b.addEventListener('mouseleave', off);
       box.appendChild(b);
     });
   }
 
   // fire button (touch devices, and in full screen): the left mouse button
   var fireEl = $('firebtn');
-  var fireDown = function (e) { audio.start(); e.preventDefault(); e.stopPropagation(); if (m) m.mouse.left = true; fireEl.classList.add('down'); };
-  var fireUp = function (e) { e.preventDefault(); e.stopPropagation(); if (m) m.mouse.left = false; fireEl.classList.remove('down'); };
+  var fireDown = function (e) { audio.start(); e.preventDefault(); e.stopPropagation(); if (input) input.setButton(fireEl, 'left', true); fireEl.classList.add('down'); };
+  var fireUp = function (e) { e.preventDefault(); e.stopPropagation(); if (input) input.setButton(fireEl, 'left', false); fireEl.classList.remove('down'); };
   fireEl.addEventListener('touchstart', fireDown, { passive: false });
   fireEl.addEventListener('touchend', fireUp, { passive: false });
   fireEl.addEventListener('touchcancel', fireUp, { passive: false });
@@ -479,17 +471,16 @@
   fireEl.addEventListener('mouseleave', function (e) { if (fireEl.classList.contains('down')) fireUp(e); });
 
   // map and proton buttons (full screen), as the program's profile maps them
-  function padPress(k, on) {
+  function padPress(k, on, source) {
     if (!m || !k) return;
-    if (k.mouse === 'left' || k.mouse === 'both') m.mouse.left = on;
-    if (k.mouse === 'right' || k.mouse === 'both') m.mouse.right = on;
+    if (k.mouse) input.setButton(source, k.mouse, on);
     if (k.key) { var c = KEYS[k.key]; m.setKey(c[0], c[1], on); }
   }
   ['map', 'proton'].forEach(function (name) {
     var el = $('pad' + name);
     var k = function () { return profile && profile.pad ? profile.pad[name] : null; };
-    var dn = function (e) { audio.start(); e.preventDefault(); e.stopPropagation(); padPress(k(), true); el.classList.add('down'); };
-    var up = function (e) { e.preventDefault(); e.stopPropagation(); padPress(k(), false); el.classList.remove('down'); };
+    var dn = function (e) { audio.start(); e.preventDefault(); e.stopPropagation(); padPress(k(), true, el); el.classList.add('down'); };
+    var up = function (e) { e.preventDefault(); e.stopPropagation(); padPress(k(), false, el); el.classList.remove('down'); };
     el.addEventListener('touchstart', dn, { passive: false });
     el.addEventListener('touchend', up, { passive: false });
     el.addEventListener('touchcancel', up, { passive: false });
@@ -556,16 +547,30 @@
   window.addEventListener('keydown', function (e) {
     if (typing(e) || !m) return;
     audio.start();
-    if (JOY[e.code]) { m.joy2 |= JOY[e.code]; e.preventDefault(); return; }
+    if (SentinelInput.isJoystick(e.code)) { input.setJoystick(e.code, true, e.repeat); e.preventDefault(); return; }
     var k = KEYS[e.code];
     if (k) { m.setKey(k[0], k[1], true); e.preventDefault(); }
   });
   window.addEventListener('keyup', function (e) {
     if (!m) return;
-    if (JOY[e.code]) { m.joy2 &= ~JOY[e.code]; return; }
+    if (SentinelInput.isJoystick(e.code)) { input.setJoystick(e.code, false); return; }
     var k = KEYS[e.code];
     if (k) m.setKey(k[0], k[1], false);
   });
+
+  function releaseInput() {
+    lastTouch = null;
+    if (!m) return;
+    m.keys.fill(0);
+    input.release();
+    ['firebtn', 'padmap', 'padproton'].forEach(function (id) { $(id).classList.remove('down'); });
+  }
+  window.addEventListener('blur', releaseInput);
+  function afterLoad() {
+    if (progName !== 'c64game') return;
+    releaseInput();
+    input.afterLoad();
+  }
 
   // ---- controls ----------------------------------------------------------------------
 
@@ -585,7 +590,7 @@
 
   $('save').addEventListener('click', function () { dbg.save($('slot').value); slotButtons(); });
   $('load').addEventListener('click', function () {
-    try { dbg.load($('slot').value); m.stopped = null; $('overlay').style.display = 'none'; draw(); refresh(true); }
+    try { dbg.load($('slot').value); afterLoad(); m.stopped = null; $('overlay').style.display = 'none'; draw(); refresh(true); }
     catch (err) { dbg.say(err.message, 'mismatch'); }
   });
   $('slot').addEventListener('change', slotButtons);
@@ -617,6 +622,7 @@
       var o = JSON.parse(t);
       if (o.program !== progName) { $('program').value = o.program; boot(o.program); }
       m.loadState(m.stateFromText(JSON.stringify(o.state)));
+      afterLoad();
       m.stopped = null; $('overlay').style.display = 'none';
       dbg.say('Imported a state (frame ' + m.frame + ')', 'state');
       pause();

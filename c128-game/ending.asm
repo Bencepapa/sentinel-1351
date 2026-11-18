@@ -370,6 +370,70 @@ ENDRANGES:
 ; ENDRANGEDATA
         .BYTE 0,0
 ENDRANGESEND:
+
+; Gameplay clock. The C64 calls $FAD7 from its raster IRQ at $0BF6, once per
+; active frame. $FAE9 advances the display every 60 calls, and $FB36 toggles
+; the colon every 30. The HUD text cells hold the four digits directly.
+CLOCKINIT:              ; g_gi9 is shared by cold start and ENDRESET2
+        LDA #60
+        STA CLOCKDIV
+        LDA #0
+        STA CLOCKHOURS
+        LDA #$70
+        STA HUDTIME
+        STA HUDTIME+1
+        STA HUDTIME+3
+        STA HUDTIME+4
+        LDA #$6E
+        STA HUDTIME+2
+        JMP SHOWSEC
+CLOCKFRAME:
+        ; The old frame's work has crossed raster line 0. Tick in the new
+        ; frame's top border, before the HUD fetch and after any ending check.
+        JSR CLOCKTICK   ; a future pause can skip this tick without losing its phase
+        JMP frame
+CLOCKTICK:
+        LDA ENDMODE
+        BNE clock_done
+        DEC CLOCKDIV
+        BEQ clock_second
+        LDA CLOCKDIV
+        CMP #30
+        BEQ clock_blink
+        RTS
+clock_second:
+        LDA #60
+        STA CLOCKDIV
+        JSR clock_blink
+        LDX #4
+clock_digit:
+        INC HUDTIME,X
+        LDA HUDTIME,X
+        CMP CLOCKLIMIT,X
+        BCC clock_done
+        LDA #$70
+        STA HUDTIME,X
+        DEX
+        CPX #2          ; skip the colon
+        BNE clock_carry
+        DEX
+clock_carry:
+        TXA
+        BPL clock_digit
+        LDA CLOCKHOURS  ; retain wraps for the itch bonus, already zero after two hours
+        CMP #2
+        BCS clock_done
+        INC CLOCKHOURS
+clock_done:
+        RTS
+clock_blink:
+        LDA HUDTIME+2
+        EOR #$0E
+        STA HUDTIME+2
+        RTS
+CLOCKDIV:  .BYTE 60
+CLOCKHOURS:.BYTE 0
+CLOCKLIMIT:.BYTE $76,$7A,0,$76,$7A
 ENDCOREEND:
 
 ; ---------------- the ENDING package (S1, overlay.asm) ----------------

@@ -6,6 +6,17 @@ is ported from the C64 code and checked against it.
 
 ## Status
 
+Updated 2026-11-18. **TIME clock ported**. The JS C64 trace found one call to
+`$FAD7` from the raster IRQ at `$0BF6` per active frame. `$FAE9` advances the
+clock every 60 ticks and `$FB36` blinks the colon every 30. The C128 matches
+both rates in its gameplay frame hook.
+`CLOCKTICK` updates the HUD cells at `$484A-$484E` in the top border and freezes
+when `ENDMODE` is set. `CLOCKINIT` runs on cold start and game-over reset.
+The itch page reads the HUD digits and completed hours at the ending statistics
+hook for its victory bonus. The DMA checks in `js/test/itch.js` compare the C64
+and C128 frame counts, exercise the hour wrap, and check the clock through
+both endings and the restart.
+
 Updated 2026-11-17 (working tree; not committed). **No return to BASIC** (the user's
 decision, after RUN/STOP's exit hung in VICE): RUN/STOP does nothing, the exit and
 everything that only kept BASIC's state for it are gone (`ENDRESTORE`, the bank-1
@@ -15,8 +26,9 @@ section 10 for the free-byte table. **Memory, plan steps 2-4 done**
 (`briefs/memory-overlay-plan.md` section 9): bank 1 is the store (reset
 snapshot, payload, packages; no VDC RAM written), the overlay slot S1 (`$E960-$F6F8`) holds MINES
 in play and the ENDING package from a death/victory to the reset, the ending's resident
-core is `$0200-$0556`: **1,801 bytes free at `$0557-$0C5F`** in every mode for new
-features (plus 6 at `$1A0A`, 8 at `$1BF8`, 109 at `$1C93`, 96 at `$1F79`, 69 at `$1D14`,
+core is `$0200-$0556`. The clock uses `$0557-$05CC` (111 code bytes and
+7 data bytes), leaving **1,683 bytes free at `$05CD-$0C5F`** in every mode
+(plus 6 at `$1A0A`, 8 at `$1BF8`, 109 at `$1C93`, 96 at `$1F79`, 69 at `$1D14`,
 248 of zero page). Everything below is built into
 `c128-game/sentinel-c128-game.prg` and the browser page (`js/dist/sentinel.html`),
 and `node js/test/run.js` ends with "all checks passed".
@@ -119,8 +131,8 @@ Left, in a suggested order (each with what is already known):
   230-245, cycles 16-55) and `OVRUN`; both must stay 0. A blanked screen must keep
   the bad lines: use an invalid VIC mode (`$D011 = $7B`, ECM+BMM, black), not
   DEN=0, which removes the line-75 bad line the top split is timed by.
-- **Current memory:** see `c128-game/README.md` (2026-11-17, bank 1) for the margins:
-  `$0557-$0C5F` 1,801 bytes free; the minefield (MINES, in S1) uses `$EA16-$F6F6`.
+- **Current memory:** see `c128-game/README.md` for the margins.
+  `$05CD-$0C5F` has 1,683 bytes free. The minefield (MINES, in S1) uses `$EA16-$F6F6`.
   See the complete lifetime map in `c128-game/README.md`. The minefield is included from `mines.asm` before GINIT3END; append new high code
   before GINIT3END, use the existing hooks, and keep MINEEND/TORPA at `$F6F9`.
   The 3,481-byte mothership/message/repair block now lives at `$0C60-$19F8`.

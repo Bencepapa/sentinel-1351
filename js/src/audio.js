@@ -6,7 +6,9 @@
 
 var SentinelAudio = (function () {
 
-  function workletSource() {
+  // The synth itself. Its source text is also what the worklet module runs, so it must stay
+  // self-contained (no outer variables). Returns the engine class.
+  function sidCore() {
     var CLOCK = 985248;                    // PAL
     var ATTACK = [2, 8, 16, 24, 38, 56, 68, 80, 100, 250, 500, 800, 1000, 3000, 5000, 8000];
 
@@ -15,22 +17,23 @@ var SentinelAudio = (function () {
       this.env = 0; this.state = 'release'; this.noise = 0x7FFFF8; this.prevBit19 = 0;
     }
 
-    class SidProcessor extends AudioWorkletProcessor {
-      constructor() {
-        super();
+    class SidEngine {
+      constructor(rate) {
+        this.rate = rate;
         this.v = [new Voice(), new Voice(), new Voice()];
         this.reg = new Uint8Array(32);
         this.queue = [];          // [absCycle, reg, value]
         this.cycle = 0;           // SID cycles played so far
         this.lp = 0; this.bp = 0;
-        this.port.onmessage = (e) => {
-          const d = e.data;
-          if (d.reset) { this.queue = []; this.cycle = d.cycle; for (let r = 0; r < 25; r++) this.write(r, 0); return; }
-          // keep the latency between 1 and 4 frames
-          const lag = d.frameStart - this.cycle;
-          if (lag < 19656 || lag > 4 * 19656) this.cycle = d.frameStart - 2 * 19656;
-          for (let i = 0; i < d.log.length; i += 3) this.queue.push([d.frameStart + d.log[i], d.log[i + 1], d.log[i + 2]]);
-        };
+      }
+      // {reset, cycle} silences and restarts the clock; {frameStart, log} queues one frame's writes
+      message(d) {
+        if (d.reset) { this.queue = []; this.cycle = d.cycle; for (let r = 0; r < 25; r++) this.write(r, 0); return; }
+        // keep the latency between 1 and 4 frames
+        const lag = d.frameStart - this.cycle;
+        if (lag < 19656 || lag > 4 * 19656) this.cycle = d.frameStart - 2 * 19656;
+        for (let i = 0; i < d.log.length; i += 3) this.queue.push([d.frameStart + d.log[i], d.log[i + 1], d.log[i + 2]]);
+        if (this.queue.length > 30000) this.queue.splice(0, this.queue.length - 30000);   // nobody is playing them
       }
       write(r, v) {
         this.reg[r] = v;
@@ -48,9 +51,8 @@ var SentinelAudio = (function () {
           } else if (k === 5) vo.ad = v; else vo.sr = v;
         }
       }
-      process(inputs, outputs) {
-        const out = outputs[0][0];
-        const step = CLOCK / sampleRate;
+      render(out) {
+        const step = CLOCK / this.rate;
         const reg = this.reg;
         for (let s = 0; s < out.length; s++) {
           const next = this.cycle + step;
@@ -61,7 +63,7 @@ var SentinelAudio = (function () {
           for (let i = 0; i < 3; i++) {
             const vo = this.v[i];
             // envelope (linear; decay/release 3x the attack table)
-            const ms = 1000 / sampleRate;
+            const ms = 1000 / this.rate;
             const sus = ((vo.sr >> 4) / 15);
             if (vo.state === 'attack') { vo.env += ms / ATTACK[vo.ad >> 4]; if (vo.env >= 1) { vo.env = 1; vo.state = 'decay'; } }
             else if (vo.state === 'decay') { vo.env -= ms / (3 * ATTACK[vo.ad & 15]); if (vo.env <= sus) { vo.env = sus; vo.state = 'sustain'; } }
@@ -99,52 +101,139 @@ var SentinelAudio = (function () {
           if (reg[24] & 0x40) filtered += hp;
           out[s] = (mixD + filtered) * (reg[24] & 15) / 15 * 0.25;
         }
-        return true;
       }
+    }
+    return SidEngine;
+  }
+
+  // The worklet module: the engine plus a processor that feeds it.
+  function workletSource() {
+    var Engine = sidCore();
+    class SidProcessor extends AudioWorkletProcessor {
+      constructor() {
+        super();
+        this.e = new Engine(sampleRate);
+        this.port.onmessage = (ev) => this.e.message(ev.data);
+      }
+      process(inputs, outputs) { this.e.render(outputs[0][0]); return true; }
     }
     registerProcessor('sid-processor', SidProcessor);
   }
 
-  function Audio() { this.ctx = null; this.node = null; this.muted = false; this.sync = true; }
+  // ---- the audio object --------------------------------------------------------
+  //
+  // Starting is the fragile part (issue #14): the AudioContext has to be made / resumed
+  // inside a user gesture, and the worklet module has to be loadable where the page runs
+  // (a blob: URL fails on file:// pages and under some iframe sandboxes / CSPs). So the
+  // module is tried as a blob, then as a data: URL, and if neither loads, the same engine
+  // runs in a ScriptProcessorNode on the main thread. `kind` says which one is playing.
 
-  Audio.prototype.start = function () {
-    if (this.ctx) { if (this.ctx.state !== 'running') this.ctx.resume(); return Promise.resolve(); }
-    var Ctx = window.AudioContext || window.webkitAudioContext;
-    if (!Ctx || !window.AudioWorkletNode) return Promise.resolve();
+  function Audio() {
     var self = this;
-    this.ctx = new Ctx();
-    var src = '(' + workletSource.toString() + ')();';
-    var url = URL.createObjectURL(new Blob([src], { type: 'application/javascript' }));
-    return this.ctx.audioWorklet.addModule(url).then(function () {
-      self.node = new AudioWorkletNode(self.ctx, 'sid-processor');
-      self.node.connect(self.ctx.destination);
+    this.ctx = null; this.node = null; this.engine = null; this.kind = 'none';
+    this.muted = false; this.sync = true; this.starting = null;
+    if (typeof document !== 'undefined') {
+      document.addEventListener('visibilitychange', function () { if (!document.hidden) self.resume(); });
+    }
+  }
+
+  Audio.prototype.resume = function () {
+    var c = this.ctx;
+    if (c && c.state !== 'running' && c.state !== 'closed') {
+      try { var p = c.resume(); if (p && p.catch) p.catch(function () { /* needs a gesture */ }); } catch (e) { /* ignore */ }
+    }
+  };
+
+  Audio.prototype.running = function () {
+    return !!this.ctx && this.ctx.state === 'running' && this.kind !== 'none';
+  };
+
+  // Call from a user gesture (key, click, touch). Safe to call again and again.
+  Audio.prototype.start = function () {
+    var self = this;
+    if (this.ctx) { this.resume(); return this.starting || Promise.resolve(); }
+    var Ctx = window.AudioContext || window.webkitAudioContext;
+    if (!Ctx) return Promise.resolve();
+    try { this.ctx = new Ctx(); } catch (e) { console.warn('No audio context', e); return Promise.resolve(); }
+    this.resume();
+    this.ctx.onstatechange = function () { if (self.ctx.state === 'running') self.sync = true; };
+    this.starting = this.makeNode().then(function () {
       self.sync = true;
-    }).catch(function (e) { console.warn('SID audio unavailable', e); });
+    }, function (e) { console.warn('SID audio unavailable', e); });
+    return this.starting;
+  };
+
+  Audio.prototype.makeNode = function () {
+    var self = this, ctx = this.ctx;
+    var src = Audio.moduleSource();
+    var blobUrl = null;
+    function viaWorklet(url, kind) {
+      return ctx.audioWorklet.addModule(url).then(function () {
+        self.node = new window.AudioWorkletNode(ctx, 'sid-processor');
+        self.node.connect(ctx.destination);
+        self.kind = kind;
+      });
+    }
+    function scriptNode() {
+      if (!ctx.createScriptProcessor) return Promise.reject(new Error('no audio output available'));
+      var Engine = sidCore(), engine = new Engine(ctx.sampleRate);
+      var node = ctx.createScriptProcessor(1024, 1, 1);
+      node.onaudioprocess = function (e) { engine.render(e.outputBuffer.getChannelData(0)); };
+      node.connect(ctx.destination);
+      self.engine = engine; self.node = node; self.kind = 'script';
+      return Promise.resolve();
+    }
+    if (!(ctx.audioWorklet && window.AudioWorkletNode)) return scriptNode();
+    var chain = Promise.resolve().then(function () {
+      blobUrl = URL.createObjectURL(new Blob([src], { type: 'application/javascript' }));
+      return viaWorklet(blobUrl, 'worklet-blob');
+    }).catch(function () {
+      return viaWorklet('data:application/javascript;base64,' + btoa(unescape(encodeURIComponent(src))), 'worklet-data');
+    }).catch(scriptNode);
+    return chain.then(function () { if (blobUrl) URL.revokeObjectURL(blobUrl); });
+  };
+
+  Audio.prototype.send = function (d) {
+    if (this.engine) this.engine.message(d);
+    else if (this.node) this.node.port.postMessage(d);
   };
 
   // Called after every emulated frame with the machine's SID write log.
   Audio.prototype.frame = function (m, frameStartCycle) {
     if (!this.node || this.muted) return;
+    if (this.ctx.state !== 'running') { this.sync = true; return; }   // nobody is listening yet
     var log = m.sidLog.slice();
-    if (this.sync) {                       // the worklet starts from silence: give it the
+    if (this.sync) {                       // the synth starts from silence: give it the
       var pre = [];                        // registers written before the audio started
       for (var r = 0; r < 25; r++) pre.push(0, r, m.sid[r]);   // (volume, envelopes...)
       log = pre.concat(log);
       this.sync = false;
     }
-    this.node.port.postMessage({ frameStart: frameStartCycle, log: log });
+    this.send({ frameStart: frameStartCycle, log: log });
   };
 
   Audio.prototype.reset = function (cycle) {
-    if (this.node) this.node.port.postMessage({ reset: true, cycle: cycle - 2 * 19656 });
+    this.send({ reset: true, cycle: cycle - 2 * 19656 });
+    this.sync = true;
+  };
+
+  // Silence now (the log is not being fed: speed-up, pause); the registers come back with the next frame().
+  Audio.prototype.silence = function () {
+    this.send({ reset: true, cycle: 0 });
     this.sync = true;
   };
 
   Audio.prototype.setMuted = function (on) {
     this.muted = on;
-    if (on && this.node) this.node.port.postMessage({ reset: true, cycle: 0 });
+    if (on) this.send({ reset: true, cycle: 0 });
     if (!on) this.sync = true;
   };
 
+  // The worklet module text, and the bare synth (tests, and the ScriptProcessor fallback).
+  Audio.moduleSource = function () { return 'var sidCore = ' + sidCore.toString() + ';\n(' + workletSource.toString() + ')();'; };
+  Audio.createEngine = function (rate) { var E = sidCore(); return new E(rate); };
+
   return Audio;
 })();
+
+if (typeof module !== 'undefined') module.exports = SentinelAudio;

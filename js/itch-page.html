@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>Sentinel</title>
+<style>
+html, body { margin: 0; height: 100%; background: #000; overflow: hidden; overscroll-behavior: none; }
+body { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent; }
+
+/* the game fills the frame at the screen's 384:272 shape; the rest is black */
+#stage { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; touch-action: none; outline: none; }
+/* the mouse pointer is hidden only by the browser while the mouse is captured (pointer lock) */
+#box { position: relative; width: min(100vw, calc(100vh * 384 / 272)); width: min(100vw, calc(100dvh * 384 / 272)); aspect-ratio: 384 / 272; }
+#vic, #ov { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+#vic { image-rendering: crisp-edges; image-rendering: pixelated; }
+#ov { pointer-events: none; }
+
+/* ---- TOUCH CONTROLS: edit the look here ------------------------------------------------
+   Shown on touch devices while a game runs. FIRE = left mouse button, MAP = right,
+   TORPEDO = both. Aiming is a drag anywhere else on the screen. */
+.tbtn { display: none; position: fixed; z-index: 3; box-sizing: border-box; padding: 0; margin: 0;
+  border: 2px solid rgba(255, 255, 255, 0.45); border-radius: 50%;
+  background: rgba(255, 255, 255, 0.16); color: rgba(255, 255, 255, 0.85);
+  font: 700 13px/1 system-ui, sans-serif; letter-spacing: 0.08em;
+  touch-action: none; -webkit-user-select: none; user-select: none; }
+.tbtn.down { background: rgba(255, 255, 255, 0.42); }
+body.touch.ingame .tbtn { display: block; }
+#b-fire { left: max(16px, env(safe-area-inset-left)); bottom: max(16px, env(safe-area-inset-bottom)); width: 96px; height: 96px; }
+#b-torp { right: max(16px, env(safe-area-inset-right)); bottom: max(16px, env(safe-area-inset-bottom)); width: 72px; height: 72px; }
+#b-map  { right: max(16px, env(safe-area-inset-right)); bottom: calc(max(16px, env(safe-area-inset-bottom)) + 88px); width: 72px; height: 72px; }
+/* ---- end of touch controls ------------------------------------------------------------- */
+</style>
+</head>
+<body>
+<div id="stage" tabindex="0">
+  <div id="box">
+    <canvas id="vic" width="384" height="272"></canvas>
+    <canvas id="ov" width="384" height="272"></canvas>
+  </div>
+</div>
+<button id="b-fire" class="tbtn" type="button" aria-label="Fire">FIRE</button>
+<button id="b-map" class="tbtn" type="button" aria-label="Map">MAP</button>
+<button id="b-torp" class="tbtn" type="button" aria-label="Torpedo">TORP</button>
+<!--SCRIPTS-->
+</body>
+</html>

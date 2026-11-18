@@ -21,6 +21,11 @@ KEYTORP     $FDE5   ; SPACE flag: proton torpedo
 JOYBYTE     $96     ; joystick byte used everywhere
 JOYFIRE     $97     ; fire flag
 JOYIN       $02A2   ; patch: port read (replaces $B2D8)
+POTRD       $02DB   ; patch: sample SID pots and detect the mouse (called at $0B43)
+MFLAG       $004B   ; patch: bit 7 set when the mouse is absent
+OPOTX       $03FC   ; patch: previous X pot sample (or $FF when absent)
+OPOTY       $03FD   ; patch: previous inverted Y pot sample
+RCNT        $03F4   ; patch: right-button map delay / both-buttons latch
 CURSOR      $B2D8   ; patch: crosshair update area (CURSOR, CAPPLY, MOVCHK, MSYN)
 CURX        $B2D7   ; crosshair X
 CURY        $120A   ; crosshair Y

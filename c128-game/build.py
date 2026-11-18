@@ -169,6 +169,7 @@ PATCHES_COCKPIT = [
     ('MAPINHK:RTS ', 'MAPINHK:JMP MAPIN '),
     ('MAPVBHK:RTS ', 'MAPVBHK:JMP MAPVB '),
     ('TICKHK: RTS ', 'TICKHK: JMP WORLD '),
+    ('        STA CIA1PA\n        JMP frame\n', '        STA CIA1PA\n        JMP CLOCKFRAME\n'),
     ('KILLHK: RTS             ; (c128-game: the map\'s COUNT follows)\n', 'KILLHK: JMP SECKILL     ; (game)\n'),
     ('EMPTYHK:JMP SECSTART    ; standalone: the next squadron arrives (c128-game: none)\n', 'EMPTYHK:RTS             ; (game) the sector is empty now\n'),
     ('nov3:   LDA #168        ; the explosions', 'nov3:   JSR VIEWWORK    ; (game)\n        LDA #168        ; the explosions'),
@@ -312,6 +313,8 @@ def assemble():
     # Ending workspace is installed before GINIT2 consumes its $E000 staging.
     # All existing lower instructions and symbols retain their size/address.
     glue = glue.replace('JSR GINIT2      ;', 'JSR ENDINIT     ;', 1)
+    glue = patch(glue, [('        JSR GENONCE\n        JSR SHOWSEC\n',
+                         '        JSR GENONCE\n        JSR CLOCKINIT\n')], 'clock reset hook')
     cockpit = patch(cockpit, [('        STA SHIPLOST    ; ($8300)',
                                '        JSR ENDSHIPFLAG ; ($8300)')], 'ship end hook')
     cockpit = cockpit.replace('KILLHK: JMP SECKILL', 'KILLHK: JMP ENDKILL')
@@ -489,7 +492,7 @@ def ending_source(source, read):
     placeholder = '\n'.join(n+' = $0200' for n in
         ('ELREG','ENDINIT','ENDVIEW','ENDBORROW','ENDENER','ENDPROTONUSED','ENDONE',
          'ENDSECTOR','ENDHIDE','ENDSHOW','ENDKILL','ENDMSOFF','ENDSHIPFLAG','ENDPLANETFLAG','ENDBASETALLY',
-         'OVMNOFF','MNREQ','OVBASEIN'))
+         'OVMNOFF','MNREQ','OVBASEIN','CLOCKFRAME','CLOCKINIT'))
     _, sym = asm(source+'\n'+placeholder)
     packed_ranges, used = [], set()
     readonly = [(0xE960,0xEA16), (sym['MSUNPACK'],sym['MSPOS']),
@@ -739,6 +742,7 @@ def main():
             raise SystemExit(f'code from ${start:04X} ends at ${start + len(chunks[start]):04X}, past ${limit:04X}')
     assert HIGH2 + len(chunks[HIGH2]) == 0xE960
     assert symbols['ENDCOREEND'] <= 0x0C60 and symbols['ENDCOREEND'] - 0x0200 <= 0x400, 'the ending core is staged in 4 pages'
+    assert 0x0557 <= symbols['CLOCKINIT'] < symbols['ENDCOREEND'], 'the clock must fit after the ending core'
     assert symbols['ENDPKGSTART'] == ENDPKG and symbols['ENDINGEND'] <= symbols['MINEFREE'], 'the ENDING package outgrows S1'
     assert ENDPKGSTAGE + symbols['ENDPKGPAGES'] * 256 <= ENDSTAGE and len(chunks[ENDPKG]) <= symbols['ENDPKGPAGES'] * 256
     assert symbols['B1ENDING'] >= symbols['B1MINES'] + 13 * 256 and symbols['B1ENDING'] + symbols['ENDPKGPAGES'] * 256 <= 0xFF00
@@ -937,6 +941,8 @@ def main():
         f.write(bytes((LOAD & 255, LOAD >> 8)) + body)
     ends = ', '.join(f'${a:04X}-${a + len(c) - 1:04X}' for a, c in sorted(chunks.items()))
     print(f'memory left: high {symbols["MINEEND"] - symbols["MINEFREE"]} bytes (${symbols["MINEFREE"]:04X}-${symbols["MINEEND"]-1:04X}, all modes), packed {0x7680 - HIGH2SRC - len(packed)} bytes, glue {HIGH2SRC - GLUE - len(chunks[GLUE])} bytes; low stream {len(low_stream)} bytes')
+    print(f'clock: ${symbols["CLOCKINIT"]:04X}-${symbols["ENDCOREEND"]-1:04X}, '
+          f'{symbols["CLOCKDIV"]-symbols["CLOCKINIT"]} code bytes, {symbols["ENDCOREEND"]-symbols["CLOCKDIV"]} data bytes')
     print(f'ending memory: core $0200-${symbols["ENDCOREEND"]-1:04X}, {0xC60-symbols["ENDCOREEND"]} bytes free after it (to $0C5F); '
           f'ENDING package ${ENDPKG:04X}-${symbols["ENDINGEND"]-1:04X} ({symbols["ENDINGEND"]-ENDPKG} bytes), MINES ${symbols["MNSTART"]:04X}-${symbols["MNEXTRAEND"]-1:04X}; '
           f'overlay manager ${symbols["OVBASE"]:04X}-${symbols["OVEND"]-1:04X}, {0x1C00-symbols["OVEND"]} bytes free after it; '
