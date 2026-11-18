@@ -189,7 +189,7 @@ var SentinelVideo = (function () {
     for (var s = 7; s >= 0; s--) {
       if (!(v[0x15] & (1 << s))) continue;
       var sy = v[s * 2 + 1], ye = (v[0x17] >> s) & 1;
-      var dy = (raster - sy) & 0xFF;          // wraps like the 8-bit compare
+      var dy = (raster - sy - 1) & 0xFF;      // the Y match arms DMA for the following line
       if (dy >= (ye ? 42 : 21) || raster > 300) continue;
       var row = ye ? dy >> 1 : dy;
       var data = bank + this.ptrs[ptrBase + s] * 64 + row * 3;

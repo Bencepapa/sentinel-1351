@@ -348,6 +348,8 @@ OVENDWINBEGIN:JSR OVENDING
         JMP ENDWINBEGIN
 OVENDWINTEXT:JSR OVENDING
         JMP ENDWINTEXT
+OVENDRESET:JSR OVENDING
+        JMP ENDRESET
 ENDTRAMPEND:
 ENDMODE:.BYTE 0
 ENDWIN:.BYTE 0
@@ -386,11 +388,15 @@ CLOCKINIT:              ; g_gi9 is shared by cold start and ENDRESET2
         STA HUDTIME+4
         LDA #$6E
         STA HUDTIME+2
-        JMP SHOWSEC
+        JMP MISSIONINIT
 CLOCKFRAME:
         ; The old frame's work has crossed raster line 0. Tick in the new
         ; frame's top border, before the HUD fetch and after any ending check.
-        JSR CLOCKTICK   ; a future pause can skip this tick without losing its phase
+        JSR FKEYFRAME
+        LDA PAUSED
+        BNE clock_frame
+        JSR CLOCKTICK
+clock_frame:
         JMP frame
 CLOCKTICK:
         LDA ENDMODE
@@ -434,6 +440,13 @@ clock_blink:
 CLOCKDIV:  .BYTE 60
 CLOCKHOURS:.BYTE 0
 CLOCKLIMIT:.BYTE $76,$7A,0,$76,$7A
+CLOCKEND:
+; FUNCTIONKEYDATA
+; The original arms the normal noise burst at $322C during warp entry.
+HENGARM:LDA #$02
+        STA ENGC        ; the strip ticks once before the first cruise frame
+        JMP SNDRUSH
+HENGEND:
 ENDCOREEND:
 
 ; ---------------- the ENDING package (S1, overlay.asm) ----------------
@@ -462,7 +475,18 @@ eu_dest:JSR ELREAD
         STA CDST
         JSR ELREAD
         STA CDST+1
+        BEQ eu_end
+        LDA ENDRANKHALT
+        BEQ eu_token
+        LDA CDST
+        CMP #<ENDRANKHALF
         BNE eu_token
+        LDA CDST+1
+        CMP #>ENDRANKHALF
+        BNE eu_token
+        LDA #0
+        STA ENDRANKHALT
+eu_end:
         RTS
 eu_put: LDY #0
         STA (CDST),Y
@@ -683,11 +707,18 @@ end_keylo:
         LDA #1
         RTS
 end_readbutton:
+        JSR FKEYREAD
+        CMP #FKEYF7
+        BEQ end_buttondone
         LDA #$FF
         STA $DC00
         LDA $DC00
         AND #$10
 end_tickdone:RTS
+end_buttondone:
+        STA FKEYLAST
+        LDA #0
+        RTS
 ENDRESET:
         JSR ENDHIDE
         LDA #>ENDB1SNAP
@@ -808,11 +839,11 @@ ew_text:
         DEX
         BNE ew_rank
         DEC ENDTIME     ; 1: a number or the rank into the text a frame; rows 4-14 hidden
-        LDA $D012       ; (a job begun late, the rank names' 114 lines, ran over the
-        CMP #ENDJOBLINE ; gray strip's split: the next frame)
+        LDA $D012       ; leave time for a number or one batch of rank names
+        CMP #ENDJOBLINE
         BCS ew_print
         LDX ENDJOB
-        CPX #8
+        CPX #9
         BCS ew_print
         INC ENDJOB
         JSR ENDJOBX
@@ -896,14 +927,22 @@ es_glyph:JSR ENDCHAR
         JMP es_next
 es_late:CLC
 es_done:RTS
-; X = 0-5: the number of bitmap row 8 + X into the text ($D505), 6: the rank
-; names from bank 1, 7: the rank.
+; X = 0-5: the numbers, 6-7: two batches of rank names, 8: the rank row.
 ENDJOBX:
         CPX #6
         BCC ENDNUMBER
-        BNE ej_rankrow
+        BNE ej_second
+        LDA #1
+        STA ENDRANKHALT
         LDA #>ENDVRANKS
         LDX #<ENDVRANKS
+        JMP ej_unpack
+ej_second:
+        CPX #7
+        BNE ej_rankrow
+        LDA #>ENDVRANKHALF
+        LDX #<ENDVRANKHALF
+ej_unpack:
         JSR ELVADR
         JMP ENDUNPACK
 ej_rankrow:
@@ -1119,6 +1158,7 @@ ENDRPROTON:.BYTE 0,0
 ENDSHOTS:.BYTE 0,0
 ENDSCORE:.BYTE 0,0,0
 ENDJOB:.BYTE 0
+ENDRANKHALT:.BYTE 0
 ENDCHARN:.BYTE 0
 ENDCHAREND:.BYTE 0
 ENDK:   .BYTE 0

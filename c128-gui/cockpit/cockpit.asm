@@ -5068,7 +5068,7 @@ sd7:    CLC
 ; every 6th frame. The rush lowers its pitch between bursts (CLOSEIN).
 ENGTICK:LDA ENGON
         BEQ en9
-        DEC ENGC
+ENGBURST:DEC ENGC
         BNE en9
         LDA #$06
         STA ENGC

@@ -50,6 +50,7 @@
   var store = new HI.Store(safeStorage());
   var sel = 0;
   var speed = 1, fast = false, last = 0, pacer = new SentinelPacing.Pacer();
+  var blurred = false, pauseFrames = 0;
   var noLock = false;                       // pointer lock refused: use the plain pointer
   var touch = false;
 
@@ -116,13 +117,14 @@
   // ---- starting a game ---------------------------------------------------------------
 
   function startGame(name, viaPointer) {
+    pauseFrames = 0;
     progName = name;
     prog = SENTINEL_PROGRAMS[name];
     m = new C128(prog.model);
     m.loadPrg(base64(prog.prg));
     m.dma = CONFIG.dma;
     hooks = new SentinelHooks(m, prog.symbols);
-    input = new SentinelInput(m, name === 'c64game' ? hooks : null, showInputMode);
+    input = new SentinelInput(m, hooks, showInputMode);
     if (name === 'c64game') hooks.fixC64Original();
     watcher = HI.watch(m, hooks, name, prog.symbols, onGameOver);
     m.start(prog.entry);
@@ -159,6 +161,7 @@
     requestAnimationFrame(tick);
     var dt = last ? Math.min(t - last, 250) : 0; last = t;
     if (scene !== 'game' || !m) { pacer.reset(); overlay.draw(); return; }
+    if (blurred || document.hidden) { pacer.reset(); return; }
     var ran = pacer.tick(dt, { speed: speed, isFast: function () { return fast; }, frame: oneFrame, now: function () { return performance.now(); }, budgetMs: 14 }).ran;
     if (ran && m) { px.set(m.video.px); ctx.putImageData(img, 0, 0); }
     overlay.draw();
@@ -166,9 +169,17 @@
 
   // One emulated frame. False when the program has stopped (the page goes back to the selector).
   function oneFrame() {
+    if (pauseFrames) {
+      input.release();
+      setKeyCode('F1', true);
+    }
     input.feed();
     var r = m.run();
     if (r === 'frame') {
+      if (pauseFrames && (m.ram[prog.symbols.PAUSED ?? 0x9f] || --pauseFrames === 0)) {
+        pauseFrames = 0;
+        setKeyCode('F1', false);
+      }
       if (!fast && speed === 1) audio.frame(m, audioFrame++ * 19656);
       return true;
     }
@@ -493,8 +504,20 @@
     if (m) { m.keys.fill(0); input.release(); }
     ['fire', 'map', 'torp'].forEach(function (n) { $('b-' + n).classList.remove('down'); });
   }
-  window.addEventListener('blur', releaseAll);
-  document.addEventListener('visibilitychange', function () { if (document.hidden) releaseAll(); else last = 0; });
+  function backgroundGame() {
+    releaseAll();
+    if (scene === 'game' && m && !m.ram[prog.symbols.PAUSED ?? 0x9f]) {
+      pauseFrames = 8;
+      while (m && pauseFrames && oneFrame()) { /* let the native keyboard scan latch F1 */ }
+    }
+    audio.silence();
+  }
+  window.addEventListener('blur', function () { blurred = true; backgroundGame(); });
+  window.addEventListener('focus', function () { blurred = false; last = 0; });
+  document.addEventListener('visibilitychange', function () {
+    if (document.hidden) backgroundGame();
+    else { blurred = !document.hasFocus(); last = 0; }
+  });
 
   // ---- go --------------------------------------------------------------------------------------
 

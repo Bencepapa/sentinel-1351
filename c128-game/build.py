@@ -166,12 +166,36 @@ PATCHES_COCKPIT = [
      '        JMP nomap\nnomapk: LDA #$00\n        STA CPREV\n'
      'nomap:  LDA #$BF        ; port 2 pots for the next frame\n'),
     # the hooks
+    ('INPUT:  JSR POTS', 'INPUT:  JSR GPOTS'),
     ('MAPINHK:RTS ', 'MAPINHK:JMP MAPIN '),
     ('MAPVBHK:RTS ', 'MAPVBHK:JMP MAPVB '),
     ('TICKHK: RTS ', 'TICKHK: JMP WORLD '),
     ('        STA CIA1PA\n        JMP frame\n', '        STA CIA1PA\n        JMP CLOCKFRAME\n'),
+    ('        JSR FIREPH      ; the phasors,', '        JSR FKEYVIEW    ; the phasors,'),
+    ('        LDA #194\n        JSR WAITLN\n', 'fkey_guns:LDA #194\n        JSR WAITLN\n'),
+    ('        JSR SPRGUNS     ; sprites 0 and 3 become the two guns\n        JSR SWEEPSND\n',
+     '        JSR SPRGUNS     ; sprites 0 and 3 become the two guns\n        JSR FKEYGUNS\n'),
+    ('        LDA #230\n        JSR WAITLN\n', 'fkey_strip:LDA #230\n        JSR WAITLN\n'),
+    ('        JSR SWEEPSND\n        LDA #242', '        JSR FKEYSWEEP\n        LDA #242'),
+    ('        JSR INPUTV      ; vertical blank:', '        JSR FKEYINPUT   ; vertical blank:'),
     ('KILLHK: RTS             ; (c128-game: the map\'s COUNT follows)\n', 'KILLHK: JMP SECKILL     ; (game)\n'),
     ('EMPTYHK:JMP SECSTART    ; standalone: the next squadron arrives (c128-game: none)\n', 'EMPTYHK:RTS             ; (game) the sector is empty now\n'),
+    ('        JSR EMPTYHK\n', '        JSR SECTORNOTICE\n'),
+    ('        LDA #$01\n        STA APPR\n        STA RELAYOUT\n        LDA #$00\n        STA APRUN\n        LDA #$0F\n',
+     '        LDA #$01\n        JSR GROUPNOTICE\n        STA RELAYOUT\n        LDA #$00\n        STA APRUN\n        LDA #$0F\n'),
+    ('        JSR SHIPHIT     ; ($84D7)\n', '        JSR MISSIONHIT  ; ($84D7)\n'),
+    ('        JMP TRKMSG\n', '        JMP TRACKNOTICE\n'),
+    ('        JMP ALERT       ;', '        JMP APPROACHNOTICE ;'),
+    ('arr2:   JSR SECALERT    ;', 'arr2:   JSR ENTERNOTICE  ;'),
+    ('        JSR SHOWTG\n        LDA SQCOUNT\n        BNE arr2\n',
+     '        JSR EMPTYROW\n        LDA SQCOUNT\n        BNE arr2\n'),
+    ('        STA APDLY\n        JSR LRCLEAR\narr9:', '        STA APDLY\n        JSR HREADCLEAR\narr9:'),
+    ('        JSR BLIPPOS\n        JSR LRCLEAR\n', '        JSR BLIPPOS\n        JSR HREADCLEAR\n'),
+    ('lr7:    LDA #$7B        ; ($3839) the readings: X (side), Y (up), Z (depth)\n        STA LRROW+9\n',
+     'lr7:    JSR SCANROW\n        NOP\n        NOP\n'),
+    ('        STA LRROW+13\n', '        JSR SCANZEROX\n'),
+    ('        STA LRROW+21\n', '        JSR SCANZEROY\n'),
+    ('stinit: JSR NEWSTAR\n        JSR PLOTSTAR\n', 'stinit: JSR NEWSTAR\n        JSR STARTPLOT\n'),
     ('nov3:   LDA #168        ; the explosions', 'nov3:   JSR VIEWWORK    ; (game)\n        LDA #168        ; the explosions'),
     # the RAM under the KERNAL is the game's: $C000-$CFFF holds code (HIGH)
     ('        LDA #$0E        ; bank 0 RAM + I/O + KERNAL ROM\n', '        LDA #$3E        ; (game) bank 0 RAM + I/O, RAM under the KERNAL too\n'),
@@ -291,7 +315,7 @@ def assemble():
                             'VDCMSG: LDA GBTCOUNT\n        BEQ vmret')
     # Same five bytes, same idle path (LDA/BEQ/RTS); active events drain one per tick.
     mapsrc = mapsrc.replace('        LDA LASTMSG\n        BEQ vmret',
-                            '        JMP GBTEXT\n        NOP\n        NOP')
+                            '        JMP GBTGATE\n        NOP\n        NOP')
     mapsrc = prefix_map(mapsrc)
     # Same-size raster slots; repair rewrites these only while docked.
     cockpit = cockpit.replace('        LDA #$3B        ; multicolor bitmap:', 'MRMODE: LDA #$3B        ; multicolor bitmap:')
@@ -415,7 +439,9 @@ def audit_s1(symbols):
             # The base sequence after MSECTOR's check: MSVIEW's JMP MNVIEW (MSSTATE 16), and MSPOS
             # (called only from MINES) into MINES' helpers.
             in_sequence = value in (symbols['MNVIEW'], symbols['MNPASS'], symbols['MNSTEER'], symbols['MNREAD']) and                 symbols['MSVIEW'] <= pc < symbols['MSPOSEND']
-            tramp = symbols['OVTRAMP'] <= pc < symbols['OVTRAMPEND'] or symbols['ENDTRAMP'] <= pc < symbols['ENDTRAMPEND']
+            tramp = any(symbols[start] <= pc < symbols[end] for start, end in
+                        (('OVTRAMP', 'OVTRAMPEND'), ('ENDTRAMP', 'ENDTRAMPEND'),
+                         ('FKEYTUNNEL', 'FKEYTUNNELEND')))
             if not init_only and not in_sequence and not tramp:
                 bad.append(f'${pc:04X} {mn} ${value:04X}')
     if bad:
@@ -456,6 +482,9 @@ def ending_source(source, read):
               'ENDRATING: JMP er_f440',
               'ENDVICTORY: .BYTE 0']
     text = read('c128-game', 'ending.asm').replace('; ENDRATINGDATA', '\n'.join(lines))
+    text = text.replace('ENDCOREEND:', read('c128-game', 'controllers.asm') + '\n'
+                        + read('c128-game', 'mission-messages.asm') + '\nENDCOREEND:')
+    text = text.replace('; FUNCTIONKEYDATA', read('c128-game', 'function-keys.asm'))
     for name, value in [('ENDDEATHTEXT', ' THE BATTLE IS OVER'),
                         ('ENDLOSTTEXT', '  JARALOBA IS LOST')]:
         text = text.replace('; '+name+'DATA', '.BYTE '+','.join(map(str, value.encode()+b'\0')))
@@ -492,7 +521,11 @@ def ending_source(source, read):
     placeholder = '\n'.join(n+' = $0200' for n in
         ('ELREG','ENDINIT','ENDVIEW','ENDBORROW','ENDENER','ENDPROTONUSED','ENDONE',
          'ENDSECTOR','ENDHIDE','ENDSHOW','ENDKILL','ENDMSOFF','ENDSHIPFLAG','ENDPLANETFLAG','ENDBASETALLY',
-         'OVMNOFF','MNREQ','OVBASEIN','CLOCKFRAME','CLOCKINIT'))
+         'OVMNOFF','MNREQ','OVBASEIN','CLOCKFRAME','CLOCKINIT','FKEYVIEW','FKEYGUNS',
+         'FKEYSWEEP','FKEYINPUT','FKEYREPAIR','GPOTS','GMAPPOTS','GMAPCENTER','GMAPBUTTONS','HENGARM',
+         'SECTORNOTICE','GROUPNOTICE','MISSIONHIT','MISSIONBASEOFF','MISSIONREPAIRED','STARTPLOT',
+         'TRACKNOTICE','APPROACHNOTICE','ENTERNOTICE','HREAD','HREADCLEAR','GBTGATE','EMPTYROW',
+         'SCANROW','SCANZEROX','SCANZEROY'))
     _, sym = asm(source+'\n'+placeholder)
     packed_ranges, used = [], set()
     readonly = [(0xE960,0xEA16), (sym['MSUNPACK'],sym['MSPOS']),
@@ -518,9 +551,12 @@ def ending_source(source, read):
     win = bytes(ref['win']) + b' '*20
     assert len(win) == 240
     masters = display_masters()
-    # One stream: the reports, then the rank names (the victory starts there).
-    reports_stream = rle_stream([(ENDHEADS, reports), (ENDHEADS+420, ranks)])
+    # Death reads the whole stream. Victory reads the two rank batches on separate frames.
+    rank_text = ENDHEADS + 420
+    rank_half = rank_text + 56
+    reports_stream = rle_stream([(ENDHEADS, reports), (rank_text, ranks[:56]), (rank_half, ranks[56:])])
     ranks_at = len(rle_stream([(ENDHEADS, reports)])) - 3
+    rank_half_at = len(rle_stream([(ENDHEADS, reports), (rank_text, ranks[:56])])) - 3
     payload = win + reports_stream + rle_stream([(0x4400, masters[0]), (0x7680, masters[1])])
     pages = (len(payload)+255)//256
     # Spend spare bytes on the gaps between states: fewer descriptors leave more
@@ -564,7 +600,8 @@ def ending_source(source, read):
         descriptors += [a&255,a>>8,n&255,n>>8]
     # Bank-1 addresses (bank1.asm): the snapshot at ENDB1SNAP, the payload after it.
     constants = {'ENDSTAGE': ENDSTAGE, 'ENDPKGSTAGE': ENDPKGSTAGE, 'ENDPKG': ENDPKG, 'ENDBPAY': vpay, 'ENDVTEXT': vpay, 'ENDVRANK': vpay+220,
-                 'ENDVHEAD': vpay+240, 'ENDVRANKS': vpay+240+ranks_at, 'ENDRANKTEXT': ENDHEADS+420, 'ENDVMASTER': vpay+240+len(reports_stream),
+                 'ENDVHEAD': vpay+240, 'ENDVRANKS': vpay+240+ranks_at, 'ENDVRANKHALF': vpay+240+rank_half_at,
+                 'ENDRANKTEXT': rank_text, 'ENDRANKHALF': rank_half, 'ENDVMASTER': vpay+240+len(reports_stream),
                  'ENDPAYPAGES': pages, 'ENDB1END': vpay+pages*256, 'ENDB1SNAP': ENDB1SNAP, 'ENDB1SNAPEND': ENDB1SNAP+snapshot,
                  'ENDPAYLEN': len(payload), 'ENDHEADS': ENDHEADS, 'B1INITAT': ENDSTAGE+pages*256}
     # (the constants first: the package's origin, * = ENDPKG, needs ENDPKG defined)
@@ -576,8 +613,8 @@ ENDHEADS = 0x4900           # hidden text-screen rows 6-16 while an ending runs
 ENDVDCRESERVE = 0           # bytes kept free; the rest bridges the smallest snapshot gaps
 ENDB1SNAP = 0x2C00          # bank 1: the reset snapshot, then the payload (bank1.asm)
 ENDPKG = 0xE970             # the ENDING package's run address in S1 (ending.asm)
-ENDPKGSTAGE = 0xE400        # load-time staging: the core at $E000, the package, the payload
-ENDSTAGE = 0xEE00
+ENDPKGSTAGE = 0xE900        # load-time staging: the core at $E000, the package, the payload
+ENDSTAGE = 0xF100
 ENDB1LIMIT = 0x6400         # bank 1: the first byte after the snapshot and payload area (B1STREAM)
 S1BASE, S1END = 0xE960, 0xF6F9   # the slot (overlay.asm)
 PAYLOAD = bytearray()
@@ -741,8 +778,10 @@ def main():
         if start + len(chunks[start]) > limit:
             raise SystemExit(f'code from ${start:04X} ends at ${start + len(chunks[start]):04X}, past ${limit:04X}')
     assert HIGH2 + len(chunks[HIGH2]) == 0xE960
-    assert symbols['ENDCOREEND'] <= 0x0C60 and symbols['ENDCOREEND'] - 0x0200 <= 0x400, 'the ending core is staged in 4 pages'
-    assert 0x0557 <= symbols['CLOCKINIT'] < symbols['ENDCOREEND'], 'the clock must fit after the ending core'
+    assert symbols['ENDCOREEND'] <= 0x0C60
+    assert symbols['CLOCKEND'] <= symbols['HENGARM'] < symbols['HENGEND'] <= symbols['ENDCOREEND']
+    assert symbols['ENDCOREEND'] - 0x0200 <= ENDPKGSTAGE - 0xE000 == symbols['ENDCOREPAGES'] * 256, 'resident core staging overlaps ENDING'
+    assert 0x0557 <= symbols['CLOCKINIT'] < symbols['CLOCKEND'] <= symbols['ENDCOREEND'], 'the clock must fit after the ending core'
     assert symbols['ENDPKGSTART'] == ENDPKG and symbols['ENDINGEND'] <= symbols['MINEFREE'], 'the ENDING package outgrows S1'
     assert ENDPKGSTAGE + symbols['ENDPKGPAGES'] * 256 <= ENDSTAGE and len(chunks[ENDPKG]) <= symbols['ENDPKGPAGES'] * 256
     assert symbols['B1ENDING'] >= symbols['B1MINES'] + 13 * 256 and symbols['B1ENDING'] + symbols['ENDPKGPAGES'] * 256 <= 0xFF00
@@ -913,7 +952,7 @@ def main():
     p(HIGH2SRC, packed)
     # Consumed by ENDINIT before the high decoder overwrites this staging.
     # Native LOAD can reach the whole payload (never beyond $FF00).
-    p(0xE000, chunks[0x0200])           # ENDINIT copies 4 pages to $0200
+    p(0xE000, chunks[0x0200])           # ENDINIT copies the core to $0200
     p(ENDPKGSTAGE, chunks[ENDPKG])      # B1INIT puts it into bank 1 (B1ENDING)
     # Then the ending payload, which B1INIT puts into bank 1 before GINIT2.
     assert symbols['ENDSTAGE'] == ENDSTAGE and len(PAYLOAD) == symbols['ENDPAYPAGES'] * 256
@@ -941,8 +980,8 @@ def main():
         f.write(bytes((LOAD & 255, LOAD >> 8)) + body)
     ends = ', '.join(f'${a:04X}-${a + len(c) - 1:04X}' for a, c in sorted(chunks.items()))
     print(f'memory left: high {symbols["MINEEND"] - symbols["MINEFREE"]} bytes (${symbols["MINEFREE"]:04X}-${symbols["MINEEND"]-1:04X}, all modes), packed {0x7680 - HIGH2SRC - len(packed)} bytes, glue {HIGH2SRC - GLUE - len(chunks[GLUE])} bytes; low stream {len(low_stream)} bytes')
-    print(f'clock: ${symbols["CLOCKINIT"]:04X}-${symbols["ENDCOREEND"]-1:04X}, '
-          f'{symbols["CLOCKDIV"]-symbols["CLOCKINIT"]} code bytes, {symbols["ENDCOREEND"]-symbols["CLOCKDIV"]} data bytes')
+    print(f'clock: ${symbols["CLOCKINIT"]:04X}-${symbols["CLOCKEND"]-1:04X}, '
+          f'{symbols["CLOCKDIV"]-symbols["CLOCKINIT"]} code bytes, {symbols["CLOCKEND"]-symbols["CLOCKDIV"]} data bytes')
     print(f'ending memory: core $0200-${symbols["ENDCOREEND"]-1:04X}, {0xC60-symbols["ENDCOREEND"]} bytes free after it (to $0C5F); '
           f'ENDING package ${ENDPKG:04X}-${symbols["ENDINGEND"]-1:04X} ({symbols["ENDINGEND"]-ENDPKG} bytes), MINES ${symbols["MNSTART"]:04X}-${symbols["MNEXTRAEND"]-1:04X}; '
           f'overlay manager ${symbols["OVBASE"]:04X}-${symbols["OVEND"]-1:04X}, {0x1C00-symbols["OVEND"]} bytes free after it; '

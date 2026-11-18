@@ -69,11 +69,13 @@ MAPKEY: LDA CIA1PB
         AND #$20
         BEQ g_mk9
         LDA MPRES
-        ORA M_MPRES
+        NOP
+        NOP
+        NOP
         BEQ g_mk8
         LDA #$FF        ; port 2: the right button is wired to UP
         STA CIA1PA
-        LDA CIA1PA
+        JSR GMAPBUTTONS
         AND #$11
         BEQ g_mk3       ; both
         CMP #$10
@@ -132,12 +134,10 @@ MAPOPEN:LDA M_SELX      ; where a jump would start
         STA DRX
         LDA #$00
         STA PTON        ; (the pointer once the map's cursor is there)
-        LDA POTX        ; the map's mouse starts from here
-        STA M_OLDX
-        LDA POTY
-        EOR #$FF
-        STA M_OLDY
-        LDA #15         ; the view is wiped a row a frame, then the map starts
+        JSR GMAPCENTER ; start from the currently highlighted sector
+        JMP g_mowipe
+        .BYTE 0,0,0,0,0,0,0,0
+g_mowipe:LDA #15        ; the view is wiped a row a frame, then the map starts
         STA WIPE
         RTS
 
@@ -149,12 +149,9 @@ MAPCLOSE:
         STA MAPPRIO
         STA $D404       ; the map's beeps
         STA $D40B
-        LDA POTX        ; the crosshair's mouse starts from here
-        STA OLDX
-        LDA POTY
-        EOR #$FF
-        STA OLDY
-        LDA #15         ; the view is wiped back a row a frame (then the stars)
+        JMP g_mcwipe   ; the cockpit and map now share one POT baseline
+        .BYTE 0,0,0,0,0,0,0,0,0,0,0
+g_mcwipe:LDA #15        ; the view is wiped back a row a frame (then the stars)
         STA WIPE
         LDA APPR        ; the scanner's row, if it is in use
         BEQ g_mc3
@@ -498,15 +495,12 @@ g_fb3:  CLC
         LDA FRH
         ADC FOFH,X
         STA CDST+1
-        LDY FMI,X
-        LDA FCLR,Y
-        STA FT
-        LDA FSET,Y
         LDY #$00
-        STA FK2
         LDA (CDST),Y
-        AND FT
-        ORA FK2
+        LDY FMI,X
+        AND FCLR,Y
+        ORA FSET,Y
+        LDY #$00
         STA (CDST),Y
         DEX
         BPL g_fb3
@@ -514,6 +508,7 @@ g_fb3:  CLC
         DEC FK
         BNE g_fb2
         RTS
+        .BYTE 0,0,0,0,0,0,0,0,0,0 ; keep FHROW and the rest of the glue in place
 FHROW:  JSR FROW        ; 13 pixels from FX1: the address once, then along
         LDA FX1
         LSR A
@@ -637,7 +632,7 @@ g_ds7:  RTS
 
 ; The map's input while it is open: the mouse / joystick move its cursor, fire on
 ; another sector jumps there.
-MAPIN:  JSR M_POTS
+MAPIN:  JSR GMAPPOTS
         LDA #$FF        ; port 2: joystick / mouse buttons
         STA CIA1PA
         LDA CIA1PA
@@ -782,7 +777,7 @@ shpj:   BIT GSHLOAD     ; a BIT that costs a fight's tight frame only 4 cycles)
 g_vw1:  JSR HVIEW
         JSR HYPVIEW
         JSR MVSTEP
-        JMP ARRSTEP
+missionjump:JMP ARRSTEP
 
 ; Six sectors a frame of the squadrons' move (the map's MOVEPASS, in steps).
 MVSTEP: LDA MVON
@@ -1420,7 +1415,7 @@ g_sg1:  STA SQCOUNT
         LDA #$01        ; (the radar's mode in the vertical blank: in the view's
         STA LRMODE      ; time it ran late)
         STA HVBJ
-        JSR LRCLEAR
+        JSR HREADCLEAR
         LDA SQCOUNT
         BEQ g_sg2
         LDA #$01        ; laying out
@@ -1436,7 +1431,7 @@ g_sg2:  LDA #$00        ; empty: no groups, the readings 0
         STA ENZ+1
         LDA #$02
         STA HSCAN
-        JMP lr7
+        JMP HREAD
 
 ; The jump's frame: the layout's end, positioning ($9A95, every 2 passes: about
 ; 1.4 a frame), the readings ($3776, every 16 passes: every 6 frames).
@@ -1472,7 +1467,7 @@ g_sf4:  DEC HRDC
         BPL g_sf9
         LDA #$05
         STA HRDC
-        JMP lr7         ; (the readings only: no blip, fire does not choose)
+        JMP HREAD       ; (the readings only: no blip, fire does not choose)
 g_sf9:  RTS
 
 ; Positioning ($9A95): the stick moves every group: up / down its depth by $40
@@ -2341,7 +2336,7 @@ g_hv11: LDA #10         ; energy: a unit every 10 frames
         JSR HDIGITS
         LDA #$00        ; the engine's pitch holds ($B567); the rush ($1349)
         STA HESTP
-        JSR SNDRUSH
+        JSR HENGARM
         JMP HSCANGO
 g_hv20: JSR HSCANF      ; 2: the jump: the scanner, positioning
         JSR HMFRAME     ; the meteors, dodging, the deflector
@@ -2434,7 +2429,7 @@ g_hv9:  RTS
 HYPMVB: LDA HSHIPP      ; a meteor's hit on the ship (too long for the view's time)
         BEQ g_hmh
         DEC HSHIPP
-        JMP SHIPHIT
+        JMP MISSIONHIT
 g_hmh:  LDA HMAP        ; the planet turns while the map is there
         BEQ g_hm9
         JSR M_PLANET
@@ -4226,7 +4221,7 @@ MSOFF:
         LDA #>GSHLOAD
         STA shpj+2
         LDA #$2C
-        STA shpj
+        JSR MISSIONBASEOFF
         RTS
 g_ms0:  STA MSKIND
         JSR MSPOSON
@@ -4923,7 +4918,7 @@ MRVIEW:LDA $D012
         CMP #11
         BCC g_mrrun
         JMP MRCLEAN
-g_mrrun:JSR MRREPAIR    ; advance the frame clock before optional noise work
+g_mrrun:JSR FKEYREPAIR  ; advance the repair before optional noise work
         JMP MRNOISE
 g_mrout:RTS
 MBEAM:  JSR MBDEAD
@@ -5217,7 +5212,7 @@ g_mrproton:LDA MRPHUND
         LDA #$70
         STA $485A
         STA $485B
-g_mrship:JSR SHIPINIT
+g_mrship:JSR MISSIONREPAIRED
         LDA #$3B
         STA MRMODE+1
         LDX #7
@@ -5803,7 +5798,7 @@ MBDEAD: BIT $D011
         LDA $D012
         CMP #243
         BCC g_mbdret
-g_mbdvb:LDA #24
+g_mbdvb:LDA #25         ; recover one beam-work line after controller and key polling
         JSR TLATE
         LDA #0
         BCC g_mbdret

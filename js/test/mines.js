@@ -156,11 +156,15 @@ module.exports=function({boot,run,check,snap,fs,path,ROOT,OUT}) {
     const raw=fs.readFileSync(path.join(ROOT,'../c128-gui/ref/sprites-4800.bin')).subarray(65*64,77*64);
     check(Buffer.from(A.subarray(0x6000,0x6300)).equals(raw),
       `game: ${kind.toString(16)} all twelve decoded mine shapes match the original asset bytes`);
+    // Direct calls advance the raster while restoring the caller's PC.
+    // Keep the live DMA run at the same frame boundary as before the probes.
+    const live = m.saveState();
     for(let i=0;i<12;i++){m.cpu.x=i;call(m,S.NEWSTAR);}
     check([...A.subarray(S.STARY,S.STARY+12)].every(y=>y===105),
       'game: minefield stars are born on original $F1E5 horizontal line y=105');
     A[S.FLATCH]=1;A[S.JOYG]=0xF0;call(m,S.MNVB);
     check(A[S.SHX]===0&&A[S.SHY]===0,'game: alignment lock suppresses star steering on both axes');
+    m.loadState(live);
     A[S.FLATCH]=0;A[S.ENX+1]=0xA0;A[S.ENZ+1]=0x94;
     for(let f=0;f<1200;f++) {
       m.runFrame();if(f===600)snap(m,kind===0x80?'minefield-enemy':'minefield-friendly');writes+=late(m);hit ||= A[S.SHLD]<start;
@@ -174,8 +178,8 @@ module.exports=function({boot,run,check,snap,fs,path,ROOT,OUT}) {
       `game: ${kind.toString(16)} mines hand over to rings and restore every borrowed/protected asset`);
     for(let f=0;f<45;f++) {
       m.runFrame();writes+=late(m);
-      m.cpu.x=0;call(m,S.NEWSTAR);
     }
+    m.cpu.x=0;call(m,S.NEWSTAR);
     check(A[S.STARY]===105&&A[S.MSSTATE]>=2&&A[S.MSSTATE]<4,
       `game: ${kind.toString(16)} star birth band persists through visible rings`);
     call(m,S.MSOFF);

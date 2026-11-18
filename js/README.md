@@ -95,11 +95,11 @@ logic); `itch.py` builds it. It works inside itch's iframe (sizes to the frame, 
 gesture, keyboard focus on click) and adds no full-screen button (itch has its own).
 
 ```text
-python js/itch.py           # js/dist/itch.html (one file, ~235 KB) and js/dist/itch.zip (index.html inside)
+python js/itch.py           # js/dist/itch.html (self-contained)
 python js/itch.py --dev     # also js/itch-dev.html, loading src/*.js (serve js/ with a static server)
 ```
 
-Upload `js/dist/itch.zip` as an HTML project ("This file will be played in the browser"); a 960 x 680 viewport
+Upload `js/dist/itch.html` as an HTML project ("This file will be played in the browser"); a 960 x 680 viewport
 fits the picture (384:272), tick "Mobile friendly" if wanted. `itch.py` embeds only the two programs and the labels the
 page uses from `programs.js` (run `python js/build.py` first when the programs changed; the pre-commit hook does both).
 
@@ -177,7 +177,7 @@ when the tab becomes visible; frames are only sent while it runs. `audio.kind` s
 ```text
 python js/build.py          # rebuild the C128 tests, export PRGs + symbols to js/programs.js
 python js/bundle.py         # js/index.html (separate scripts) and js/dist/sentinel.html (one file)
-python js/itch.py           # js/dist/itch.html and itch.zip, the itch.io page
+python js/itch.py           # js/dist/itch.html, the itch.io page
 node js/test/run.js         # headless checks, PNG snapshots in js/test/out
 ```
 

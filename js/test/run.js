@@ -2000,19 +2000,30 @@ require('./mine-parity')({boot,run,check,fs,path,OUT});
   B.fill(0,BS.M_ENGC,BS.M_ENGC+5); B.fill(0,BS.M_DEAD,BS.M_DEAD+5);
   for(let i=0;i<4;i++){B[BS.M_STATE+B[BS.M_GRP+i]]=1;B[BS.M_COUNT+B[BS.M_GRP+i]]=1;}
   B[BS.M_STATE+12]=0xFF;
-  let texts=[];
-  call(BM,BS.M_SURROUND);call(BM,BS.M_VDCMSG);texts.push(row(BM,BS));
-  B[BS.M_ENGC]=1;call(BM,BS.M_SURROUND);call(BM,BS.M_VDCMSG);texts.push(row(BM,BS));
+  let texts=[], waited=true;
+  const nextBattle=()=>{
+    call(BM,BS.M_SURROUND);
+    if(B[BS.MSGON]){
+      const active=row(BM,BS), pending=B[BS.GBTCOUNT];
+      call(BM,BS.M_VDCMSG);
+      waited &&= row(BM,BS)===active && B[BS.GBTCOUNT]===pending;
+      B[BS.MSGCD]=B[BS.MSGN]=1;call(BM,BS.MSGTICK);
+    }
+    call(BM,BS.M_VDCMSG);texts.push(row(BM,BS));
+  };
+  nextBattle();
+  B[BS.M_ENGC]=1;nextBattle();
   for(let i=16;i<20;i++){B[BS.M_STATE+B[BS.M_GRP+i]]=1;B[BS.M_COUNT+B[BS.M_GRP+i]]=1;}
-  call(BM,BS.M_SURROUND);call(BM,BS.M_VDCMSG);texts.push(row(BM,BS));
-  B[BS.M_ENGC4]=1;call(BM,BS.M_SURROUND);call(BM,BS.M_VDCMSG);texts.push(row(BM,BS));
-  check(texts.join('|')==='MOTHERSHIP ENGAGED IN BATTLE|MOTHERSHIP DESTROYED|JARALOBA IS SURROUNDED|JARALOBA CEASES TO EXIST'&&B[BS.M_VDCON]===0,
-    `battle messages: all four events appear on the cockpit with VDC off (${texts.join('; ')})`);
+  nextBattle();
+  B[BS.M_ENGC4]=1;nextBattle();
+  check(waited&&texts.join('|')==='MOTHERSHIP ENGAGED IN BATTLE|MOTHERSHIP DESTROYED|JARALOBA IS SURROUNDED|JARALOBA CEASES TO EXIST'&&B[BS.M_VDCON]===0,
+    `battle messages: all four events wait their turn with VDC off (${texts.join('; ')})`);
   check(B[BS.MSGCOL]===0x87&&B[BS.MSGRATE]===15&&B[BS.MSGN]===15&&B[BS.SNDHI0]===0x1E&&!B[BS.SHIPLOST],
     'battle messages: original yellow/orange timing and siren preserve the ship flag');
   // Direct subroutine comparisons above advance CPU time outside the raster loop.
   // Settle those calls before beginning this independent real-frame timing test.
   B.fill(0,BS.M_DEAD,BS.M_DEAD+5); // end the isolated message fixture before resuming live play
+  B[BS.MSGCD]=B[BS.MSGN]=1;call(BM,BS.MSGTICK);
   run(BM,bg.hooks,10); B[BS.OVRUN]=0;
   B.fill(0,BS.M_ENGC,BS.M_ENGC+5);B.fill(0,BS.M_DEAD,BS.M_DEAD+5);
   for(let i=0;i<20;i++)B[BS.M_STATE+B[BS.M_GRP+i]]=1;
@@ -2029,6 +2040,10 @@ require('./banks')({boot,run,check,fs,path,ROOT});
 require('./bugs')({boot,run,check,snap,fs,path,OUT});
 require('./overlay')({boot,run,check,fs,path,OUT});
 require('./joystick')({boot,run,check});
+require('./hyperspace-sid')({boot,run,check});
+require('./function-keys')({boot,run,check});
+require('./c128-controllers')({boot,run,check});
+require('./mission-messages')({boot,run,check});
 const itchDone=require('./itch')({boot,run,check,fs,path,ROOT});   // (its audio checks are asynchronous)
 
 for(const r of freeMemoryRuns) if(!r.intact) console.log(`     free RAM written: ${r.bad} (boot${r.at})`);

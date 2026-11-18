@@ -3,6 +3,7 @@
 ; stub in common RAM at $0100, B1INIT). No gameplay code changes banks or calls
 ; the KERNAL; the stub's transfers run with interrupts off. The game never
 ; returns to BASIC: nothing of BASIC's is saved or restored.
+ENDCOREPAGES = 9
         * = $1C10
 ENDINIT:
         INC FAST
@@ -14,7 +15,7 @@ ENDINIT:
         LDY #0
         STY CSRC
         STY CDST
-        LDX #4          ; the ending's resident core ($0200-$05FF; the package went to bank 1)
+        LDX #ENDCOREPAGES ; resident core (the package went to bank 1)
 el_copy:LDA (CSRC),Y
         STA (CDST),Y
         INY

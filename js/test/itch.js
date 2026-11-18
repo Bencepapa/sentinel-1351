@@ -6,7 +6,49 @@
 module.exports = function ({ boot, run, check, fs, path, ROOT }) {
   const vm = require('vm');
   const HI = require('../src/hiscore.js');
+  const SentinelHooks = require('../src/hooks.js');
+  const SentinelInput = require('../src/input.js');
   const SentinelAudio = require('../src/audio.js');
+  {
+    const Video = require('../src/video.js');
+    for (const name of ['c64game', 'game']) {
+      const {m} = boot(name);
+      const renderer = new Video.Vic(m);
+      const v = new Uint8Array(0x40);
+      v[0x0E] = 80;
+      v[0x0F] = 195;
+      v[0x15] = v[0x17] = 0x80;
+      v[0x2E] = 1;
+      renderer.ptrs[7] = 1;
+      m.vicRam()[64] = 0x80;
+      const lit = raster => {
+        renderer.line.fill(0);
+        renderer.drawSprites(v, 0, 0, raster);
+        return renderer.line[88] !== 0;
+      };
+      check(!lit(195) && lit(196) && lit(197) && !lit(198),
+        `itch: ${name} expanded scanner sprite starts on the raster line after its Y compare`);
+    }
+  }
+  {
+    const html = fs.readFileSync(path.join(ROOT, 'dist/itch.html'), 'utf8');
+    const packaged = JSON.parse(html.match(/^var SENTINEL_PROGRAMS = (.+);$/m)[1]);
+    for (const name of ['game', 'c64game']) {
+      const {m, p} = boot(name, 'trace');
+      const symbols = packaged[name].symbols;
+      const labels = name === 'game'
+        ? ['GPOTS', 'OLDX', 'OLDY', 'GPOTCONNECTED', 'MPRES']
+        : ['POTRD', 'OPOTX', 'OPOTY', 'RCNT'];
+      const modes = [];
+      const input = new SentinelInput(m, new SentinelHooks(m, symbols), mode => modes.push(mode));
+      const startsInJoystickMode = input.mode === 'joystick';
+      input.move(5, 0);
+      input.setJoystick('ArrowLeft', true);
+      check(labels.every(label => symbols[label] !== undefined && symbols[label] === p.symbols[label]) &&
+        startsInJoystickMode && modes.join() === 'mouse,joystick',
+        `itch: packaged ${name} starts in joystick mode and reports both input mode changes to the overlay`);
+    }
+  }
   const state = n => JSON.parse(fs.readFileSync(path.join(__dirname, '../../briefs/ref/' + n), 'utf8')).state;
   const call = (m, a) => {
     const c = m.cpu, saved = [c.pc, c.sp, c.p];

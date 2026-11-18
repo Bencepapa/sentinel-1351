@@ -37,7 +37,7 @@
     m = new C128(prog.model);
     m.loadPrg(base64(prog.prg));
     hooks = new SentinelHooks(m, prog.symbols);
-    input = new SentinelInput(m, name === 'c64game' ? hooks : null);
+    input = new SentinelInput(m, name === 'c64game' || name === 'game' ? hooks : null);
     lastTouch = null;
     SentinelNative.install(hooks, mode);
     if (name === 'c64game') hooks.fixC64Original();
