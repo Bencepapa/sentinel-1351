@@ -2,8 +2,8 @@
 // A browser save state from before the bank-1 store (2026-11-17) has an empty bank 1,
 // the KERNAL's preconfigurations and no copy stub at $0100, and the ending's
 // resident code of its own build. Give it this build's, taken from a fresh boot of
-// the same build (fresh: {ram, ram1, mmu}): the EXIT backup, the reset snapshot,
-// the payload and the packages in bank 1 are init-time data; the ending's state
+// the same build (fresh: {ram, ram1, mmu}): the reset snapshot, the payload and
+// the packages in bank 1 are init-time data (there is no EXIT backup any more); the ending's state
 // (no ending running in these saves) starts fresh; an armed ending poll stays armed.
 module.exports = function adoptBank1(m, fresh, S) {
   if (m.ram1.some(v => v)) return false;          // the state has its own bank 1

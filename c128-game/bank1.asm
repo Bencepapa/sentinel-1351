@@ -9,29 +9,24 @@
 ; no transfer runs while the tunnel's raster IRQ is enabled. An NMI (RESTORE)
 ; during a transfer finds bank 1's vectors pointing at NMIB1, an RTI.
 ;
+; The game never returns to BASIC (2026-11-17: RUN/STOP does nothing), so none of
+; BASIC's state is kept: no copy of $0200-$1BFF or of the stub's page; the PCRs
+; and bank 1's vectors are set, not saved; BASIC 7's string area at the top of
+; bank 1 is not reserved.
+;
 ; Bank 1 ($0000-$03FF is common RAM, not separate):
-;   B1LOW   $1000-$29FF  bank-0 $0200-$1BFF as it was at SYS (EXIT restores it)
-;   B1STACK $2A00        $0100-$01xx, the PCRs ($D501-$D504) and bank 1's
-;                        $FFFA-$FFFF as they were at SYS (EXIT)
 ;   ENDB1SNAP $2C00      the reset snapshot, then the ending's payload (build.py)
 ;   B1STREAM $6400-$66FF the movement streams $8100-$83FF (the reset)
 ;   B1MINES $7000-$7CFF  the MINES package (overlay.asm)
 ;   B1ENDING $7E00-$85FF the ENDING package (ending.asm)
-B1LOW   = $1000
-B1STACK = $2A00
+;   $FFFA-$FFFF          the NMI/RESET/IRQ vectors: NMIB1
+;   free: $0400-$2BFF, the payload's end-$63FF, $6700-$6FFF, $7D00-$7DFF,
+;   $8600-$FEFF, $FF05-$FFF9 ($FF00-$FF04 are the MMU's in every bank)
 B1STREAM = $6400        ; $8100-$83FF, the type-1 movement streams the mines borrow
 B1MINES = $7000         ; the MINES package (S1 at $EA16), as decoded at init
 B1ENDING = $7E00        ; the ENDING package (S1 at ENDPKG), ENDPKGPAGES pages from its staging
 ENDPKGPAGES = 8         ; (build.py checks the package fits)
-B1SPCR  = $60           ; offsets in the B1STACK page: the four preconfigurations,
-B1SVEC  = $64           ; bank 1's NMI/RESET/IRQ vectors
-B1TEMP  = $FE00         ; init: free RAM above the PRG (the high image is decoded later)
-B1TEMPX = $6000         ; EXIT: the game's own RAM (dead then)
-B1TEMPP = B1TEMP+96     ; (B1SPCR)
-B1TEMPV = B1TEMP+100    ; (B1SVEC)
-B1TEMPXP = B1TEMPX+96
-B1TEMPXV = B1TEMPX+100
-B1SH    = $FC           ; CSRC+1 and CDST+1 in zero page
+B1SH   = $FC           ; CSRC+1 and CDST+1 in zero page
 B1DH    = $FE
 
         * = $0100
@@ -86,34 +81,19 @@ NMIB1:  RTI
 B1STUBEND:
 
 ; Init (ENDINIT, before GINIT2 decodes the high image over this staging): the
-; stub, the preconfigurations, bank 1's vectors, then the backups and the payload.
+; stub, the preconfigurations and bank 1's vectors (set, not saved: there is no
+; return to BASIC), the overlay manager, the ENDING package and the payload.
         * = B1INITAT
 B1INIT:
         LDX #B1STUBLEN-1
-bi_stub:LDA $0100,X
-        STA B1TEMP,X
-        LDA ENDSTUBIMG,X
+bi_stub:LDA ENDSTUBIMG,X
         STA $0100,X
         DEX
         BPL bi_stub
-        LDX #3
-bi_pcr: LDA $D501,X
-        STA B1TEMPP,X
-        DEX
-        BPL bi_pcr
         LDA #$3E        ; PCRA: the game's bank 0 (RAM, I/O); PCRB: bank 1, all RAM
         STA $D501
         LDA #$7F
         STA $D502
-        LDA #$FF
-        LDX #$FA
-        JSR ELVADR
-        LDX #0
-bi_vread:JSR ELREAD
-        STA B1TEMPV,X
-        INX
-        CPX #6
-        BNE bi_vread
         LDA #$FF
         LDX #$FA
         JSR ELVADR
@@ -124,20 +104,7 @@ bi_vwrite:LDA #<NMIB1
         JSR ELWRITE
         DEX
         BNE bi_vwrite
-        LDA #<B1TEMP
-        LDX #>B1TEMP
-        LDY #>B1STACK
-        JSR bi_put1
-        LDA #$00        ; $0200-$1BFF, 26 pages
-        LDX #$02
-        LDY #>B1LOW
-        STA CSRC
-        STX CSRC+1
-        STA CDST
-        STY CDST+1
-        LDX #26
-        JSR B1PUT
-        LDX #0          ; the overlay manager into BASIC's free ML area (saved above)
+        LDX #0          ; the overlay manager into BASIC's free ML area
 bi_ovl: LDA OVLIMG,X
         STA OVBASE,X
         INX
@@ -166,13 +133,6 @@ bi_ovl2:LDA OVLIMG+255,X
         STA CDST
         STY CDST+1
         LDX #ENDPAYPAGES
-        JMP B1PUT
-bi_put1:STA CSRC
-        STX CSRC+1
-        LDA #0
-        STA CDST
-        STY CDST+1
-        LDX #1
         JMP B1PUT
 ENDSTUBIMG:
 B1INITEND:

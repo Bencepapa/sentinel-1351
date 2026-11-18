@@ -38,8 +38,8 @@ module.exports = function ({boot, run, check, snap, fs, path, OUT}) {
   for(let i=0;i<100&&!vdcBlack(sm);i++)sm.cpu.step();
   check(vdcBlack(sm)&&sm.cpu.cycles-startCycles<400,
     'game: dirty VDC boot text/attributes/font and cursor blank within 400 entry cycles');
-  check(bootRomReads===0&&sm.ram[startup.p.symbols.SAVMMU]===0,
-    'game: VDC startup banks out BASIC before calling its RAM helper and preserves the caller MMU');
+  check(bootRomReads===0,
+    'game: VDC startup banks out BASIC before calling its RAM helper');
   let visibleWrite=false,snapshotWrites=0,startupBlack=true;
   const write=sm.vdcWrite.bind(sm);
   sm.vdcWrite=function(r,v){
@@ -166,12 +166,12 @@ module.exports = function ({boot, run, check, snap, fs, path, OUT}) {
   const workspace=boot('game','trace'),wm=workspace.m,WA=wm.ram,WS=workspace.p.symbols;
   const before=Buffer.from(Uint8Array.from({length:0xa60},(_,i)=>(i*73+(i>>8)*19+0x37)&255));
   WA.set(before,0x200);wm.vdcRam.fill(0xA5);wm.dma=true;run(wm,workspace.hooks,80);
+  // No return to BASIC: BASIC's $0200-$0C5F is not kept anywhere (bank 1 holds only
+  // the store from the snapshot on), the core is installed over it.
   check(WS.ENDCOREEND<=0xc60&&WS.ENDLOADEREND<=0x1d00&&WS.ENDB1END<=0x6400&&wm.vdcRam.every(v=>v===0xA5)&&
-    Buffer.from(wm.ram1.subarray(WS.B1LOW,WS.B1LOW+0xa60)).equals(before),
-    'game: ending core, loader and the bank-1 snapshot/payload fit their checked bounds; the borrowed bytes are in bank 1, VDC RAM untouched');
-  call(wm,WS.EXIT);
-  check(before.equals(Buffer.from(WA.subarray(0x200,0xc60))),
-    'game: RUN/STOP restores every borrowed ending-workspace byte, including the partial tail');
+    !wm.ram1.subarray(0x400,WS.ENDB1SNAP).some(v=>v)&&WS.EXIT===WS.CKEXITFREE&&
+    !before.subarray(0,WS.ENDCOREEND-0x200).equals(Buffer.from(WA.subarray(0x200,WS.ENDCOREEND))),
+    'game: ending core, loader and the bank-1 snapshot/payload fit their checked bounds; BASIC\'s low RAM is not kept (no EXIT), VDC RAM untouched');
 
   // Record the original death path from a real executable save, with DMA.
   o.m.loadState(o.m.stateFromText(JSON.stringify(state.state)));o.m.dma=true;R[0x8300]=255;
@@ -373,7 +373,9 @@ module.exports = function ({boot, run, check, snap, fs, path, OUT}) {
   }
 
   const waits=[];
-  for(const kind of ['death','win'])for(const button of [true,false]){
+  // (stop: RUN/STOP held from the death/victory to the reset as well: there is no return
+  // to BASIC, the key does nothing; the reset comes on the same frame, the fresh game runs.)
+  for(const kind of ['death','win'])for(const [button,stop] of [[true,false],[true,true],[false,false]]){
     const k=ready(),n=k.m,B=n.ram,T=k.p.symbols;
     if(kind==='death'){B[T.SHIPLOST]=1;call(n,T.ENDARM);}
     else {B.fill(0,T.M_STATE,T.M_STATE+60);B.fill(0,T.M_FLG,T.M_FLG+4);B[T.ENDQUAL]=1;call(n,T.ENDTRYWIN);}
@@ -382,14 +384,21 @@ module.exports = function ({boot, run, check, snap, fs, path, OUT}) {
       n.setBreak(T.ENDWINSTART,false);n.breakInfo=null;
       B.set([0x75,0x78,0x73,0x70],T.HUDE);   // the save's energy at the trigger: 5830
     }
-    n.mouse.left=button;n.setBreak(T.ENDRESET,true);
-    const start=n.frame;let at=-1;
-    for(let f=0;f<23500;f++){n.runFrame();if(n.breakInfo){at=n.frame-start;break;}}
+    n.mouse.left=button;n.setBreak(T.ENDRESET,true);n.setKey(7,7,stop);n.setBreak(T.EXIT,stop);
+    const start=n.frame;let at=-1,exitAt=-1;
+    for(let f=0;f<23500;f++){n.runFrame();if(n.breakInfo){if(n.breakInfo.pc===T.EXIT){exitAt=n.frame;n.breakInfo=null;continue;}at=n.frame-start;break;}}
     // C64 references: death from the minefield save; victory from the supplied
     // last-enemy save (fire held from the trigger: 584; untouched: 19,040)
     const original=kind==='death'?(button?715:10410):(button?584:19040);
-    waits.push({kind,button,original,port:at});
-    check(Math.abs(at-original)<=10,
+    if(stop){
+      const plain=waits.find(w=>w.kind===kind&&w.button&&!w.stop).port;
+      n.setBreak(T.ENDRESET,false);n.breakInfo=null;n.mouse.left=false;run(n,k.hooks,120);
+      check(at===plain&&exitAt<0&&!n.stopped&&n.mmuCR===0x3E&&!B[T.ENDMODE]&&B[T.SHLD]===40&&B[T.M_SELX]===4&&B[T.M_SELY]===2&&!B[T.OVRUN],
+        `game: RUN/STOP held through the ${kind} ending does nothing: the same reset (${at}/${plain} frames), then a fresh game`);
+      n.setKey(7,7,false);
+    }
+    waits.push({kind,button,stop,original,port:at});
+    if(!stop)check(Math.abs(at-original)<=10,
       `game: ${kind} ${button?'held-button':'automatic'} reset ${at} DMA frames, C64 reference ${original}`);
   }
   fs.writeFileSync(path.join(OUT,'game-end-reset-comparison.json'),JSON.stringify(waits,null,2));

@@ -3,8 +3,8 @@
 ; the victory's first phase, the reset's last part) and the ENDING package in S1
 ; (overlay.asm), loaded from bank 1 a piece a frame from ENDSTOP on (the 255 flash
 ; frames, the victory's refill) and finished at ENDSCENE / the victory's text.
-; Installed before the high image is unpacked; $0200-$0C5F is saved in bank 1.
-; Bank 1 (bank1.asm, build.py): the saved low RAM, the reset snapshot
+; Installed before the high image is unpacked (BASIC's $0200-$0C5F is not kept).
+; Bank 1 (bank1.asm, build.py): the reset snapshot
 ; (ENDRANGES, at ENDB1SNAP), then the payload (B1INIT copies it from ENDSTAGE):
 ; the victory text, the death reports and the packed matrix/HUD/cockpit-art/
 ; bottom-sprite masters. ELVADR/ELREAD/ELWRITE address it a byte at a time.

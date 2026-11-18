@@ -3,7 +3,10 @@
 Status (2026-11-17, later): steps 0-1 (measurements, bank 1 in the JS machine) and
 **steps 2-4 are done** (the bank-1 store, the overlay slot S1 with MINES, the ENDING
 package): see section 9 for what was built, where it differs from this plan, the new
-memory map and the free bytes. Sections 1-8 are the survey as written before. Read first: `PLAN-C128-COCKPIT.md` ("Status",
+memory map and the free bytes. **Later the same day the exit to BASIC was removed**
+(the user's decision: RUN/STOP does nothing, BASIC's memory is the game's): section 10
+has what went and the current free-byte table; it supersedes the EXIT parts of 5.1,
+5.2, 9.1 and 9.4. Sections 1-8 are the survey as written before. Read first: `PLAN-C128-COCKPIT.md` ("Status",
 "Handing the work on"), `c128-game/README.md` ("How it is built", the memory map
 and the 2026-11-11/15/17 sections), `briefs/memory-rearrangement.md`.
 
@@ -692,5 +695,77 @@ victory's first phase, the trampolines).
   when the win fires) the text could come a frame or two later than before.
 - Check in VICE: cold LOAD and start; a minefield and its tunnel; death in the minefield
   (flash, scene, report, restart, then another base: mines and tunnel again); a
-  victory (text, rank, restart); RUN/STOP back to BASIC, then `LIST`, `PRINT FRE(1)`,
-  a string operation (BASIC 7 strings in bank 1) and RESTORE; `RUN` again.
+  victory (text, rank, restart). (The RUN/STOP-to-BASIC check is gone: the exit hung in
+  VICE and was removed, section 10.)
+
+## 10. No return to BASIC (2026-11-17)
+
+The user's decision, after RUN/STOP's exit to BASIC hung in VICE: the game does not
+return to BASIC, and BASIC's memory (zero page, `$0200-$1BFF`, bank 1 with BASIC 7's
+variables and strings, the KERNAL/BASIC vectors) is the game's.
+
+- **RUN/STOP does nothing.** The frame loop's check (`LDA CIA1PB / BMI nostop`) keeps
+  its bytes and its branch, so a frame without RUN/STOP takes exactly the same cycles;
+  with RUN/STOP held three NOPs replace the old `JMP EXIT` and the SPACE check follows
+  as usual. The only restart is the game-over reset (`ENDRESET`, unchanged). A soft
+  reset on RUN/STOP was not chosen: it would have to stop whatever runs at that moment
+  (tunnel IRQ, a package load, hyperspace, a base sequence) the way `ENDQUIET`/`ENDSTOP`
+  do at a death, a new path with its own risks; resetting the machine leaves the game.
+- **Removed**: `ENDRESTORE` (loader); `B1INIT`'s copy of `$0200-$1BFF` into bank 1
+  (`B1LOW` `$1000-$29FF`), its save of the stub page, the PCRs and bank 1's vectors
+  (`B1STACK` `$2A00`, the `B1TEMP` page at `$FE00`); the cockpit's `EXIT` routine and
+  START's saves of the caller's state (both turned into free space of the same size by
+  `build.py` patches: no cockpit address moves, `EXIT`/`SPRCROSS`/`cpc` are where they
+  were); `ENDVDCBLANK`'s save of `PTR` (5 bytes, left as free space so that
+  `ARROWS`/`ARPIX` keep their addresses); the build's reservation of bank 1's
+  `$F000-$FEFF` (BASIC 7 strings). `B1INIT` still installs the stub, sets PCRA `$3E`/PCRB
+  `$7F` and bank 1's vectors (`NMIB1`), and loads the manager, the ENDING package and
+  the payload. The bank-1 layout of the store is unchanged (snapshot `$2C00`, payload
+  `$4D00`, streams `$6400`, MINES `$7000`, ENDING `$7E00`), and so are the snapshot's 22
+  descriptors (the gap-bridging budget still uses the old 16 K VDC formula, which
+  reserved `$0A60` bytes for the EXIT copy: the reset restores exactly the bytes it did).
+- Moved: only `ENDQUIET` and `ENDSTREAMS` (in the loader page, `$1CB3`/`$1CD1` ->
+  `$1C54`/`$1C72`; two `JSR`s in the ending core follow). Every other symbol keeps its
+  address; the PRG differs only in the loader page, the two cockpit holes, the 5-byte
+  helper hole, those two core operands and the init staging (`B1INIT`, which is 84 bytes
+  shorter: the PRG ends at `$F8DE`).
+
+Free memory now (bytes; "before" is the build just before this change):
+
+| Area | Free now | Before | Where |
+|---|---|---|---|
+| Zero page | **248** | 0 (BASIC's/KERNAL's) | `$02-$2A`, `$2D-$FA`, `$FF` (the game uses `$FB-$FE`; the relocated rating, original `$F440`, uses `$2B/$2C` as its temp, as the original does) |
+| Stack page (common RAM) | **107** | (not advertised) | `$0155-$01BF`, below the stack (lowest SP measured `$EA`) |
+| `$0200-$0C5F` (core `$0200-$0556`) | 1,801 | 1,801 | `$0557-$0C5F`, every mode |
+| BASIC's free ML area | 14 | 14 | `$1A0A-$1A0F` (6), `$1BF8-$1BFF` (8) |
+| Loader page | **109** | 14 | `$1C93-$1CFF` (`ENDRESTORE` was here); `$1C00-$1C3A` (BASIC stub, `ENDINIT`) is dead after init |
+| Resident cockpit holes | **165** | 0 | `$1D14-$1D58` (69, START's saves), `$1F79-$1FD8` (96, the old EXIT) |
+| Helper pad | **8** | 3 | `$52C0-$52C4` (5, `ENDVDCBLANK`'s PTR save), `$52FD-$52FF` (3) |
+| Old ARRSTEP block | 6 | 6 | `$5B1B-$5B20` |
+| Glue | 1 | 1 | `$5DFF` |
+| High (after MINES) | 2 | 2 | `$F6F7-$F6F8`, every mode |
+| Packed margin (load time) | 168 | 168 | before `$7680` |
+| S1 / ENDING package | 1,563 of S1 while ENDING is in; 130 of its 8 bank-1 pages | same | ENDING `$E970-$F0ED` (1,918); S1 `$E960-$E96F`, `$F0EE-$F6F8` |
+| Load window (staging) | **1,569** | 1,485 | PRG now ends `$F8DE` (was `$F932`): `B1INIT` 111 bytes (was 195) |
+| Bank 1 | **47,861** | 36,864 | `$0400-$2BFF` (10,240), `$5500-$63FF` (3,840), `$6700-$6FFF` (2,304), `$7D00-$7DFF` (256), `$8600-$FEFF` (30,976), `$FF05-$FFF9` (245) |
+| VDC RAM | 16 K | 16 K | unused (display blanked) |
+
+Dead but left in place: `SAVMMU`-`SAV1D` (`$28A3-$28B0`, 14 bytes; 12 of them are in the
+reset snapshot, so they could hold reset-initialised variables).
+
+Tests: the EXIT tests are gone (`run.js` "normal EXIT restores...", "EXIT restores the
+stack page...", `game-end.js` "RUN/STOP restores every borrowed ending-workspace byte").
+New: init writes no copy of BASIC's RAM, stack page, vectors or PCRs into bank 1 and
+leaves BASIC 7's bank-1 areas alone; RUN/STOP held for 100 frames in flight and over
+the map does nothing (the old EXIT and START holes are never executed, MMU stays `$3E`,
+the map still opens); RUN/STOP held from a death and from a victory to the reset gives
+the reset on the same frame as without it, then a fresh game. Every game boot now also
+fills the new free areas (loader tail, both cockpit holes, the 5 helper bytes, zero page
+`$02-$2A`/`$2D-$FA`/`$FF`, the stack page `$0155-$01BF`) with `$A5` and checks them
+across all scenarios (a loaded save state re-arms the fill). The first run of that check
+found the rating's `$2B/$2C`: the relocated `$F440` keeps the original's zero-page temp
+(so before this change an ending also wrote BASIC's `$2B/$2C`). Validation: `python c128-game/build.py`, `python js/build.py`, `python js/bundle.py`, full `node js/test/run.js` ends with "all checks passed"; ending timings unchanged (death report/rating 613/615, victory 29/54/57, resets 711/10410/584/19039 DMA frames), 0 late splits / 0 OVRUN in every DMA scenario. No commit or push.
+
+VICE x128: RUN/STOP in flight, over the map, in a base sequence, during the death flash
+and on the victory screen should do nothing; the death and victory endings and their
+restarts as before.

@@ -5661,9 +5661,8 @@ ETSOUND:LDA #$0A        ; the launch ($BBB2): noise on voices 1 and 2
         RTS
 ETEND:
 
-; C128 BASIC's free ML area after the relocated block ($19F9-$1BFF), borrowed in
-; the same way: installed with the block, the original bytes saved in bank 1
-; (B1LOW, with all of $0200-$1BFF) and restored on EXIT.
+; C128 BASIC's free ML area after the relocated block ($19F9-$1BFF), used in the
+; same way: installed with the block (the game never returns to BASIC).
 ;
 ; The victory (ENDWINSTART's input hook, in the vertical blank): the crosshair and
 ; the guns follow the mouse or the joystick, as the original's interrupt keeps doing
@@ -5678,9 +5677,8 @@ ENDCROSS:JSR INPUT
         RTS
 LOWEND:
 
-; Init helper. No KERNAL calls or interrupts while low RAM is borrowed: its
-; original bytes ($0200-$1BFF) are in bank 1 already (B1INIT, before GINIT2);
-; EXIT (ENDRESTORE) copies them back.
+; Init helper. No KERNAL calls or interrupts: low RAM ($0200-$1BFF) is the game's
+; (BASIC's contents are not kept: the game never returns to BASIC).
         * = $E960
 LOWSTART = $0C60
 LOWPAGES = 13
@@ -6072,9 +6070,10 @@ ENDVDCBLANK:
         LDA #$20
         LDX #10         ; cursor off, including the boot cursor
         JSR ELREG
-        LDA PTR         ; displaced START instructions, after MMU selects RAM
-        STA SAVPTRL
         RTS
+; (the displaced START instructions, LDA PTR / STA SAVPTRL, saved PTR for the exit
+; to BASIC, which is gone: 5 free bytes, kept here so that nothing after moves)
+VDCFREE:.BYTE 0,0,0,0,0
 
 ; A squadron coming in (ARDRAW, the glue): the point's two rows (C set: y+1 starts
 ; the next character row, +320-7); ARPIX keeps C.

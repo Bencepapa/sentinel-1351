@@ -22,7 +22,7 @@ $3800-$3FFF (c128-map/build.py):
   $2900  type-1 masters (VDC is disabled); $3800-$3BBF type-2/3 masters,
          $3E00-$3FFF type-2 X streams. The map shares the cockpit address tables.
   $5E00  packed $E000 image, after glue and over sprite slots restored at init
-  $0C60  resident mothership/message/repair code; original RAM saved in bank 1 (B1LOW)
+  $0C60  resident mothership/message/repair code (BASIC's RAM: the game never returns)
   $D000  init-only packed STR2Y; $D100 low-code stream; $DF00 runtime tables
   $EA16  resident minefield code/art/slot backup, full through $F6F8
   $xx00  the map's code: right after the cockpit's second chunk
@@ -127,15 +127,40 @@ PATCHES_MAP = [
 ]
 MAP_EXTRA = ""
 
+# The game never returns to BASIC (2026-11-17, the user's decision: RUN/STOP does
+# nothing, BASIC's memory is the game's). What existed only for the exit becomes
+# free space of the same size, so that no cockpit address moves: the cockpit's EXIT
+# routine, and START's saves of the caller's state (it keeps SEI, the MMU and the VDC
+# blanking; the dead SAV* variables stay where they are, in the reset snapshot).
+EXIT_LINES = ['EXIT:   LDA #0', '        STA VICENA', '        STA $D404', '        STA $D418']
+for _reg, _sav in (('$D011', 'SAV11'), ('$D016', 'SAV16'), ('$D018', 'SAV18'), ('VICENA', 'SAVENA'),
+                   ('$D01B', 'SAV1B'), ('$D01D', 'SAV1D'), ('CIA2PA', 'SAVC2'), ('CIA1PA', 'SAVPA'),
+                   ('BORDER', 'SAVBOR'), ('BG', 'SAVBG'), ('FAST', 'SAVFAST'), ('MMUCR', 'SAVMMU'),
+                   ('PTR', 'SAVPTRL'), ('PTR+1', 'SAVPTRH')):
+    EXIT_LINES += ['        LDA ' + _sav, '        STA ' + _reg]
+EXIT_OLD = '\n'.join(EXIT_LINES + ['        CLI', '        RTS']) + '\n'
+EXIT_FREE = 96          # EXIT-SPRCROSS
+EXIT_NEW = ('EXIT:                   ; (game) no return to BASIC: these bytes are free\n'
+            'CKEXITFREE:.BYTE ' + ','.join(['0'] * EXIT_FREE) + '\n')
+START_SAVES = [('PTR+1', 'SAVPTRH'), ('CIA1PA', 'SAVPA'), ('CIA2PA', 'SAVC2'), ('$D011', 'SAV11'),
+               ('$D016', 'SAV16'), ('$D018', 'SAV18'), ('VICENA', 'SAVENA'), ('BORDER', 'SAVBOR'),
+               ('BG', 'SAVBG'), ('FAST', 'SAVFAST'), ('$D01B', 'SAV1B'), ('$D01D', 'SAV1D')]
+START_OLD = ''.join(f'        LDA {r}\n        STA {s}\n' for r, s in START_SAVES)
+START_FREE = 69         # 72 bytes of saves less the JMP
+START_NEW = ('        JMP g_st1       ; (game) no return to BASIC: the caller\'s state is not saved\n'
+             'CKSTARTFREE:.BYTE ' + ','.join(['0'] * START_FREE) + '\ng_st1:\n')
+
 PATCHES_COCKPIT = [
     ('        JSR SECSTART    ; a squadron in the sector (c128-game: the map\'s start sector)\n',
      '        JSR GAMEINIT    ; (game) the world and the start sector\n'),
-    ('        LDA SAVFAST\n        STA FAST\n        LDA SAVMMU\n',
-     '        JSR GREXIT      ; restore borrowed low RAM before BASIC/IRQs\n        NOP\n        NOP\n        NOP\n        LDA SAVMMU\n'),
-    # SPACE is the proton torpedo (TSPACE, game.asm GTORP), RUN/STOP leaves (the same
-    # bytes as before: the code after keeps its addresses); C= opens and closes the map
+    # No return to BASIC (2026-11-17): the cockpit's EXIT (96 bytes) is free space,
+    # SPRCROSS after it keeps its address (CKEXITFREE, see EXIT_FREE below).
+    (EXIT_OLD, EXIT_NEW),
+    # SPACE is the proton torpedo (TSPACE, game.asm GTORP), RUN/STOP does nothing (the
+    # same bytes as before: the code after keeps its addresses, the frame without
+    # RUN/STOP takes the same branch); C= opens and closes the map
     ('        LDA CIA1PB\n        AND #$10\n        BNE nospace\n        JMP EXIT\nnospace:LDA #$BF        ; port 2 pots for the next frame\n',
-     '        LDA CIA1PB\n        BMI nostop      ; (game) RUN/STOP leaves\n        JMP EXIT\nnostop: AND #$10        ; SPACE: the torpedo (GSPACE while held)\n        BNE nospace\n        JSR GSPACE\n'
+     '        LDA CIA1PB\n        BMI nostop      ; (game) RUN/STOP: nothing (no return to BASIC)\n        NOP\n        NOP\n        NOP\nnostop: AND #$10        ; SPACE: the torpedo (GSPACE while held)\n        BNE nospace\n        JSR GSPACE\n'
      'nospace:LDA #$00\n        STA SPREV\nnosp2:  JSR MAPKEY      ; (game) C= or the right mouse button: the map opens / closes\n'
      '        BNE nomapk\n        LDA CPREV\n        BNE nomap\n        LDA #$01\n        STA CPREV\n        JSR GMAPTOG\n'
      '        JMP nomap\nnomapk: LDA #$00\n        STA CPREV\n'
@@ -282,11 +307,11 @@ def assemble():
     # the helper at $52AC is inaccessible under BASIC's initial MMU mapping.
     # Five bytes replace LDA/STA without moving any cockpit symbol.
     cockpit = patch(cockpit, [('        LDA PTR\n        STA SAVPTRL',
-                               'VDCENTRY:JSR ENDVDCBLANK\n        NOP\n        NOP')], 'VDC startup')
+                               'VDCENTRY:JSR ENDVDCBLANK\n        NOP\n        NOP'),
+                              (START_OLD, START_NEW)], 'VDC startup')
     # Ending workspace is installed before GINIT2 consumes its $E000 staging.
     # All existing lower instructions and symbols retain their size/address.
     glue = glue.replace('JSR GINIT2      ;', 'JSR ENDINIT     ;', 1)
-    cockpit = cockpit.replace('JSR GREXIT', 'JSR ENDRESTORE')
     cockpit = patch(cockpit, [('        STA SHIPLOST    ; ($8300)',
                                '        JSR ENDSHIPFLAG ; ($8300)')], 'ship end hook')
     cockpit = cockpit.replace('KILLHK: JMP SECKILL', 'KILLHK: JMP ENDKILL')
@@ -462,7 +487,7 @@ def ending_source(source, read):
     # Filter by address after assembling the original joined source alone.
     # END references in that source require placeholders during this address pass.
     placeholder = '\n'.join(n+' = $0200' for n in
-        ('ELREG','ENDINIT','ENDRESTORE','ENDVIEW','ENDBORROW','ENDENER','ENDPROTONUSED','ENDONE',
+        ('ELREG','ENDINIT','ENDVIEW','ENDBORROW','ENDENER','ENDPROTONUSED','ENDONE',
          'ENDSECTOR','ENDHIDE','ENDSHOW','ENDKILL','ENDMSOFF','ENDSHIPFLAG','ENDPLANETFLAG','ENDBASETALLY',
          'OVMNOFF','MNREQ','OVBASEIN'))
     _, sym = asm(source+'\n'+placeholder)
@@ -716,7 +741,7 @@ def main():
     assert symbols['ENDCOREEND'] <= 0x0C60 and symbols['ENDCOREEND'] - 0x0200 <= 0x400, 'the ending core is staged in 4 pages'
     assert symbols['ENDPKGSTART'] == ENDPKG and symbols['ENDINGEND'] <= symbols['MINEFREE'], 'the ENDING package outgrows S1'
     assert ENDPKGSTAGE + symbols['ENDPKGPAGES'] * 256 <= ENDSTAGE and len(chunks[ENDPKG]) <= symbols['ENDPKGPAGES'] * 256
-    assert symbols['B1ENDING'] >= symbols['B1MINES'] + 13 * 256 and symbols['B1ENDING'] + symbols['ENDPKGPAGES'] * 256 <= 0xF000
+    assert symbols['B1ENDING'] >= symbols['B1MINES'] + 13 * 256 and symbols['B1ENDING'] + symbols['ENDPKGPAGES'] * 256 <= 0xFF00
     assert symbols['ENDLOADEREND'] <= ENTRY, 'ending loader overlaps cockpit entry'
     assert 0xE960 + len(chunks[0xE960]) == symbols['MINEFREE']
     assert symbols['MNSTART'] == 0xEA16
@@ -727,22 +752,25 @@ def main():
     assert 0x6000 + 12 * 64 <= 0x63C0
     assert symbols['LOWSTART'] == 0x0C60
     # The block began at $0C60-$19F8; small additions follow it into BASIC's free
-    # ML area ($19F9-$1BFF), backed up in bank 1 with it (B1LOW).
+    # ML area ($19F9-$1BFF; nothing of BASIC's is kept: no return to BASIC).
     assert symbols['LOWEND'] == symbols['LOWSTART'] + len(chunks[0x0C60]) <= 0x1C00
     assert len(chunks[0x0C60]) == symbols['LOWPAGES'] * 256 + symbols['LOWTAIL']
     assert symbols['MSPOSEND'] - symbols['MSPOS'] == 245
     assert symbols['ETEND'] == 0x19F9 and symbols['ETEND'] <= symbols['LOWEND']
     # Bank 1 (bank1.asm): the copy stub in common RAM below the stack, the layout.
+    # (No return to BASIC: no backups, BASIC 7's string area at the top is not kept.)
     stub = chunks[0x0100]
-    assert len(stub) == symbols['B1STUBLEN'] <= symbols['B1SPCR'] and 0x0100 + len(stub) <= 0x0180, 'the stub outgrows its page'
-    assert symbols['B1SPCR'] + 4 <= symbols['B1SVEC'] and symbols['B1SVEC'] + 6 <= 256
-    assert symbols['B1LOW'] + 26 * 256 <= symbols['B1STACK'] and symbols['B1STACK'] + 256 <= symbols['ENDB1SNAP']
+    assert len(stub) == symbols['B1STUBLEN'] and 0x0100 + len(stub) <= 0x0180, 'the stub outgrows its page'
+    assert 0x0400 <= symbols['ENDB1SNAP'], 'bank 1: common RAM below $0400'
     assert symbols['ENDB1SNAPEND'] <= symbols['ENDBPAY'] and symbols['ENDB1END'] <= ENDB1LIMIT
-    assert 0x0400 <= symbols['B1LOW'] and ENDB1LIMIT <= 0xF000, 'bank 1: common RAM below, BASIC 7 strings above'
     b1init = chunks[symbols['B1INITAT']]
     assert symbols['B1INITAT'] + len(b1init) == symbols['ENDSTUBIMG']
     assert symbols['ENDSTUBIMG'] + len(stub) <= symbols['OVLIMG'] == symbols['ENDSTUBIMG'] + 128
-    assert symbols['OVLIMG'] + symbols['OVAREALEN'] <= symbols['B1TEMP'] and symbols['B1TEMP'] + 256 <= 0xFF00
+    assert symbols['OVLIMG'] + symbols['OVAREALEN'] <= 0xFF00
+    # The space the exit to BASIC left: same size, nothing after it moved.
+    assert symbols['CKEXITFREE'] == symbols['EXIT'] and symbols['CKEXITFREE'] + EXIT_FREE == symbols['SPRCROSS']
+    assert symbols['CKSTARTFREE'] + START_FREE == symbols['g_st1'] == symbols['VDCENTRY'] + 5 + 3 + START_FREE
+    assert symbols['VDCFREE'] + 5 == symbols['ARROWS'] == 0x52C5, 'ARROWS/ARPIX (issue #18 timing) moved'
     # The overlay manager (overlay.asm) after the low block, in BASIC's free ML area.
     ovl = chunks[symbols['OVBASE']]
     assert symbols['LOWEND'] < symbols['OVBASE'] and symbols['OVBASE'] + symbols['OVAREALEN'] == symbols['OVAREAEND'] == 0x1C00
@@ -750,7 +778,7 @@ def main():
     # S1 and its packages: MINES at $EA16 (unchanged), its image fits the bank-1 area.
     assert (symbols['S1BASE'], symbols['S1END']) == (S1BASE, S1END) == (0xE960, symbols['MINEEND'])
     assert symbols['MNSTART'] == 0xEA16 and symbols['MNEXTRAEND'] <= symbols['MINEFREE'] <= S1END
-    assert symbols['MNEXTRAEND'] - symbols['MNSTART'] <= 13 * 256 and symbols['B1MINES'] + 13 * 256 <= 0xF000
+    assert symbols['MNEXTRAEND'] - symbols['MNSTART'] <= 13 * 256 and symbols['B1MINES'] + 13 * 256 <= 0xFF00
     assert symbols['B1STREAM'] >= ENDB1LIMIT and symbols['B1STREAM'] + 768 <= symbols['B1MINES']
     audit_s1(symbols)
 
@@ -913,9 +941,21 @@ def main():
           f'ENDING package ${ENDPKG:04X}-${symbols["ENDINGEND"]-1:04X} ({symbols["ENDINGEND"]-ENDPKG} bytes), MINES ${symbols["MNSTART"]:04X}-${symbols["MNEXTRAEND"]-1:04X}; '
           f'overlay manager ${symbols["OVBASE"]:04X}-${symbols["OVEND"]-1:04X}, {0x1C00-symbols["OVEND"]} bytes free after it; '
           f'loader {ENTRY-symbols["ENDLOADEREND"]} bytes free; '
-          f'bank 1: low RAM ${symbols["B1LOW"]:04X}-${symbols["B1LOW"]+26*256-1:04X}, stack page ${symbols["B1STACK"]:04X}, '
-          f'snapshot ${symbols["ENDB1SNAP"]:04X}-${symbols["ENDB1SNAPEND"]-1:04X}, payload ${symbols["ENDBPAY"]:04X} {symbols["ENDPAYLEN"]} bytes in {symbols["ENDPAYPAGES"]} pages, '
+          f'bank 1: snapshot ${symbols["ENDB1SNAP"]:04X}-${symbols["ENDB1SNAPEND"]-1:04X}, payload ${symbols["ENDBPAY"]:04X} {symbols["ENDPAYLEN"]} bytes in {symbols["ENDPAYPAGES"]} pages, '
           f'{(symbols["ENDRANGESEND"] - 2 - symbols["ENDRANGES"]) // 4} snapshot ranges; stub $0100-${0x0100+len(stub)-1:04X}, init ${symbols["B1INITAT"]:04X}-${symbols["ENDSTUBIMG"]+len(stub)-1:04X}')
+    # Bank 1's free areas: everything but common RAM, the store, the packages, the
+    # MMU registers (seen in every bank) and the vectors (NMIB1).
+    used1 = [(0, 0x400), (symbols['ENDB1SNAP'], symbols['ENDB1END']), (symbols['B1STREAM'], symbols['B1STREAM'] + 768),
+             (symbols['B1MINES'], symbols['B1MINES'] + 13 * 256), (symbols['B1ENDING'], symbols['B1ENDING'] + symbols['ENDPKGPAGES'] * 256),
+             (0xFF00, 0xFF05), (0xFFFA, 0x10000)]
+    free1, at1 = [], 0
+    for lo, hi in sorted(used1):
+        if lo > at1:
+            free1.append((at1, lo))
+        at1 = max(at1, hi)
+    print(f'no return to BASIC: free cockpit EXIT ${symbols["CKEXITFREE"]:04X}-${symbols["CKEXITFREE"]+EXIT_FREE-1:04X} ({EXIT_FREE}), '
+          f'START saves ${symbols["CKSTARTFREE"]:04X}-${symbols["g_st1"]-1:04X} ({START_FREE}), helper ${symbols["VDCFREE"]:04X}-${symbols["VDCFREE"]+4:04X} (5); '
+          f'bank 1 free ' + ', '.join(f'${lo:04X}-${hi-1:04X}' for lo, hi in free1) + f' ({sum(hi-lo for lo, hi in free1)} bytes)')
     print(f'wrote {OUT} (${LOAD:04X}-${LOAD + len(body) - 1:04X}, code {ends}, entry ${symbols["START"]:04X})')
     return symbols
 

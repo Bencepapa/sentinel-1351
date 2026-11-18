@@ -25,7 +25,8 @@ python c128-game/build.py
 ```
 
 Mouse in port 2 or a joystick. Left button or fire shoots, the right button or C=
-opens the map, A switches the tracking computer. Press SPACE to return to BASIC 7.
+opens the map, A switches the tracking computer. SPACE launches a proton torpedo.
+There is no return to BASIC 7 (RUN/STOP does nothing; reset the machine to leave).
 
 ## C64 mouse patch
 

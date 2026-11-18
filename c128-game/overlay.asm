@@ -16,7 +16,7 @@
 ; comes first, from its caller.
 ;
 ; Installed at init by B1INIT (staged image, OVLEN bytes) into C128 BASIC's free
-; ML area after the low block; EXIT restores the area with the rest of $0200-$1BFF.
+; ML area after the low block (the game never returns to BASIC).
 OVBASE  = $1A10
 OVAREAEND = $1C00
 S1BASE  = $E960

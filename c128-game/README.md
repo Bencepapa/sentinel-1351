@@ -24,7 +24,7 @@ It is the browser page's default program.
   open the mouse moves its cursor and turns the stars (no phasor, no steering).
 - **The mouse moves a + pointer** over the grid (enhancement); the cursor box
   follows the sector under it. Without a mouse the joystick steps the box.
-- **SPACE (or both mouse buttons) launches a proton torpedo** (the HUD's PROTONS count): the original's pre-drawn rotating torpedo flies up the view for 32 steps, then every ship in view goes down and orange rings spread from the middle. With none left, a click. **RUN/STOP leaves.**
+- **SPACE (or both mouse buttons) launches a proton torpedo** (the HUD's PROTONS count): the original's pre-drawn rotating torpedo flies up the view for 32 steps, then every ship in view goes down and orange rings spread from the middle. With none left, a click. **RUN/STOP does nothing**: the game never returns to BASIC (since 2026-11-17; reset the machine to leave).
 - **Fire on another sector** closes the map and jumps there through hyperspace: the stars speed up (about 4.5 s), then streak into lines while the energy runs out ten times as fast and the steps left count down in big digits over the radar, then slow down (about 2.4 s). A step is a point of the map's flight path (the longer of 12 x columns and 16 x rows), 13.5 frames each, so the far corner takes longest. First the path is plotted on the map, a brown point a frame with beeps, while the map's lines are erased from both sides (the brown path and boxes stay); the upper HUD's border pulses through grays, and the engine's noise rises while the ship accelerates, holds in the jump and falls while it slows down. When the jump begins, the radar silently switches to long range and shows the destination's groups with the first group's readings (00 for an empty sector; no blip until the arrival); steering moves them nearer or farther, left or right (the original's positioning), and on arrival the approach starts with them where they were put. With a mouse the crosshair becomes the hyperspace cursor once the map is gone, until the arrival (as the H test): it steers while the mouse moves, changes colour, spins its digits and springs back to the centre when the mouse rests; while the ship slows down its digits count from 999 to 000. In the jump meteors come (five at most, as the original's): they grow, drift outward and hit the ship at full size (flash, a system hit, the rattle) unless steered away or met with the deflector: fire turns the view green and shows the shield's lines, at 10 energy a frame. The abort comes later. Fire on the ship's own sector just closes the map.
 - **The world runs all the time**: the map's clock (squadrons move every 16th
   tick, motherships attack, the planet's ring) ticks as often as in the original on a real machine (every 33 frames with the map open, 44 in flight, 54 in a fight, 200 while the tracking computer flies), whether the map is open or not; the icons are only drawn while it is open (cells that changed
@@ -68,17 +68,19 @@ behind the cockpit, including while closed; its world arrays are never scratch.
 
 | Range | Contents and lifetime |
 |---|---|
-| `$0100-$0154` | The bank-1 copy stub in common RAM below the stack (`bank1.asm`; the stack never goes below `$01EA`); the original bytes saved in bank 1, restored on EXIT. |
-| `$0200-$0556` | The ending's resident core (`ending.asm`: the checks in play, the death flash, the victory's refill, the statistics hooks, the snapshot copy and its descriptors, the reset's last part). Borrowed: the original `$0200-$1BFF` is saved in bank 1 and restored on EXIT. |
-| `$0557-$0C5F` | **1,801 bytes free** in every mode (borrowed BASIC RAM; since 2026-11-17, plan step 4). |
-| `$0C60-$19F8` | 3,481-byte resident relocated mothership/repair/message/positioning/enemy-proton block. Used in M, message jobs also F/D/H; retained in every mode. Original bank-0 contents saved/restored. |
-| `$19F9-$1A09` | 17 bytes in C128 BASIC's free ML area, installed and backed up with the block: `ENDCROSS`, the victory's input hook (issue #20). |
+| `$0002-$002A`, `$002D-$00FA`, `$00FF` | **Zero page, 248 bytes free** (the game uses `$FB-$FE`, and the relocated original rating `$F440` its temp `$2B/$2C`; BASIC's/the KERNAL's zero page is not kept: no return to BASIC). |
+| `$0100-$0154` | The bank-1 copy stub in common RAM below the stack (`bank1.asm`; the stack never goes below `$01EA`). `$0155-$01BF` (107 bytes) is free common RAM below the stack. |
+| `$0200-$0556` | The ending's resident core (`ending.asm`: the checks in play, the death flash, the victory's refill, the statistics hooks, the snapshot copy and its descriptors, the reset's last part). BASIC's RAM: not saved (no return to BASIC). |
+| `$0557-$0C5F` | **1,801 bytes free** in every mode (BASIC's RAM; since 2026-11-17, plan step 4). |
+| `$0C60-$19F8` | 3,481-byte resident relocated mothership/repair/message/positioning/enemy-proton block. Used in M, message jobs also F/D/H; retained in every mode. |
+| `$19F9-$1A09` | 17 bytes in C128 BASIC's free ML area, installed with the block: `ENDCROSS`, the victory's input hook (issue #20). |
 | `$1A0A-$1A0F` | 6 bytes free. |
 | `$1A10-$1BF7` | The overlay manager (`overlay.asm`, installed by B1INIT from its staging): S1's owner, the loader, MNREQ, the trampolines. `$1BF8-$1BFF` 8 bytes free. |
-| `$1C01-$1C0C` | BASIC SYS stub; init only. |
+| `$1C01-$1C0C` | BASIC SYS stub; init only (dead after init). |
 | `$1C0D-$1C0F` | Loader-to-entry padding. |
-| `$1C10-$1CFF` | Ending init/exit loader (ENDINIT, ELVADR, ENDRESTORE: EXIT from bank 1), scene shutdown, the reset's MINES/stream reload; 14 bytes free. |
-| `$1D00-$28D6` | Cockpit first code/state chunk; resident F/D/M/H. |
+| `$1C10-$1C92` | `ENDINIT` (init only), `ELVADR`, `ELREG`, `ENDQUIET` (scene shutdown), `ENDSTREAMS` (the reset's MINES/stream reload). |
+| `$1C93-$1CFF` | **109 bytes free** (the loader's tail; `ENDRESTORE`, the exit to BASIC, was here). |
+| `$1D00-$28D6` | Cockpit first code/state chunk; resident F/D/M/H. Two holes left by the exit to BASIC (same size, nothing moved): **`$1D14-$1D58` 69 bytes** (START's saves of the caller's state; START jumps over them) and **`$1F79-$1FD8` 96 bytes** (the old `EXIT`; the label stays). `SAVMMU`-`SAV1D` (`$28A3-$28B0`) are dead variables left in place (12 of them restored by the reset snapshot). |
 | `$28D7-$28F5` | Repair art-restore helper; resident, executes M. |
 | `$28F6-$28F7` | Padding. |
 | `$28F8-$28FF` | Saved repair glyph; resident master, M. |
@@ -118,8 +120,8 @@ behind the cockpit, including while closed; its world arrays are never scratch.
 | `$4BE8-$4BFF` | Text padding and sprite-pointer tail; reserved. |
 | `$4C00-$4FFF` | Crosshair, tracking, guns, approach blips, planet and barrel sprite slots; protected in every mode. |
 | `$5000-$5257` | 600-byte cockpit matrix master for map close; resident F/D/M/H. CPU-only RAM (VIC sees character ROM). |
-| `$5258-$52F6` | Ending/sector helpers, then `ARROWS`/`ARPIX` (a squadron coming in, issue #18) and `GMAPTOG` (no map in a base's sequence, issue #19). |
-| `$52F7-$52FF` | 9 bytes free. |
+| `$5258-$52FC` | Ending/sector helpers (`ENDVDCBLANK`; its 5 displaced START bytes `$52C0-$52C4` are free since the exit to BASIC went), then `ARROWS`/`ARPIX` (a squadron coming in, issue #18) and `GMAPTOG` (no map in a base's sequence, issue #19). |
+| `$52FD-$52FF` | 3 bytes free. |
 | `$5300-$5DFE` | Glue code/state; resident F/D/M/H. `$5D63-$5DF0` is the init decoder, reclaimed as 142 bytes of frame pointers, mothership state, timing and repair state. UPEND/GSEED/GUNPK2 stay intact. |
 | `$5DFF` | One glue byte free; do not move existing code. |
 | `$5E00-$5FFF` | Packed high-image start at load; becomes 512-byte type-2 Y streams at init, resident F/D. |
@@ -156,16 +158,17 @@ bytes originally at `$E960-$F6F8` move by exactly `$DD00` to `$0C60-$19F8`;
 relative branches and indexed accesses keep their low bytes and page crossings.
 No code in the cockpit, map or `$5300` glue moves. The 2,206 pre-existing symbols
 below `$E000` are frozen in `fixed-symbols.json` and checked by every game build.
-Low RAM is borrowed only after all KERNAL loading has finished. With interrupts
-disabled and no KERNAL calls during gameplay, its editor/BASIC workspace is not
-used by the game; EXIT restores it before restoring the caller's MMU and IRQs.
+Low RAM is taken only after all KERNAL loading has finished. With interrupts
+disabled and no KERNAL calls during gameplay, its editor/BASIC workspace is the
+game's; since 2026-11-17 nothing of it is kept (no return to BASIC).
 
 Init first decodes the high image. `GINIT3` selects 2 MHz/MMU `$3F`, saves the
 original low RAM into the consumed packed bitmap at `$6000`, decodes STR2Y and
 the low block from `$D000/$D100`, installs the 142 runtime bytes from `$DF00`,
 then copies the saved workspace beneath I/O to `$D200`. It returns at 1 MHz/MMU
 `$3E`; GINIT2 restores fighter slots and clears the view before showing it.
-Only EXIT selects `$3F` again to restore the saved workspace. The former
+(Before the bank-1 store, EXIT selected `$3F` again to restore the saved workspace;
+there is no EXIT any more.) The former
 MSUNPACK code remains inert in the relocated block to preserve all page offsets.
 
 Measured margins after the raster tunnel follow-up: **2 high**, **91 packed**, **1 glue** byte.
@@ -662,3 +665,75 @@ stub below the stack), `run.js` (EXIT restores the stub's page, bank 1's vectors
 the PCRs), `game-end.js` (no VDC RAM written). Old browser saves (`briefs/ref`) get
 this build's bank 1, stub and ending core in the tests (`js/test/old-state.js`).
 VICE x128: see the plan's section 9 for what to check. No commit or push.
+
+## No return to BASIC (2026-11-17)
+
+The user's decision, after RUN/STOP's exit to BASIC hung in VICE: the game does not
+return to BASIC, and BASIC's memory (zero page, `$0200-$1BFF`, bank 1 with BASIC 7's
+variables and strings, the KERNAL/BASIC vectors) is the game's.
+
+- **RUN/STOP does nothing.** The frame loop's check (`LDA CIA1PB / BMI nostop`) keeps
+  its bytes and its branch, so a frame without RUN/STOP takes exactly the same cycles;
+  with RUN/STOP held three NOPs replace the old `JMP EXIT` and the SPACE check follows
+  as usual. The only restart is the game-over reset (`ENDRESET`, unchanged). A soft
+  reset on RUN/STOP was not chosen: it would have to stop whatever runs at that moment
+  (tunnel IRQ, a package load, hyperspace, a base sequence) the way `ENDQUIET`/`ENDSTOP`
+  do at a death, a new path with its own risks; resetting the machine leaves the game.
+- **Removed**: `ENDRESTORE` (loader); `B1INIT`'s copy of `$0200-$1BFF` into bank 1
+  (`B1LOW` `$1000-$29FF`), its save of the stub page, the PCRs and bank 1's vectors
+  (`B1STACK` `$2A00`, the `B1TEMP` page at `$FE00`); the cockpit's `EXIT` routine and
+  START's saves of the caller's state (both turned into free space of the same size by
+  `build.py` patches: no cockpit address moves, `EXIT`/`SPRCROSS`/`cpc` are where they
+  were); `ENDVDCBLANK`'s save of `PTR` (5 bytes, left as free space so that
+  `ARROWS`/`ARPIX` keep their addresses); the build's reservation of bank 1's
+  `$F000-$FEFF` (BASIC 7 strings). `B1INIT` still installs the stub, sets PCRA `$3E`/PCRB
+  `$7F` and bank 1's vectors (`NMIB1`), and loads the manager, the ENDING package and
+  the payload. The bank-1 layout of the store is unchanged (snapshot `$2C00`, payload
+  `$4D00`, streams `$6400`, MINES `$7000`, ENDING `$7E00`), and so are the snapshot's 22
+  descriptors (the gap-bridging budget still uses the old 16 K VDC formula, which
+  reserved `$0A60` bytes for the EXIT copy: the reset restores exactly the bytes it did).
+- Moved: only `ENDQUIET` and `ENDSTREAMS` (in the loader page, `$1CB3`/`$1CD1` ->
+  `$1C54`/`$1C72`; two `JSR`s in the ending core follow). Every other symbol keeps its
+  address; the PRG differs only in the loader page, the two cockpit holes, the 5-byte
+  helper hole, those two core operands and the init staging (`B1INIT`, which is 84 bytes
+  shorter: the PRG ends at `$F8DE`).
+
+Free memory now (bytes; "before" is the build just before this change):
+
+| Area | Free now | Before | Where |
+|---|---|---|---|
+| Zero page | **248** | 0 (BASIC's/KERNAL's) | `$02-$2A`, `$2D-$FA`, `$FF` (the game uses `$FB-$FE`; the relocated rating, original `$F440`, uses `$2B/$2C` as its temp, as the original does) |
+| Stack page (common RAM) | **107** | (not advertised) | `$0155-$01BF`, below the stack (lowest SP measured `$EA`) |
+| `$0200-$0C5F` (core `$0200-$0556`) | 1,801 | 1,801 | `$0557-$0C5F`, every mode |
+| BASIC's free ML area | 14 | 14 | `$1A0A-$1A0F` (6), `$1BF8-$1BFF` (8) |
+| Loader page | **109** | 14 | `$1C93-$1CFF` (`ENDRESTORE` was here); `$1C00-$1C3A` (BASIC stub, `ENDINIT`) is dead after init |
+| Resident cockpit holes | **165** | 0 | `$1D14-$1D58` (69, START's saves), `$1F79-$1FD8` (96, the old EXIT) |
+| Helper pad | **8** | 3 | `$52C0-$52C4` (5, `ENDVDCBLANK`'s PTR save), `$52FD-$52FF` (3) |
+| Old ARRSTEP block | 6 | 6 | `$5B1B-$5B20` |
+| Glue | 1 | 1 | `$5DFF` |
+| High (after MINES) | 2 | 2 | `$F6F7-$F6F8`, every mode |
+| Packed margin (load time) | 168 | 168 | before `$7680` |
+| S1 / ENDING package | 1,563 of S1 while ENDING is in; 130 of its 8 bank-1 pages | same | ENDING `$E970-$F0ED` (1,918); S1 `$E960-$E96F`, `$F0EE-$F6F8` |
+| Load window (staging) | **1,569** | 1,485 | PRG now ends `$F8DE` (was `$F932`): `B1INIT` 111 bytes (was 195) |
+| Bank 1 | **47,861** | 36,864 | `$0400-$2BFF` (10,240), `$5500-$63FF` (3,840), `$6700-$6FFF` (2,304), `$7D00-$7DFF` (256), `$8600-$FEFF` (30,976), `$FF05-$FFF9` (245) |
+| VDC RAM | 16 K | 16 K | unused (display blanked) |
+
+Dead but left in place: `SAVMMU`-`SAV1D` (`$28A3-$28B0`, 14 bytes; 12 of them are in the
+reset snapshot, so they could hold reset-initialised variables).
+
+Tests: the EXIT tests are gone (`run.js` "normal EXIT restores...", "EXIT restores the
+stack page...", `game-end.js` "RUN/STOP restores every borrowed ending-workspace byte").
+New: init writes no copy of BASIC's RAM, stack page, vectors or PCRs into bank 1 and
+leaves BASIC 7's bank-1 areas alone; RUN/STOP held for 100 frames in flight and over
+the map does nothing (the old EXIT and START holes are never executed, MMU stays `$3E`,
+the map still opens); RUN/STOP held from a death and from a victory to the reset gives
+the reset on the same frame as without it, then a fresh game. Every game boot now also
+fills the new free areas (loader tail, both cockpit holes, the 5 helper bytes, zero page
+`$02-$2A`/`$2D-$FA`/`$FF`, the stack page `$0155-$01BF`) with `$A5` and checks them
+across all scenarios (a loaded save state re-arms the fill). The first run of that check
+found the rating's `$2B/$2C`: the relocated `$F440` keeps the original's zero-page temp
+(so before this change an ending also wrote BASIC's `$2B/$2C`). Validation: `python c128-game/build.py`, `python js/build.py`, `python js/bundle.py`, full `node js/test/run.js` ends with "all checks passed"; ending timings unchanged (death report/rating 613/615, victory 29/54/57, resets 711/10410/584/19039 DMA frames), 0 late splits / 0 OVRUN in every DMA scenario. No commit or push.
+
+VICE x128: RUN/STOP in flight, over the map, in a base sequence, during the death flash
+and on the victory screen should do nothing; the death and victory endings and their
+restarts as before.

@@ -169,7 +169,7 @@ SentinelProfiles.game = (function (c) {
       { label: 'SPACE', key: 'Space' },
     ],
     pad: { map: { key: 'AltLeft' } },   // full screen buttons (no proton torpedoes in the port yet)
-    help: 'Cockpit: mouse or arrows aim (off centre steers), left button / Right Ctrl fires, A tracking on / off, C= (Alt) or the right button opens the map, H a hyperspace cursor test (mouse), SPACE exits. ' +
+    help: 'Cockpit: mouse or arrows aim (off centre steers), left button / Right Ctrl fires, A tracking on / off, C= (Alt) or the right button opens the map, H a hyperspace cursor test (mouse), SPACE or both buttons a proton torpedo; RUN/STOP does nothing (no return to BASIC). ' +
           'Map: move the cursor, fire on another sector jumps there, SPACE goes back.',
   };
 })(SentinelProfiles.cockpit);

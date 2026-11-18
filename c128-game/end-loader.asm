@@ -1,11 +1,12 @@
-; Init/exit only. Bank 1 holds the borrowed low RAM, the reset snapshot and the
-; ending's payload (bank1.asm: the copy stub in common RAM at $0100, B1INIT).
-; No gameplay code changes banks or calls the KERNAL; the stub's transfers run
-; with interrupts off.
+; The init loader, then resident helpers of the ending and the reset. Bank 1 holds
+; the reset snapshot, the ending's payload and the packages (bank1.asm: the copy
+; stub in common RAM at $0100, B1INIT). No gameplay code changes banks or calls
+; the KERNAL; the stub's transfers run with interrupts off. The game never
+; returns to BASIC: nothing of BASIC's is saved or restored.
         * = $1C10
 ENDINIT:
         INC FAST
-        JSR B1INIT      ; (staged above the payload: the stub, PCRs, vectors, backups, payload)
+        JSR B1INIT      ; (staged above the payload: the stub, PCRs, vectors, manager, package, payload)
         LDA #$E0
         STA CSRC+1
         LDA #2
@@ -34,51 +35,7 @@ el_ready:BIT $D600
         BPL el_ready
         STA $D601
         RTS
-; EXIT (the cockpit's EXIT, before the caller's MMU and IRQs): bank-0 $0200-$1BFF,
-; bank 1's vectors, the preconfigurations and the stack page's bottom come back.
-ENDRESTORE:
-        LDA #<B1LOW
-        STA CSRC
-        LDA #>B1LOW
-        STA CSRC+1
-        LDA #$00
-        STA CDST
-        LDA #$02
-        STA CDST+1
-        LDX #26
-        JSR B1GET
-        LDA #<B1STACK
-        STA CSRC
-        LDA #>B1STACK
-        STA CSRC+1
-        LDA #<B1TEMPX
-        STA CDST
-        LDA #>B1TEMPX
-        STA CDST+1
-        LDX #1
-        JSR B1GET
-        LDA #$FF
-        LDX #$FA
-        JSR ELVADR
-        LDX #0
-el_vector:LDA B1TEMPXV,X
-        JSR ELWRITE
-        INX
-        CPX #6
-        BNE el_vector
-        LDX #3
-el_pcr: LDA B1TEMPXP,X
-        STA $D501,X
-        DEX
-        BPL el_pcr
-        LDX #B1STUBLEN-1
-el_stack:LDA B1TEMPX,X
-        STA $0100,X
-        DEX
-        BPL el_stack
-        LDA SAVFAST
-        STA FAST
-        RTS
+; (No EXIT: the game never returns to BASIC; RUN/STOP does nothing.)
 ENDQUIET:
         JSR OVMNOFF
         JSR MSOFF
