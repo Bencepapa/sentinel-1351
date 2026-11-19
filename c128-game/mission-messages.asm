@@ -42,13 +42,18 @@ GROUPNOTICE:
 
 APPROACHNOTICE:
         LDA #3
-        BNE NOTICEQUEUE
+        BNE gorganitor_notice
 TRACKNOTICE:
         LDA #4
-        BNE NOTICEQUEUE
+        JMP NOTICEQUEUE
 ENTERNOTICE:
         LDA #5
-        BNE NOTICEQUEUE
+gorganitor_notice:
+        LDX SYSHP+4     ; a working tracking computer announces its own engagement
+        BEQ gorganitor_queue
+        RTS
+gorganitor_queue:
+        JMP NOTICEQUEUE
 
 HREAD:  LDA MSGON
         BNE mission_arm_done

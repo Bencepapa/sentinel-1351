@@ -92,7 +92,30 @@ module.exports = function ({boot, run, check}) {
   }
 
   {
+    for (const [route, warning] of [
+      ['APPROACHNOTICE', 'GORGANITOR APPROACH'],
+      ['ENTERNOTICE', 'ENTERING GORGANITOR SECTOR']
+    ]) {
+      for (const working of [false, true]) {
+        const {m, s, r} = ready();
+        r[s.SYSHP + 4] = working ? 1 : 0;
+        call(m, s[route]);
+        r[s.TON] = 1;
+        call(m, s.TRKCHK);
+        const oneNotice = r[s.NOTICECOUNT] === 1;
+        for (let frame = 0; frame < 5; frame++) m.runFrame();
+        const pointer = r[s.MSGP] | (r[s.MSGP + 1] << 8);
+        check(oneNotice && !r[s.NOTICECOUNT] && r[s.MSGON] && (working
+          ? r[s.MSGFINE] && pointer >= s.TMTEXT && pointer < s.TMTEXT + 4
+          : !r[s.MSGFINE] && row(r, s).includes(warning)),
+          `mission messages: ${route} shows only the ${working ? 'tracking' : 'Gorganitor'} notice`);
+      }
+    }
+  }
+
+  {
     const {m, s, r} = ready();
+    r[s.SYSHP + 4] = 0;
     call(m, s.APPROACHNOTICE);
     call(m, s.TRACKNOTICE);
     for (let frame = 0; frame < 20; frame++) m.runFrame();
