@@ -411,6 +411,7 @@ MNEXTRA:''')
         source += '\n' + ending_source(source, read) + '\n' + read('c128-game', 'end-loader.asm') + '\n' + read('c128-game', 'end-events.asm')
         source += '\n' + read('c128-game', 'bank1.asm') + '\nB1STUBLEN = B1STUBEND-256\n'
         source += '\n' + read('c128-game', 'overlay.asm')
+        source += '\n' + title_source(read)
         LISTING.clear()
         chunks, symbols = asm(source, LISTING)
         end = CODE2 + len(chunks[CODE2])
@@ -431,6 +432,49 @@ MNEXTRA:''')
 LISTING = []
 
 
+def title_source(read):
+    """Render the new wordmark from the repository's 5x7 emulator font."""
+    font = dict((ch, glyph) for glyph, ch in
+                re.findall(r"'([.#]{35})', // ([A-Z])\n", read('js', 'src/font.js')))
+    pixels = bytearray(96 * 16)  # 24 bitmap cells, two rows, multicolor pixels
+    for letter, ch in enumerate('SENTINEL'):
+        for i, bit in enumerate(font[ch]):
+            if bit == '#':
+                x = letter * 12 + i % 5 * 2
+                y = i // 5 * 2
+                for dy in range(2):
+                    for dx in range(2):
+                        pixels[(y + dy) * 96 + x + dx] = 1
+    for y in range(15, 0, -1):
+        for x in range(95, 0, -1):
+            i = y * 96 + x
+            if not pixels[i] and pixels[i - 97]:
+                pixels[i] = 2
+    logo = [
+        sum(pixels[y * 96 + x + dx] << (6 - dx * 2) for dx in range(4))
+        for row in (0, 8) for x in range(0, 96, 4) for y in range(row, row + 8)
+    ]
+    copy = '   '.join(read('c128-game', 'title-text.txt').strip().upper().splitlines())
+    assert re.fullmatch(r'[A-Z0-9 .]+', copy), 'TITLE text supports letters, digits, spaces and periods'
+    codes = {' ': 0x40, '.': 0x7A} | {str(i): 0x70 + i for i in range(10)}
+    def encode(value):
+        return [codes.get(ch, ord(ch)) for ch in value]
+
+    def as_bytes(values):
+        return '.BYTE ' + ','.join(map(str, values))
+
+    scroll = encode(copy) + [0x40] * 38 + [0xFF]
+    assert 1 < len(scroll) <= 256, 'TITLE scroller index is one byte'
+    choices = ('CADET', 'PATROL', 'ESCORT', 'VANGUARD', 'FRONTLINE')
+    labels = [v for choice in choices for v in encode(choice) + [0xFF]]
+    menu = '\n'.join(('TITLELABELS: ' + as_bytes(labels),
+                      'TITLEHEADING: ' + as_bytes(encode('FLIGHT PROFILE ')),
+                      'TITLEPROMPT: ' + as_bytes(encode('FIRE TO CONFIRM'))))
+    source = read('c128-game', 'title.asm')
+    return source.replace('; TITLELOGODATA', as_bytes(logo)).replace(
+        '; TITLECOPYDATA', as_bytes(scroll)).replace('; TITLEMENUDATA', menu)
+
+
 def audit_s1(symbols):
     """Every resident instruction with an operand in S1 must be a trampoline's
     (overlay.asm): a call into S1 checks that its package is loaded. The slot's
@@ -449,7 +493,7 @@ def audit_s1(symbols):
             in_sequence = value in (symbols['MNVIEW'], symbols['MNPASS'], symbols['MNSTEER'], symbols['MNREAD']) and                 symbols['MSVIEW'] <= pc < symbols['MSPOSEND']
             tramp = any(symbols[start] <= pc < symbols[end] for start, end in
                         (('OVTRAMP', 'OVTRAMPEND'), ('ENDTRAMP', 'ENDTRAMPEND'),
-                         ('FKEYTUNNEL', 'FKEYTUNNELEND')))
+                         ('FKEYTUNNEL', 'FKEYTUNNELEND'), ('TITLETRAMP', 'TITLETRAMPEND')))
             if not init_only and not in_sequence and not tramp:
                 bad.append(f'${pc:04X} {mn} ${value:04X}')
     if bad:
@@ -491,7 +535,8 @@ def ending_source(source, read):
               'ENDVICTORY: .BYTE 0']
     text = read('c128-game', 'ending.asm').replace('; ENDRATINGDATA', '\n'.join(lines))
     text = text.replace('ENDCOREEND:', read('c128-game', 'controllers.asm') + '\n'
-                        + read('c128-game', 'mission-messages.asm') + '\nENDCOREEND:')
+                        + read('c128-game', 'mission-messages.asm') + '\n'
+                        + read('c128-game', 'title-core.asm') + '\nENDCOREEND:')
     text = text.replace('; FUNCTIONKEYDATA', read('c128-game', 'function-keys.asm'))
     for name, value in [('ENDDEATHTEXT', ' THE BATTLE IS OVER'),
                         ('ENDLOSTTEXT', '  JARALOBA IS LOST')]:
@@ -529,7 +574,7 @@ def ending_source(source, read):
     placeholder = '\n'.join(n+' = $0200' for n in
         ('ELREG','ENDINIT','ENDVIEW','ENDBORROW','ENDENER','ENDPROTONUSED','ENDONE',
          'ENDSECTOR','ENDHIDE','ENDSHOW','ENDKILL','ENDMSOFF','ENDSHIPFLAG','ENDPLANETFLAG','ENDBASETALLY',
-         'OVMNOFF','MNREQ','OVBASEIN','CLOCKFRAME','CLOCKINIT','FKEYVIEW','FKEYGUNS',
+         'OVMNOFF','MNREQ','OVBASEIN','OVMINEJUMP','CLOCKFRAME','CLOCKINIT','FKEYVIEW','FKEYGUNS','TITLEBOOT',
          'FKEYSWEEP','FKEYINPUT','FKEYREPAIR','GPOTS','GMAPPOTS','GMAPCENTER','GMAPBUTTONS','HENGARM',
          'SECTORNOTICE','GROUPNOTICE','MISSIONHIT','MISSIONREPAIRED','STARTPLOT','NOTICEREQUEST','BASEMESSAGE',
          'TRACKNOTICE','APPROACHNOTICE','ENTERNOTICE','HREAD','HREADCLEAR','EMPTYROW',
@@ -780,7 +825,7 @@ def main():
     for name, address in fixed.items():
         assert symbols.get(name) == address, f'fixed symbol {name} moved from ${address:04X}'
     if set(chunks) != {ENTRY, CODE2, MAPCODE, GLUE, HIGH, HIGH2, 0x0C60, 0xE960, 0x3D60, 0x3BD8, 0x3768, 0x3BC0, 0x2CDE, 0x2FEE, 0x33E8, 0x28D7, 0xBFC3, 0x3BD1, 0x3681, 0x0200, 0x1C10, 0x5258,
-                       0x0100, symbols['B1INITAT'], symbols['OVBASE'], ENDPKG}:
+                       0x0100, symbols['B1INITAT'], symbols['OVBASE'], ENDPKG, symbols['TITLEPKG']}:
         raise SystemExit(f'unexpected assembly chunks: {[hex(c) for c in chunks]}')
     for start, limit in ((0x5258, 0x5300), (ENTRY, 0x28D7), (CODE2, MAPCODE), (MAPCODE, 0xBFC3), (GLUE, HIGH2SRC), (HIGH, 0xD000), (HIGH2, 0xF6F9), (0x3D60, 0x3E00), (0x3BD8, 0x3C00), (0x3768, 0x3800), (0x3BC0, 0x3BD8), (0x2CDE, 0x2D00), (0x2FEE, 0x3000), (0x33E8, 0x3400), (0x28D7, 0x2900), (0xBFC3, 0xC000), (0x3BD1, 0x3BD8), (0x3681, 0x3690)):
         if start + len(chunks[start]) > limit:
@@ -793,6 +838,13 @@ def main():
     assert symbols['ENDPKGSTART'] == ENDPKG and symbols['ENDINGEND'] <= symbols['MINEFREE'], 'the ENDING package outgrows S1'
     assert ENDPKGSTAGE + symbols['ENDPKGPAGES'] * 256 <= ENDSTAGE and len(chunks[ENDPKG]) <= symbols['ENDPKGPAGES'] * 256
     assert symbols['B1ENDING'] >= symbols['B1MINES'] + 13 * 256 and symbols['B1ENDING'] + symbols['ENDPKGPAGES'] * 256 <= 0xFF00
+    title = bytes(chunks[symbols['TITLEPKG']])
+    title_pages = symbols['TITLEPAGES']
+    assert S1BASE <= symbols['TITLEPKG'] < symbols['TITLEEND'] <= S1END
+    assert len(title) == symbols['TITLEEND'] - symbols['TITLEPKG'] <= title_pages * 256
+    assert symbols['B1ENDING'] + symbols['ENDPKGPAGES'] * 256 <= symbols['B1TITLE']
+    assert symbols['B1TITLE'] + title_pages * 256 <= 0xFF00
+    assert 0x0C60 <= 0x1000 < 0x1000 + title_pages * 256 <= symbols['LOWEND']
     assert symbols['ENDLOADEREND'] <= ENTRY, 'ending loader overlaps cockpit entry'
     assert 0xE960 + len(chunks[0xE960]) == symbols['MINEFREE']
     assert symbols['MNSTART'] == 0xEA16
@@ -817,7 +869,15 @@ def main():
     b1init = chunks[symbols['B1INITAT']]
     assert symbols['B1INITAT'] + len(b1init) == symbols['ENDSTUBIMG']
     assert symbols['ENDSTUBIMG'] + len(stub) <= symbols['OVLIMG'] == symbols['ENDSTUBIMG'] + 128
-    assert symbols['OVLIMG'] + symbols['OVAREALEN'] <= 0xFF00
+    assert symbols['TITLESTAGE'] == symbols['OVLIMG'] + symbols['OVAREALEN']
+    art_offset = symbols['TITLEART'] - symbols['TITLEPKG']
+    title_stream = (0x1000 + art_offset).to_bytes(2, 'little') + lz_pack(title[:art_offset])
+    title_art = (0x1000 + len(title)).to_bytes(2, 'little') + lz_pack(title[art_offset:])
+    assert symbols['TITLEARTSTAGE'] == symbols['PATHX'] == 0x3400 and symbols['PATHY'] == 0x3500
+    assert len(title_art) <= 512, 'TITLE art stream overlaps the scanner scale'
+    assert symbols['TITLESTAGE'] + len(title_stream) <= 0xFF00, (
+        f'TITLE stream needs {len(title_stream)} bytes, '
+        f'{0xFF00 - symbols["TITLESTAGE"]} available below $FF00')
     # The space the exit to BASIC left: same size, nothing after it moved.
     assert symbols['CKEXITFREE'] == symbols['EXIT'] and symbols['CKEXITFREE'] + EXIT_FREE == symbols['SPRCROSS']
     assert symbols['CKSTARTFREE'] + START_FREE == symbols['g_st1'] == symbols['VDCENTRY'] + 5 + 3 + START_FREE
@@ -839,11 +899,12 @@ def main():
     map_build.place_assets(p, VDC=VDCDATA, PL5=0x7FC0)   # (the planet's fifth frame: pointer $FF, behind the bottom strip)
     cockpit_build.place_assets(p)                   # the cockpit's picture wins where they meet
     for address, data in chunks.items():
-        if address not in (HIGH2, 0xE960, 0x0C60, 0x0200, 0x0100, symbols['OVBASE'], ENDPKG):
+        if address not in (HIGH2, 0xE960, 0x0C60, 0x0200, 0x0100, symbols['OVBASE'], ENDPKG, symbols['TITLEPKG']):
             p(address, data)
     p(symbols['ENDSTUBIMG'], chunks[0x0100])      # B1INIT copies it to $0100
     # B1INIT copies the overlay manager's whole area (OVBASE-$1BFF) from here
     p(symbols['OVLIMG'], chunks[symbols['OVBASE']] + bytes(symbols['OVAREALEN'] - len(chunks[symbols['OVBASE']])))
+    p(symbols['TITLESTAGE'], title_stream)
     # The packed $E000 image: code, torpedo frames and borrowed shot shapes.
     # Fighter masters / STR2X are loaded directly into reclaimed lower RAM.
     ref = os.path.join(ROOT, 'c128-gui', 'ref')
@@ -981,6 +1042,8 @@ def main():
     reports = rle_unpack(PAYLOAD[240:vm])
     assert sorted(reports) == list(range(ENDHEADS, ENDHEADS + 532))
 
+    assert not any(body[0x3400 - LOAD:0x3600 - LOAD]), 'TITLE art staging overlaps data'
+    p(symbols['TITLEARTSTAGE'], title_art)
     # The KERNAL's LOAD stops at $FF00 (its store loop ends when AEL reaches $FF),
     # so nothing may be placed there: the tail above is staged beneath I/O instead.
     assert LOAD + len(body) <= 0xFF00, f'the PRG ends at ${LOAD + len(body) - 1:04X}, past the KERNAL LOAD limit'
@@ -990,6 +1053,9 @@ def main():
     print(f'memory left: high {symbols["MINEEND"] - symbols["MINEFREE"]} bytes (${symbols["MINEFREE"]:04X}-${symbols["MINEEND"]-1:04X}, all modes), packed {0x7680 - HIGH2SRC - len(packed)} bytes, glue {HIGH2SRC - GLUE - len(chunks[GLUE])} bytes; low stream {len(low_stream)} bytes')
     print(f'clock: ${symbols["CLOCKINIT"]:04X}-${symbols["CLOCKEND"]-1:04X}, '
           f'{symbols["CLOCKDIV"]-symbols["CLOCKINIT"]} code bytes, {symbols["CLOCKEND"]-symbols["CLOCKDIV"]} data bytes')
+    print(f'TITLE package: {len(title)} bytes, {len(title_stream)} staged at ${symbols["TITLESTAGE"]:04X} '
+          f'and {len(title_art)} at ${symbols["TITLEARTSTAGE"]:04X}; '
+          f'{0xFF00 - LOAD - len(body)} bytes left below $FF00')
     print(f'ending memory: core $0200-${symbols["ENDCOREEND"]-1:04X}, {0xC60-symbols["ENDCOREEND"]} bytes free after it (to $0C5F); '
           f'ENDING package ${ENDPKG:04X}-${symbols["ENDINGEND"]-1:04X} ({symbols["ENDINGEND"]-ENDPKG} bytes), MINES ${symbols["MNSTART"]:04X}-${symbols["MNEXTRAEND"]-1:04X}; '
           f'overlay manager ${symbols["OVBASE"]:04X}-${symbols["OVEND"]-1:04X}, {0x1C00-symbols["OVEND"]} bytes free after it; '
@@ -1000,6 +1066,7 @@ def main():
     # MMU registers (seen in every bank) and the vectors (NMIB1).
     used1 = [(0, 0x400), (symbols['ENDB1SNAP'], symbols['ENDB1END']), (symbols['B1STREAM'], symbols['B1STREAM'] + 768),
              (symbols['B1MINES'], symbols['B1MINES'] + 13 * 256), (symbols['B1ENDING'], symbols['B1ENDING'] + symbols['ENDPKGPAGES'] * 256),
+             (symbols['B1TITLE'], symbols['B1TITLE'] + title_pages * 256),
              (0xFF00, 0xFF05), (0xFFFA, 0x10000)]
     free1, at1 = [], 0
     for lo, hi in sorted(used1):

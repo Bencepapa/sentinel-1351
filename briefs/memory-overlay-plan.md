@@ -769,3 +769,47 @@ found the rating's `$2B/$2C`: the relocated `$F440` keeps the original's zero-pa
 VICE x128: RUN/STOP in flight, over the map, in a base sequence, during the death flash
 and on the victory screen should do nothing; the death and victory endings and their
 restarts as before.
+
+## 11. Title overlay and flight profile menu
+
+The title survey's steps 1, 2 and 4 are implemented. Cold boot and the shared
+game-over reset load TITLE into S1. The owner is `$20`. The resident entry
+checks the overlay manager's swap guard and runs the title via a trampoline.
+The title polls the raster with IRQs disabled, shares the cockpit's HUD and
+gun sprites, and scrolls a 38-column strip by one pixel per frame. It feeds a
+new character every eight frames and wraps at the terminator. The wordmark
+uses the repository's emulator font. The scroll copy includes the original
+game's attribution and an editable port credits placeholder. [Scroll text](../c128-game/title-text.txt)
+
+F5, F7 and fire open the selector. Joystick up/down or 1351 vertical movement
+chooses a flight profile and a fresh fire press confirms it. The resident
+handoff evicts TITLE, sets the ship via `SHIPINIT` and generates the selected
+world through the existing dock, mothership and squadron tables. The first
+jump preloads MINES in bounded chunks during the view so a base can use
+the package immediately on arrival. A direct base entry still has a synchronous
+fallback. The reset restores the streams before changing the S1 owner.
+
+### Load and runtime space
+
+The 1,413-byte TITLE package loads at `$E963-$EEE7`. A single compressed
+stream would overfill the PRG load window. `TITLESTORE` decodes two streams
+into low RAM at `$1000` before the permanent low block is installed. It then
+copies the package to its six reserved pages at bank 1 `$8600-$8BFF` and
+clears the two phasor path pages used for staging. The build checks the
+reserved ranges, staged stream sizes, end of PRG and resident S1 operands.
+
+| Area | Layout and free bytes |
+|---|---|
+| Resident tail | `$0AD3-$0C5F`, **397 bytes** |
+| Overlay manager | `$1A10-$1BFE` used, **1 byte** at `$1BFF` |
+| Loader tail | `$1CCA-$1CFF`, **54 bytes** after `TITLESTORE` |
+| S1 while TITLE runs | **2,068 bytes** outside its loaded image |
+| Bank 1 | **46,325 bytes** free, including the range from `$8C00` |
+| Title code staging | 745 bytes at `$FBE2-$FECA`, **53 bytes** left below `$FF00` |
+| Title art and copy staging | 383 bytes at `$3400-$357E`, **129 bytes** left in these init-only pages |
+
+The headless tests use DMA for the title splits, scroller cycle, selector choices,
+first-jump load and death/victory transitions. The packaged itch program uses
+the same entry through the title and reuses the existing ending statistics hooks.
+In VICE x128, check cold boot and scroll, select and confirm with each port-2
+device, then restart from an ending and select a different profile.

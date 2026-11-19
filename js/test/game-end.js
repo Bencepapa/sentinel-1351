@@ -1,5 +1,12 @@
 'use strict';
-module.exports = function ({boot, run, check, snap, fs, path, OUT}) {
+module.exports = function ({boot, run, check, snap, fs, path, OUT, resumeFromTitle}) {
+  const atTitle = (m, A, S) => !A[S.ENDMODE] && A[S.OVOWNER] === S.TITLEOWNER &&
+    A[S.TITLEARM] && !A[S.GENDONE] && !(m.vic[0x1a] & 1) &&
+    (A[0xfffe] | A[0xffff] << 8) === S.NMIRTI &&
+    ![S.vv2, S.sprcj].some(site => {
+      const target = A[site + 1] | A[site + 2] << 8;
+      return target >= S.S1BASE && target < S.S1END;
+    });
   const call=(m,a)=>{
     const c=m.cpu, saved=[c.pc,c.sp,c.p];
     c.push(255);c.push(243);c.pc=a;c.p|=4;
@@ -124,7 +131,7 @@ module.exports = function ({boot, run, check, snap, fs, path, OUT}) {
     n.setBreak(T.end_copyread,false);n.breakInfo=null;
     run(n,k.hooks,100);
     check(vdcBlack(n),'game: '+kind+' restart keeps the VDC black');
-    check(!B[T.ENDMODE]&&!B[T.OVRUN], 'game: '+kind+' transition resumes flight without OVRUN');
+    check(atTitle(n,B,T)&&!B[T.OVRUN], 'game: '+kind+' transition returns to TITLE without OVRUN');
   }
   // The rating, the statistics and the letters are the ENDING package's (S1): load it.
   m.cpu.x=2;call(m,S.OVLOAD);
@@ -228,7 +235,11 @@ module.exports = function ({boot, run, check, snap, fs, path, OUT}) {
       'game: ending stars remain visible as pixel 1 and never erase bitmap letters');
     snap(n,planet?'game-end-planet':'game-end-death');
     B[T.ENDTIME]=1;B[T.ENDTIME+1]=0;
-    n.setBreak(T.frame,true);for(let f=0;f<100&&n.cpu.pc!==T.frame;f++)n.runFrame();
+    run(n,k.hooks,100);
+    check(atTitle(n,B,T),'game: death timeout returns to TITLE with S1 hooks and raster IRQ off');
+    n.setBreak(T.frame,true);
+    resumeFromTitle(n,T);
+    for(let f=0;f<30&&n.cpu.pc!==T.frame;f++)n.runFrame();
     check(n.cpu.pc===T.frame&&n.cpu.sp===stackAtStart,
       'game: restart discards the abandoned frame return and preserves the caller stack');
     n.setBreak(T.frame,false);
@@ -364,6 +375,9 @@ module.exports = function ({boot, run, check, snap, fs, path, OUT}) {
     check(lateCount===0&&!B[T.OVRUN],`game: victory scene has ${lateCount} late splits and ${B[T.OVRUN]} OVRUN`);
     const fresh=ready().m.ram;
     B[T.ENDTIME]=1;B[T.ENDTIME+1]=0;run(n,k.hooks,100);
+    check(atTitle(n,B,T),'game: victory timeout returns to TITLE with S1 hooks and raster IRQ off');
+    resumeFromTitle(n,T);
+    run(n,k.hooks,15);
     check(!B[T.ENDMODE]&&(B[T.gplmode+1]|B[T.gplmode+2]<<8)===T.MAPSHOWN&&(B[T.germode+1]|B[T.germode+2]<<8)===T.MAPSHOWN,
       'game: victory restart restores the star plotter and a fresh game');
     check(Buffer.from(fresh.subarray(0x7680,0x8000)).equals(Buffer.from(B.subarray(0x7680,0x8000)))&&
@@ -393,8 +407,8 @@ module.exports = function ({boot, run, check, snap, fs, path, OUT}) {
     if(stop){
       const plain=waits.find(w=>w.kind===kind&&w.button&&!w.stop).port;
       n.setBreak(T.ENDRESET,false);n.breakInfo=null;n.mouse.left=false;run(n,k.hooks,120);
-      check(at===plain&&exitAt<0&&!n.stopped&&n.mmuCR===0x3E&&!B[T.ENDMODE]&&B[T.SHLD]===40&&B[T.M_SELX]===4&&B[T.M_SELY]===2&&!B[T.OVRUN],
-        `game: RUN/STOP held through the ${kind} ending does nothing: the same reset (${at}/${plain} frames), then a fresh game`);
+      check(at===plain&&exitAt<0&&!n.stopped&&n.mmuCR===0x3E&&atTitle(n,B,T)&&B[T.SHLD]===40&&B[T.M_SELX]===4&&B[T.M_SELY]===2&&!B[T.OVRUN],
+        `game: RUN/STOP held through the ${kind} ending does nothing: the same reset (${at}/${plain} frames), then TITLE`);
       n.setKey(7,7,false);
     }
     waits.push({kind,button,stop,original,port:at});

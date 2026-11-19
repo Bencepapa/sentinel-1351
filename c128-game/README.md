@@ -13,6 +13,11 @@ It is the browser page's default program.
 
 ## How it plays
 
+- Cold boot opens the cockpit title. **F5**, **F7**, joystick fire or a 1351
+  left click opens the flight profile menu. Move up or down with the joystick
+  or mouse in port 2 and press fire or left click to confirm. Cadet, Patrol,
+  Escort, Vanguard and Frontline run from easiest to hardest.
+  The scroll credits are editable in [title-text.txt](title-text.txt).
 - The ship starts in sector 05.03 (map cell 4,2), empty as in the original.
 - **TIME** starts at `00:00`, advances one game second per 60 gameplay frames,
   and wraps after `59:59`. The colon blinks every 30 frames. The clock freezes
@@ -57,8 +62,9 @@ It is the browser page's default program.
   (energy used, shields lost, enemy killed, protons and phasors fired, base
   stations) and SPACE DROID ... CLASS n appear as in the original. Fire restarts after the original
   waiting interval; otherwise it restarts automatically (about 3.5 minutes for
-  death and 6.3 for victory at PAL speed). Restart restores the cockpit, world,
-  ship, sprite slots and movement streams in sector 05.03.
+  death and 6.3 for victory at PAL speed). Restart restores the cockpit, ship,
+  sprite slots and movement streams, then opens the title. Confirming a flight
+  profile generates a new world in sector 05.03.
 - The ship (systems, shields, hits, difficulty) is one: the cockpit's model.
 - The second display (VDC) is off in this program for now: its updates take more
   time than a frame has to spare while the cockpit runs.
@@ -77,17 +83,18 @@ behind the cockpit, including while closed; its world arrays are never scratch.
 |---|---|
 | `$0002-$002A`, `$002D-$00FA`, `$00FF` | **Zero page, 248 bytes free** (the game uses `$FB-$FE`, and the relocated original rating `$F440` its temp `$2B/$2C`; BASIC's/the KERNAL's zero page is not kept: no return to BASIC). |
 | `$0100-$0154` | The bank-1 copy stub in common RAM below the stack (`bank1.asm`; the stack never goes below `$01EA`). `$0155-$01BF` (107 bytes) is free common RAM below the stack. |
-| `$0200-$0556` | The ending's resident core (`ending.asm`: the checks in play, the death flash, the victory's refill, the statistics hooks, the snapshot copy and its descriptors, the reset's last part). BASIC's RAM: not saved (no return to BASIC). |
-| `$0557-$05CC` | Resident TIME clock (`ending.asm`), staged with the ending core. 111 code bytes and 7 data bytes. |
-| `$05CD-$0C5F` | **1,683 bytes free** in every mode. |
+| `$0200-$055C` | Resident ending checks, statistics, reset and snapshot helpers in `ending.asm`. |
+| `$055D-$05DA` | Resident TIME clock, staged with the ending core. 119 code bytes and 7 data bytes. |
+| `$05DB-$0AD2` | Later resident helpers, including the TITLE entry and first-jump MINES loader at `$0A6A-$0AD2`. |
+| `$0AD3-$0C5F` | **397 bytes free** in every mode. |
 | `$0C60-$19F8` | 3,481-byte resident relocated mothership/repair/message/positioning/enemy-proton block. Used in M, message jobs also F/D/H; retained in every mode. |
 | `$19F9-$1A09` | 17 bytes in C128 BASIC's free ML area, installed with the block: `ENDCROSS`, the victory's input hook (issue #20). |
 | `$1A0A-$1A0F` | 6 bytes free. |
-| `$1A10-$1BF7` | The overlay manager (`overlay.asm`, installed by B1INIT from its staging): S1's owner, the loader, MNREQ, the trampolines. `$1BF8-$1BFF` 8 bytes free. |
+| `$1A10-$1BFE` | The overlay manager (`overlay.asm`, installed by B1INIT from staging), including S1's owner, the loader, MNREQ and the trampolines. `$1BFF` is free. |
 | `$1C01-$1C0C` | BASIC SYS stub; init only (dead after init). |
 | `$1C0D-$1C0F` | Loader-to-entry padding. |
-| `$1C10-$1C92` | `ENDINIT` (init only), `ELVADR`, `ELREG`, `ENDQUIET` (scene shutdown), `ENDSTREAMS` (the reset's MINES/stream reload). |
-| `$1C93-$1CFF` | **109 bytes free** (the loader's tail; `ENDRESTORE`, the exit to BASIC, was here). |
+| `$1C10-$1CC9` | `ENDINIT` and `TITLESTORE` at init, plus resident bank 1 and reset helpers. |
+| `$1CCA-$1CFF` | **54 bytes free** in the loader's tail. |
 | `$1D00-$28D6` | Cockpit first code/state chunk; resident F/D/M/H. Two holes left by the exit to BASIC (same size, nothing moved): **`$1D14-$1D58` 69 bytes** (START's saves of the caller's state; START jumps over them) and **`$1F79-$1FD8` 96 bytes** (the old `EXIT`; the label stays). `SAVMMU`-`SAV1D` (`$28A3-$28B0`) are dead variables left in place (12 of them restored by the reset snapshot). |
 | `$28D7-$28F5` | Repair art-restore helper; resident, executes M. |
 | `$28F6-$28F7` | Padding. |
@@ -105,7 +112,7 @@ behind the cockpit, including while closed; its world arrays are never scratch.
 | `$3000-$33E7` | Original colour RAM image; resident master, init and scene restoration. |
 | `$33E8-$33FD` | Repair helper; resident, M. |
 | `$33FE-$33FF` | Padding. |
-| `$3400-$35FF` | Phasor X/Y path buffers; F/D/M. Not available as persistent scratch in H. |
+| `$3400-$35FF` | Title art and text staging at load. `TITLESTORE` clears both pages for the phasor X/Y path buffers before play. |
 | `$3600-$3680` | Long-range scanner scale, 129 bytes; F/D/M/H. |
 | `$3681-$368C` | Repair helper; resident, M. |
 | `$368D-$368F` | Padding. |
@@ -150,11 +157,11 @@ behind the cockpit, including while closed; its world arrays are never scratch.
 | `$D052-$D05F` | Staging padding; hidden beneath I/O during gameplay. |
 | `$D060-$DCE5` | 3,206-byte packed low-code stream at load/init, consumed before backup installation. |
 | `$DCE6-$DEFE` | Tunnel stream staging (`MTSTAGE`), consumed before backup installation; `$DEFF` is the one byte left. |
-| `$DF00-$DF8D` | RAM beneath I/O: 142 runtime bytes staged at load, copied to the reclaimed decoder before backup installation. PRG ends here. |
+| `$DF00-$DF8D` | RAM beneath I/O. During init, 142 runtime bytes are staged here for the reclaimed decoder. |
 | `$DF8E-$DFFF` | No load-time payload; reserved staging/backup tail. |
 | `$D200-$DFFF` (runtime) | Free RAM beneath I/O after init (data only, MMU `$3F`): the low-RAM backup moved to bank 1 (2026-11-17). |
-| `$E000-$E95F` | Resident proton/type/hyperspace code/state; packed then installed at init, F/D/M/H. At load, `$E000-$EA5F` stages the ending workspace and `$EA60-$F25F` the ending's VDC payload (the PRG ends at `$F25F`); both are consumed before the high image is unpacked. |
-| `$E960-$F6F8` | **S1, the overlay slot** (`overlay.asm`): one package at a time, copied from bank 1. At init `GINIT3` runs at `$E960`. MINES (`$EA16-$F6F6`: the minefield/tunnel code, 398-byte packed mine art, tables, compressed movement master; its 768-byte sprite backup borrows `$8100-$83FF`) is in S1 in play; the ENDING package (`$E970-$F0ED`) replaces it from a death or a victory until the reset reloads MINES. |
+| `$E000-$E95F` | Resident proton, type and hyperspace code after init. Load-time staging above `$E000` holds the resident core, ENDING, the bank-1 payload, `B1INIT`, the overlay manager and the TITLE code stream through `$FECA`. |
+| `$E960-$F6F8` | **S1, the overlay slot**. `GINIT3` runs here at init. TITLE (`$E963`) owns it at boot and after a reset. MINES (`$EA16-$F6F6`) loads during the first jump or at a base arrival. ENDING (`$E970-$F122`) owns it during a death or victory. |
 | `$F6F7-$F6F8` | Two bytes free in every mode (no package uses them). |
 | `$F6F9-$FE7F` | Unchanged 1,927-byte TORPA stream; resident, player and enemy protons. |
 | `$FE80-$FEFF` | TSHOT, 128 bytes of original shot masters; resident, F/D/M restoration. End of decoded high image. |

@@ -3,7 +3,7 @@
 // a game found by the hooks in the C64 original and in the C128 port, the score store) and the
 // audio start fallbacks (issue #14). The DOM part of the page (js/src/itch.js) is checked by
 // building it and, by hand, in a browser (js/README.md).
-module.exports = function ({ boot, run, check, fs, path, ROOT }) {
+module.exports = function ({ boot, run, check, fs, path, ROOT, resumeFromTitle }) {
   const vm = require('vm');
   const HI = require('../src/hiscore.js');
   const SentinelHooks = require('../src/hooks.js');
@@ -48,6 +48,27 @@ module.exports = function ({ boot, run, check, fs, path, ROOT }) {
         startsInJoystickMode && modes.join() === 'mouse,joystick',
         `itch: packaged ${name} starts in joystick mode and reports both input mode changes to the overlay`);
     }
+    const {m, p: {symbols: s}} = boot('game', 'trace', {atTitle: true});
+    const p = packaged.game;
+    m.loadPrg(new Uint8Array(Buffer.from(p.prg, 'base64')));
+    m.start(p.entry);
+    m.dma = true;
+    const hooks = new SentinelHooks(m, p.symbols), input = new SentinelInput(m, hooks);
+    HI.watch(m, hooks, 'game', p.symbols, () => {});
+    const until = (predicate, limit) => {
+      for (let f = 0; f < limit && !predicate(); f++) m.runFrame();
+      return predicate();
+    };
+    const title = until(() => m.ram[s.OVOWNER] === s.TITLEOWNER && m.ram[s.TITLEARM], 100);
+    m.setKey(0, 3, true);
+    const menu = until(() => m.ram[s.TITLEMENU], 12);
+    m.setKey(0, 3, false);
+    until(() => m.ram[s.TITLEARM], 12);
+    input.setJoystick('ControlRight', true);
+    const play = until(() => m.ram[s.GENDONE] && !m.ram[s.M_NSQ], 30);
+    input.setJoystick('ControlRight', false);
+    check(title && menu && play && m.ram[s.OVOWNER] === 0 && !m.ram[s.OVRUN] && !m.stopped,
+      'itch: packaged C128 program reaches TITLE, opens the selector with F7 and starts with page joystick fire');
   }
   const state = n => JSON.parse(fs.readFileSync(path.join(__dirname, '../../briefs/ref/' + n), 'utf8')).state;
   const call = (m, a) => {
@@ -262,7 +283,11 @@ module.exports = function ({ boot, run, check, fs, path, ROOT }) {
       `itch: the C128 port's lost game: 2 motherships destroyed, 3 kills at difficulty 4, the 3 bases left do not count = 350 (${r && r.text})`);
     check(clockState(k) === deathClock, 'itch: the C128 clock and its frame divider freeze through the death scene');
     B[T.ENDTIME] = 1; B[T.ENDTIME + 1] = 0;
+    for (let f = 0; f < 100 && B[T.OVOWNER] !== T.TITLEOWNER; f++) m.runFrame();
+    check(B[T.OVOWNER] === T.TITLEOWNER && clockState(k) === zeroClock,
+      'itch: the C128 game-over reset returns to TITLE with a cleared clock');
     m.setBreak(T.CLOCKTICK, true);
+    resumeFromTitle(m, T);
     for (let f = 0; f < 100 && !m.breakInfo; f++) m.runFrame();
     check(m.cpu.pc === T.CLOCKTICK && B[T.ENDMODE] === 0 && clockState(k) === zeroClock,
       'itch: the C128 game-over reset clears the HUD, hours and frame divider before the first gameplay tick');

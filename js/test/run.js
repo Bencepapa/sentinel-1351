@@ -35,6 +35,28 @@ let failures = 0;
 function check(cond, msg) { console.log((cond ? 'ok   ' : 'FAIL ') + msg); if (!cond) failures++; }
 const freeMemoryRuns = [];
 
+function titleDefaultFrame(m, s, frame) {
+  const {present, left, right} = m.mouse;
+  const keys = m.keys[0], joy = m.joy2;
+  m.mouse.present = m.mouse.left = m.mouse.right = false;
+  m.keys[0] = m.ram[s.TITLEARM] && !m.ram[s.TITLEMENU] ? 1 << 6 : 0;
+  m.joy2 = m.ram[s.TITLEARM] && m.ram[s.TITLEMENU] ? 16 : 0;
+  try {
+    return frame();
+  } finally {
+    Object.assign(m.mouse, {present, left, right});
+    m.keys[0] = keys;
+    m.joy2 = joy;
+  }
+}
+
+function resumeFromTitle(m, s) {
+  for (let f = 0; f < 30 && m.ram[s.OVOWNER] === s.TITLEOWNER; f++) {
+    if (!titleDefaultFrame(m, s, () => m.runFrame())) return false;
+  }
+  return m.ram[s.OVOWNER] !== s.TITLEOWNER;
+}
+
 function boot(name, mode, opts) {
   const p = PROGRAMS[name];
   const m = new C128(p.model);
@@ -42,6 +64,26 @@ function boot(name, mode, opts) {
   const hooks = new Hooks(m, p.symbols);
   const ported = Native.install(hooks, mode);
   m.start(p.entry);
+  if (name === 'game' && !(opts && opts.atTitle)) {
+    // Play fixtures start the default flight profile through the native UI.
+    // Leave subsequent game-over resets at the title for each test to inspect.
+    const s = p.symbols, frame = m.runFrame.bind(m);
+    let started = false;
+    m.runFrame = function () {
+      if (started || m.ram[s.OVOWNER] !== s.TITLEOWNER) return frame();
+      const result = titleDefaultFrame(m, s, frame);
+      started = m.ram[s.OVOWNER] !== s.TITLEOWNER;
+      return result;
+    };
+    if (!(opts && opts.lazyMines)) {
+      // Older fixtures call MINES entries directly or time play with the
+      // package already present. Start those scenarios with its init image.
+      hooks.on('g_gi9', () => {
+        m.ram.set(m.ram1.subarray(s.B1MINES, s.B1MINES + s.MNEXTRAEND - s.MNSTART), s.MNSTART);
+        m.ram[s.OVOWNER] = 0x80;
+      });
+    }
+  }
   if (name === 'game' && !(opts && opts.noFill)) {
     const s=p.symbols, record={armed:false, intact:true, frames:0, bad:null, at:new Error().stack.split('\n')[2]};
     m.freeMemoryRecord=record;
@@ -1099,9 +1141,9 @@ require('./mine-parity')({boot,run,check,fs,path,OUT});
   // No return to BASIC: nothing of BASIC's is copied into bank 1 (no $0200-$1BFF, no
   // stub page, no vectors/PCRs), and BASIC 7's areas there are neither kept nor written.
   const nonzero=(lo,hi)=>m.ram1.subarray(lo,hi).some(v=>v);
-  check(!nonzero(0x0500,S.ENDB1SNAP)&&!nonzero(0x8600,0xFE00)&&
+  check(!nonzero(0x0500,S.ENDB1SNAP)&&!nonzero(S.B1TITLE+S.TITLEPAGES*256,0xFE00)&&
     Buffer.from(m.ram1.subarray(0x0400,0x0500)).equals(basic1)&&Buffer.from(m.ram1.subarray(0xFE00,0xFF00)).equals(basic1),
-    'memory: init writes no backup of BASIC\'s RAM, stack page, vectors or PCRs into bank 1 (free $0400-$2BFF, $8600-$FEFF untouched)');
+    'memory: init writes no backup of BASIC\'s RAM, stack page, vectors or PCRs into bank 1 (free areas outside the store are untouched)');
   m.setBreak(S.frame,false);m.stopped=null;
   // RUN/STOP (held for 40 frames in flight, then 60 more while C= opens the map) does
   // nothing: the frame loop never leaves (the cockpit's old EXIT and START's saves are
@@ -1671,7 +1713,7 @@ require('./mine-parity')({boot,run,check,fs,path,OUT});
     A[S.MSKILLED] = 0; A[S.TPF] = 2; A[S.TPKX] = 3; A[S.torpj] = 0x20;
     m.colorRam.fill(kind === 0xFF ? 6 : 2,0xA0,0x2A8);
     call(m,S.MSBLAST);
-    let portOK = true, late = 0, orangeFrame = -1;
+    let portOK = true, late = 0, firstOrange = -1, orangeFrame = -1;
     const portFrames = [];
     for (let f = 0; f < 120 && (f < 12 || A[S.TPF]); f++) {
       m.runFrame(); late += lateWrites(m);
@@ -1682,9 +1724,14 @@ require('./mine-parity')({boot,run,check,fs,path,OUT});
       portOK &&= view[0] === border && view[1] === background;
       // Compare every cell with the original; allow the existing bounded row-fill latency.
       portOK &&= hit ? colour.every((x,i) => x === frames[Math.min(f,frames.length-1)].colour[i] || (orangeFrame < 0 && x === initial[i])) : colour.equals(Buffer.from(frames[Math.min(f,frames.length-1)].colour));
+      if (hit && firstOrange < 0 && colour.includes(8)) firstOrange = f;
       if (hit && colour.every(x => x === 8) && orangeFrame < 0) orangeFrame = f;
     }
-    check(portOK && (hit ? orangeFrame >= 0 && orangeFrame <= 6 && A[S.TPF] === 0 : A[S.TPF] === 0 && !A[S.MSKILLED]),
+    // MSBLAST arms the job. The direct call can fall on either side of the
+    // blanking deadline, so bound the dispatch and the six-frame fill separately.
+    const filled = firstOrange >= 0 && firstOrange <= 2 &&
+      orangeFrame >= firstOrange && orangeFrame - firstOrange < 6;
+    check(portOK && A[S.TPF] === 0 && (hit ? filled : !A[S.MSKILLED]),
       `game: ${kind===0xFF?'friendly':'enemy'} radius ${radius} phase ${phase}: frame palettes match original${hit?' after bounded fill':''}`);
     check(late===0 && A[S.OVRUN]===0, `game: base blast has ${late} late splits, ${A[S.OVRUN]} overruns`);
     blastTrace.push({kind,phase,radius,hit,original:frames,port:portFrames});
@@ -2039,17 +2086,18 @@ require('./mine-parity')({boot,run,check,fs,path,OUT});
 
 }
 
-require('./game-end')({boot,run,check,snap,fs,path,OUT});
+require('./game-end')({boot,run,check,snap,fs,path,OUT,resumeFromTitle});
+require('./title')({boot,check,snap});
 require('./c64-arrival')({boot,check,fs,path});
 require('./banks')({boot,run,check,fs,path,ROOT});
 require('./bugs')({boot,run,check,snap,fs,path,OUT});
 require('./overlay')({boot,run,check,fs,path,OUT});
 require('./joystick')({boot,run,check});
 require('./hyperspace-sid')({boot,run,check});
-require('./function-keys')({boot,run,check});
+require('./function-keys')({boot,run,check,resumeFromTitle});
 require('./c128-controllers')({boot,run,check});
 require('./mission-messages')({boot,run,check});
-const itchDone=require('./itch')({boot,run,check,fs,path,ROOT});   // (its audio checks are asynchronous)
+const itchDone=require('./itch')({boot,run,check,fs,path,ROOT,resumeFromTitle});   // (its audio checks are asynchronous)
 
 for(const r of freeMemoryRuns) if(!r.intact) console.log(`     free RAM written: ${r.bad} (boot${r.at})`);
 check(freeMemoryRuns.every(r=>r.intact)&&freeMemoryRuns.some(r=>r.frames>1000),

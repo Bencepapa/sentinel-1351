@@ -19,12 +19,14 @@
 ;   B1STREAM $6400-$66FF the movement streams $8100-$83FF (the reset)
 ;   B1MINES $7000-$7CFF  the MINES package (overlay.asm)
 ;   B1ENDING $7E00-$85FF the ENDING package (ending.asm)
+;   B1TITLE $8600        the TITLE package (title.asm)
 ;   $FFFA-$FFFF          the NMI/RESET/IRQ vectors: NMIB1
 ;   free: $0400-$2BFF, the payload's end-$63FF, $6700-$6FFF, $7D00-$7DFF,
-;   $8600-$FEFF, $FF05-$FFF9 ($FF00-$FF04 are the MMU's in every bank)
+;   after B1TITLE-$FEFF, $FF05-$FFF9 ($FF00-$FF04 are the MMU's in every bank)
 B1STREAM = $6400        ; $8100-$83FF, the type-1 movement streams the mines borrow
 B1MINES = $7000         ; the MINES package (S1 at $EA16), as decoded at init
 B1ENDING = $7E00        ; the ENDING package (S1 at ENDPKG), ENDPKGPAGES pages from its staging
+B1TITLE = $8600         ; the TITLE package (S1 at TITLEPKG)
 ENDPKGPAGES = 8         ; (build.py checks the package fits)
 B1SH   = $FC           ; CSRC+1 and CDST+1 in zero page
 B1DH    = $FE
@@ -133,8 +135,10 @@ bi_ovl2:LDA OVLIMG+255,X
         STA CDST
         STY CDST+1
         LDX #ENDPAYPAGES
-        JMP B1PUT
+        JSR B1PUT
+        JMP TITLESTORE
 ENDSTUBIMG:
 B1INITEND:
 OVLIMG = ENDSTUBIMG+128 ; (build.py stages the stub, then the manager's area)
 OVAREALEN = 496         ; OVBASE-$1BFF (build.py checks)
+TITLESTAGE = OVLIMG+496

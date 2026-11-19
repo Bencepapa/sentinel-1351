@@ -1,6 +1,6 @@
 'use strict';
 
-module.exports = function ({boot, run, check}) {
+module.exports = function ({boot, run, check, resumeFromTitle}) {
   function ready() {
     const game = boot('game', 'trace');
     game.m.dma = true;
@@ -82,14 +82,16 @@ module.exports = function ({boot, run, check}) {
     A[S.SHLD] = 1;
     A[0x485B] = 0x71;
     m.setKey(0, 3, true);
-    const restarted = until(m, () => A[S.SHLD] === A[S.SHTAB] && A[S.CLOCKDIV] === 60, 100);
+    const restarted = until(m, () => A[S.OVOWNER] === S.TITLEOWNER, 100);
     check(restarted && A[S.DIFF] === 0 && A[0x485B] === 0x78 &&
-      A[S.OVOWNER] === 0x80 && !A[S.OVREFUSE] && !A[S.PAUSED],
-      'F7 restores difficulty, shields, protons and the clock through the game-over reset');
+      A[S.SHLD] === A[S.SHTAB] && A[S.CLOCKDIV] === 60 && !A[S.OVREFUSE] && !A[S.PAUSED],
+      'F7 restores difficulty, shields, protons and the clock on its return to TITLE');
     for (let f = 0; f < 20; f++) m.runFrame();
-    check(A[S.CLOCKDIV] < 60 && Math.abs(m.cpu.sp - initialSP) < 12,
-      'Holding F7 causes one restart and play resumes with a balanced stack');
+    check(A[S.CLOCKDIV] === 60 && !A[S.TITLEMENU] && Math.abs(m.cpu.sp - initialSP) < 12,
+      'Holding F7 causes one restart and waits at TITLE with a balanced stack');
     m.setKey(0, 3, false);
+    check(resumeFromTitle(m, S) && until(m, () => A[S.CLOCKDIV] < 60, 20),
+      'The difficulty menu can start another flight after an F7 reset');
   }
 
   {
@@ -114,9 +116,10 @@ module.exports = function ({boot, run, check}) {
     m.joy2 = 0;
     A[S.SHLD] = 1;
     pulse(m, 3);
-    check(until(m, () => A[S.CLOCKDIV] === 60 && A[S.SHLD] === A[S.SHTAB] && A[S.MSSTATE] === 0, 100) &&
-      A[S.OVOWNER] === 0x80 && !A[S.OVREFUSE] && !A[S.OVRUN],
-      'F7 shuts down the mine IRQ and restarts through the ENDING package');
+    check(until(m, () => A[S.OVOWNER] === S.TITLEOWNER, 100) &&
+      A[S.CLOCKDIV] === 60 && A[S.SHLD] === A[S.SHTAB] && !A[S.MSSTATE] &&
+      !(m.vic[0x1a] & 1) && !A[S.OVREFUSE] && !A[S.OVRUN],
+      'F7 shuts down the mine IRQ and returns to TITLE through ENDING');
   }
 
   function repair(skip) {

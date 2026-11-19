@@ -42,7 +42,7 @@ GAMEINIT:               ; once, from the cockpit's START
         LDA $D012       ; (the world's seed: before the unpacking, whose time varies)
         STA GSEED
         JSR GINIT2      ; the $E000 code and data (at the glue's end: these 38 bytes
-        JMP g_gi9       ; keep the code after them where it was, as the fight's tight
+        JMP TITLEBOOT   ; keep the code after them where it was, as the fight's tight
         .BYTE 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
 g_gi9:                  ; timing was measured with it)
         LDA #<NMIRTI    ; NMI (RESTORE) and IRQ/BRK vectors in the RAM under the KERNAL
@@ -1153,6 +1153,7 @@ g_gi2:  LDA $2900,X     ; restore type 1 from TSH1 after unpacking over its slot
         STA $6300,X
 g_gi1:  INX
         BNE g_gi2
+GVIEWCLEAR:
         LDA #$63        ; the view's bitmap cleared: $63C0-$767F (18 pages and 192)
         STA CDST+1
         LDA #$C0
@@ -2420,7 +2421,7 @@ g_hw1:  STA HNORAD
         JMP HYPSTART
 g_hvp:  LDA HYPON
         BEQ g_hv9
-        JMP HYPVB
+        JMP OVMINEJUMP  ; idle flight keeps its direct return above
 g_hv9:  RTS
 
 ; Hyperspace's stars, in the vertical blank (MAPVB, 2 MHz: at 1 MHz in the view they

@@ -50,13 +50,9 @@ el_noenemy:STA ALIVE,X
         LDA #1
         STA HPEND       ; refuse map/SPACE until the independent ending loop takes over
         JMP EFRESET
-; (the reset) MINES back into S1 in its init state (the snapshot leaves S1 out),
-; then the movement streams the mines borrow, from their bank-1 copies.
+; (the reset) restore the movement streams MINES can borrow. S1 stays owned
+; by ENDING until the resident title entry replaces it.
 ENDSTREAMS:
-        LDA #0
-        STA OVOWNER
-        LDX #1
-        JSR OVLOAD
         LDA #<B1STREAM
         STA CSRC
         LDA #>B1STREAM
@@ -67,4 +63,35 @@ ENDSTREAMS:
         STA CDST+1
         LDX #3
         JMP B1GET
+; Init only. Decode to borrowed low RAM before GINIT2 installs the low block.
+TITLESTORE:
+        LDA #<TITLESTAGE
+        STA CSRC
+        LDA #>TITLESTAGE
+        STA CSRC+1
+        LDA #0
+        STA CDST
+        LDA #$10
+        STA CDST+1
+        JSR g_upb
+        LDA #<TITLEARTSTAGE
+        STA CSRC
+        LDA #>TITLEARTSTAGE
+        STA CSRC+1
+        JSR g_upb       ; append the title art and copy to the decoded code
+        LDX #0
+        LDA #0
+title_clrpath:
+        STA TITLEARTSTAGE,X
+        STA TITLEARTSTAGE+256,X
+        INX
+        BNE title_clrpath
+        STA CSRC
+        STA CDST
+        LDA #$10
+        STA CSRC+1
+        LDA #>B1TITLE
+        STA CDST+1
+        LDX #TITLEPAGES
+        JMP B1PUT
 ENDLOADEREND:

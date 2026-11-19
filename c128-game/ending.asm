@@ -218,8 +218,7 @@ end_rattlenext:
         DEY
         BNE end_rattle
         RTS
-; The reset's resident part: MINES and the borrowed streams back from bank 1 (over the
-; ENDING package), then the fresh game.
+; The reset's resident part: rebuild the display and ship, then enter TITLE.
 ENDRESET2:
         JSR ENDSTREAMS
         JSR MRGLYPHBACK
@@ -236,7 +235,7 @@ ENDRESET2:
         JSR GTYPE
         JSR SHIPINIT
         JSR EFRESET
-        JSR g_gi9
+        JSR GVIEWCLEAR  ; erase the ending's bitmap before drawing the title
         LDA #0
         STA ENDMODE
         STA ENDWIN
@@ -376,7 +375,7 @@ ENDRANGESEND:
 ; Gameplay clock. The C64 calls $FAD7 from its raster IRQ at $0BF6, once per
 ; active frame. $FAE9 advances the display every 60 calls, and $FB36 toggles
 ; the colon every 30. The HUD text cells hold the four digits directly.
-CLOCKINIT:              ; g_gi9 is shared by cold start and ENDRESET2
+CLOCKINIT:              ; the title and the handoff to play both start at 00:00
         LDA #60
         STA CLOCKDIV
         LDA #0
@@ -743,7 +742,7 @@ end_colorback:
         STA $DB00,X
         INX
         BNE end_colorback
-        JMP ENDRESET2   ; (resident: it puts MINES back over this package)
+        JMP ENDRESET2   ; (resident: can replace this package with TITLE)
 ; A text line uses the original 16-pixel-wide bitmap alphabet ($0816).
 ENDPRINTAT:
         STA ENDTEXTP

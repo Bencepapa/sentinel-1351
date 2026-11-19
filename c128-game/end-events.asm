@@ -44,7 +44,7 @@ ee_done:PLA
 ENDRETURN:
         PLA             ; discard the frame's abandoned JSR VIEWWORK/ENDVIEW return
         PLA
-        JMP frame
+        JMP TITLERESET
 ENDBASETALLY:
         JSR ENDONE      ; original recharge tally includes one full-meter overflow
         JMP MRGLYPHBACK

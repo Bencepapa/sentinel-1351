@@ -3,8 +3,8 @@
 ; address, never relocated (MINES at $EA16 keeps the tunnel's page crossings).
 ; Packages: 1 MINES (the base sectors: minefield, tunnel, mine art; linked at
 ; $EA16), 2 ENDING (the death scene, the victory's text and wait, the reset's
-; first part, the rating; linked at ENDPKG). OVOWNER says which one S1 holds:
-; $80 MINES, $40 ENDING, 0 none (a load in progress: 0).
+; first part, the rating; linked at ENDPKG), 3 TITLE (the start menu).
+; OVOWNER: $80 MINES, $40 ENDING, $20 TITLE, 0 none or a load in progress.
 ;
 ; Every reference from resident code into S1 goes through a trampoline below
 ; (build.py audits the operands of all resident instructions), except the base
@@ -21,6 +21,10 @@ OVBASE  = $1A10
 OVAREAEND = $1C00
 S1BASE  = $E960
 S1END   = $F6F9
+OVMINES = 1
+OVENDID = 2
+OVTITLE = 3
+TITLEOWNER = $20
 OVCHUNK = 32            ; bytes a step copies between raster checks (~14 lines)
 OVFIRST = 78            ; (OVSTEP: not before the view, not into the splits above it)
 
@@ -36,13 +40,13 @@ OVLIM:  .BYTE 176       ; OVSTEP's deadline line (a piece then ends by line ~190
 OVMISS: .BYTE 0         ; trampoline calls that found their package missing
 OVREFUSE:.BYTE 0        ; refused loads (the slot was busy)
 ; Packages (0: none, an eviction): S1 flag, bank-1 address, run address, end.
-OVFLAG: .BYTE 0,$80,$40
-OVB1LO: .BYTE 0,<B1MINES,<B1ENDING
-OVB1HI: .BYTE 0,>B1MINES,>B1ENDING
-OVDLO:  .BYTE 0,<MNSTART,<ENDPKG
-OVDHI:  .BYTE 0,>MNSTART,>ENDPKG
-OVELO:  .BYTE 0,<MNEXTRAEND,<ENDINGEND
-OVEHI:  .BYTE 0,>MNEXTRAEND,>ENDINGEND
+OVFLAG: .BYTE 0,$80,$40,TITLEOWNER
+OVB1LO: .BYTE 0,<B1MINES,<B1ENDING,<B1TITLE
+OVB1HI: .BYTE 0,>B1MINES,>B1ENDING,>B1TITLE
+OVDLO:  .BYTE 0,<MNSTART,<ENDPKG,<TITLEPKG
+OVDHI:  .BYTE 0,>MNSTART,>ENDPKG,>TITLEPKG
+OVELO:  .BYTE 0,<MNEXTRAEND,<ENDINGEND,<TITLEEND
+OVEHI:  .BYTE 0,>MNEXTRAEND,>ENDINGEND,>TITLEEND
 
 ; X = package: begin loading it into S1 (OVSTEP copies it). C set: refused.
 OVSTART:
@@ -247,8 +251,8 @@ om_off: LDA #48
         JMP MSPOSOFF
 ; A base sector's arrival (MSECTOR, for a mothership; same-size patch of its
 ; JSR MSPOSON): MINES must be in S1 for the whole sequence (its calls into MINES
-; are direct). Normally it is (only an ending empties S1 and the reset reloads it):
-; else OVMISS counts and it is loaded now.
+; are direct). If the sector was entered without a background load, OVMISS
+; counts and it is loaded here.
 OVBASEIN:
         BIT OVOWNER
         BMI ob_ok
@@ -258,7 +262,7 @@ OVBASEIN:
         TYA
         PHA
         INC OVMISS
-        LDX #1
+        LDX #OVMINES
         JSR OVLOAD
         PLA
         TAY
@@ -277,7 +281,7 @@ OVENDING:
         TYA
         PHA
         INC OVMISS
-        LDX #2
+        LDX #OVENDID
         JSR OVLOAD
         PLA
         TAY
