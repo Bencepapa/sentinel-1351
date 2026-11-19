@@ -24,8 +24,17 @@ python c128-game/build.py
   -autostart c128-game\sentinel-c128-game.prg
 ```
 
-Mouse in port 2 or a joystick. Left button or fire shoots, the right button or C=
-opens the map, A switches the tracking computer. SPACE launches a proton torpedo.
+The cockpit title uses the C64 bitmap lettering, animated credit colours,
+a 38-column scroller and a one-shot SID cue. F5, F7 or Fire opens the difficulty selector. Move the
+crosshair with a port-2 joystick or 1351 mouse and fire to confirm Skirmish,
+Assault, Battle, Invasion or Armageddon. The phasor fires and the selected
+difficulty flashes for about three seconds. A scrolling welcome and an
+expanding briefing panel follow. The sector map opens when the panel closes.
+A fresh Fire or Space press advances from the briefing straight to the map.
+[Editable title text and music](c128-game/README.md#how-it-plays)
+
+In flight, left button or fire shoots, the right button or C= opens the map, A
+switches the tracking computer, and SPACE launches a proton torpedo.
 There is no return to BASIC 7 (RUN/STOP does nothing; reset the machine to leave).
 
 ## C64 mouse patch

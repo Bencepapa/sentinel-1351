@@ -3,7 +3,6 @@
 ; stub in common RAM at $0100, B1INIT). No gameplay code changes banks or calls
 ; the KERNAL; the stub's transfers run with interrupts off. The game never
 ; returns to BASIC: nothing of BASIC's is saved or restored.
-ENDCOREPAGES = 9
         * = $1C10
 ENDINIT:
         INC FAST
@@ -12,18 +11,10 @@ ENDINIT:
         STA CSRC+1
         LDA #2
         STA CDST+1
-        LDY #0
-        STY CSRC
-        STY CDST
-        LDX #ENDCOREPAGES ; resident core (the package went to bank 1)
-el_copy:LDA (CSRC),Y
-        STA (CDST),Y
-        INY
-        BNE el_copy
-        INC CSRC+1
-        INC CDST+1
-        DEX
-        BNE el_copy
+        LDA #0
+        STA CSRC
+        STA CDST
+        JSR g_upb       ; resident core, before the high image reuses its staging
         JMP ENDSETUP    ; (it calls GINIT2, then takes the reset snapshot)
 ; The bank-1 byte address of ELREAD / ELWRITE (both): A = high, X = low.
 ELVADR: STX b1r+1
@@ -71,27 +62,59 @@ TITLESTORE:
         STA CSRC+1
         LDA #0
         STA CDST
-        LDA #$10
+        LDA #>TITLEDECODE
         STA CDST+1
         JSR g_upb
-        LDA #<TITLEARTSTAGE
+        LDA #<TITLEMIDSTAGE
         STA CSRC
-        LDA #>TITLEARTSTAGE
+        LDA #>TITLEMIDSTAGE
         STA CSRC+1
-        JSR g_upb       ; append the title art and copy to the decoded code
-        LDX #0
+        JSR g_upb
+        LDA #<TITLETAILSTAGE
+        STA CSRC
+        LDA #>TITLETAILSTAGE
+        STA CSRC+1
+        JSR g_upb
+        JSR TITLEEXTRAUNPACK
+        JSR TITLEMATBACK
+        LDX #TITLETAILBLANKLEN-1
+        LDA #$1E
+title_clrink:
+        STA TITLETAILBLANK,X
+        DEX
+        CPX #$FF
+        BNE title_clrink
+        INX
         LDA #0
 title_clrpath:
-        STA TITLEARTSTAGE,X
-        STA TITLEARTSTAGE+256,X
+        STA TITLEMIDSTAGE,X
+        STA TITLEMIDSTAGE+256,X
         INX
         BNE title_clrpath
         STA CSRC
         STA CDST
-        LDA #$10
+        LDA #>TITLEDECODE
         STA CSRC+1
         LDA #>B1TITLE
         STA CDST+1
         LDX #TITLEPAGES
         JMP B1PUT
+; The build saves the original matrix before staging the title stream over it.
+; Restoring it also hands the cockpit palette back to gameplay after TITLE.
+TITLEMATBACK:
+        LDX #0
+title_matrixback:
+        LDA MMAT,X
+        STA TITLETAILSTAGE,X
+        LDA MMAT+256,X
+        STA TITLETAILSTAGE+256,X
+        INX
+        BNE title_matrixback
+        LDX #87
+title_matrixtail:
+        LDA MMAT+512,X
+        STA TITLETAILSTAGE+512,X
+        DEX
+        BPL title_matrixtail
+        RTS
 ENDLOADEREND:

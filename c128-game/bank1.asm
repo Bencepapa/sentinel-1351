@@ -116,14 +116,22 @@ bi_ovl2:LDA OVLIMG+255,X
         STA OVBASE+255,X
         DEX
         BNE bi_ovl2
-        LDA #<ENDPKGSTAGE ; the ENDING package (whole pages: reading on past its end is harmless)
-        LDX #>ENDPKGSTAGE
-        LDY #>B1ENDING
+        LDA #<ENDPKGSTAGE ; decode ENDING before TITLE uses the same low-RAM staging
         STA CSRC
-        STX CSRC+1
-        LDA #<B1ENDING
+        LDA #>ENDPKGSTAGE
+        STA CSRC+1
+        LDA #0
         STA CDST
-        STY CDST+1
+        LDA #>TITLEDECODE
+        STA CDST+1
+        JSR g_upb
+        LDA #0
+        STA CSRC
+        STA CDST
+        LDA #>TITLEDECODE
+        STA CSRC+1
+        LDA #>B1ENDING
+        STA CDST+1
         LDX #ENDPKGPAGES
         JSR B1PUT
         LDA #<ENDSTAGE  ; the payload (the victory text, the reports, the display masters)
@@ -137,6 +145,35 @@ bi_ovl2:LDA OVLIMG+255,X
         LDX #ENDPAYPAGES
         JSR B1PUT
         JMP TITLESTORE
+
+; Init only. The fourth TITLE stream borrows uniform hidden text rows.
+TITLEEXTRAUNPACK:
+        LDA #<TITLEEXTRASTAGE
+        STA CSRC
+        LDA #>TITLEEXTRASTAGE
+        STA CSRC+1
+        JSR g_upb
+        LDA #<TITLELASTSTAGE
+        STA CSRC
+        LDA #>TITLELASTSTAGE
+        STA CSRC+1
+        JSR g_upb
+        LDX #0
+title_extrablank:
+        LDA #$60
+        STA TITLEEXTRASTAGE,X
+        LDA #$1E
+        STA $49E0,X
+        STA $4A70,X
+        INX
+        BNE title_extrablank
+        LDX #63
+        LDA #$60
+title_extratail:
+        STA $49A0,X
+        DEX
+        BPL title_extratail
+        RTS
 ENDSTUBIMG:
 B1INITEND:
 OVLIMG = ENDSTUBIMG+128 ; (build.py stages the stub, then the manager's area)

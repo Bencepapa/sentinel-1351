@@ -770,46 +770,73 @@ VICE x128: RUN/STOP in flight, over the map, in a base sequence, during the deat
 and on the victory screen should do nothing; the death and victory endings and their
 restarts as before.
 
-## 11. Title overlay and flight profile menu
+## 11. Title overlay and difficulty selector
 
-The title survey's steps 1, 2 and 4 are implemented. Cold boot and the shared
-game-over reset load TITLE into S1. The owner is `$20`. The resident entry
-checks the overlay manager's swap guard and runs the title via a trampoline.
-The title polls the raster with IRQs disabled, shares the cockpit's HUD and
-gun sprites, and scrolls a 38-column strip by one pixel per frame. It feeds a
-new character every eight frames and wraps at the terminator. The wordmark
-uses the repository's emulator font. The scroll copy includes the original
-game's attribution and an editable port credits placeholder. [Scroll text](../c128-game/title-text.txt)
+Cold boot and the shared game-over reset load TITLE into S1 with owner `$20`.
+The resident trampoline checks the overlay manager's swap guard before entry.
+The title and selector poll the raster with IRQs disabled. The cockpit bitmap uses the original
+font for the publisher, four-row wordmark and credits. The build reads the
+lettering codes from SN1 in the checked-in 1351 disk. A matrix update shifts
+the PRESENTS and CREATED BY bands one cell a frame in opposite directions.
+The wordmark and the remaining credits cycle palettes at the C64's approximate
+eight-frame cadence. The strip scrolls one pixel per frame in 38 columns. It
+borrows eight blank glyphs at `$40F8-$4137` for punctuation and restores them
+before the briefing. [Editable scroll text and glyph list](../c128-game/title-text.txt)
 
-F5, F7 and fire open the selector. Joystick up/down or 1351 vertical movement
-chooses a flight profile and a fresh fire press confirms it. The resident
-handoff evicts TITLE, sets the ship via `SHIPINIT` and generates the selected
-world through the existing dock, mothership and squadron tables. The first
-jump preloads MINES in bounded chunks during the view so a base can use
-the package immediately on arrival. A direct base entry still has a synchronous
-fallback. The reset restores the streams before changing the S1 owner.
+The newly composed cue *Night Watch* starts once per title visit. Its editable score
+encodes 24 events as frame durations and three SID frequency words per event.
+The player ticks in the view window and clears the SID when the score ends or
+when F5, F7 or Fire opens the selector. The selector resets master volume for
+its own sounds. The score and player state stay in the bank-0 copy of TITLE
+through playback. [Editable score](../c128-game/title-music.txt)
+
+F5, F7 and Fire open the bitmap selector. Joystick or 1351 motion moves the
+crosshair across the five difficulty rows. A fresh fire press runs the cockpit
+phasor and hides the unselected entries. The chosen entry cycles through the
+reference colours and voice 2 repeats its pulse every 12 frames. At 155 frames
+the handoff restores the view and sets the ship through `SHIPINIT`. The
+welcome ribbon scrolls, then the resident raster IRQ moves the text/bitmap
+boundary from line 75 to 123 at one line per 1 MHz frame. The briefing writes
+one cell every two frames and clicks on letters. It holds for 240 frames and
+closes at the opening rate. Fire or Space after release can advance early.
+The handoff disables the IRQ, restores the scanner row, evicts TITLE, and
+initializes the world and first map with resident code. The first hyperspace
+jump preloads MINES in bounded chunks. Direct base entry can load it synchronously.
+[Editable briefing](../c128-game/title-intro.txt)
 
 ### Load and runtime space
 
-The 1,413-byte TITLE package loads at `$E963-$EEE7`. A single compressed
-stream would overfill the PRG load window. `TITLESTORE` decodes two streams
-into low RAM at `$1000` before the permanent low block is installed. It then
-copies the package to its six reserved pages at bank 1 `$8600-$8BFF` and
-clears the two phasor path pages used for staging. The build checks the
-reserved ranges, staged stream sizes, end of PRG and resident S1 operands.
+The 2,844-byte image occupies `$E963-$F47E` and lives in twelve pages of bank 1
+at `$8600-$91FF` between title visits. Before `GINIT2` installs the low block,
+`TITLESTORE` appends five compressed streams into `$0D00` and transfers the
+image to bank 1. The loader clears the phasor paths, restores the view matrix
+from `MMAT`, and restores the uniform matrix and hidden text rows. The build
+checks those rows against the reset display master before placing the streams.
+`ENDINIT` and `B1INIT` use the existing LZ decoder for the resident core at load
+address `$E000` and the ENDING package at `$E980`. This makes room for the
+resident briefing IRQ within the same PRG.
 
 | Area | Layout and free bytes |
 |---|---|
-| Resident tail | `$0AD3-$0C5F`, **397 bytes** |
+| Resident tail | `$0BCA-$0C5F`, **150 bytes** |
 | Overlay manager | `$1A10-$1BFE` used, **1 byte** at `$1BFF` |
-| Loader tail | `$1CCA-$1CFF`, **54 bytes** after `TITLESTORE` |
-| S1 while TITLE runs | **2,068 bytes** outside its loaded image |
-| Bank 1 | **46,325 bytes** free, including the range from `$8C00` |
-| Title code staging | 745 bytes at `$FBE2-$FECA`, **53 bytes** left below `$FF00` |
-| Title art and copy staging | 383 bytes at `$3400-$357E`, **129 bytes** left in these init-only pages |
+| Loader tail | `$1CF5-$1CFF`, **11 bytes** |
+| S1 while TITLE runs | **637 bytes** outside its loaded image |
+| Bank 1 | **44,789 bytes** free, including the range from `$9200` |
+| First TITLE stream | 712 bytes at `$FC2A-$FEF1`, **14 bytes** below `$FF00` |
+| Second TITLE stream | 459 bytes at `$3400-$35CA`, **53 bytes** in the phasor path pages |
+| Third TITLE stream | 664 bytes at `$4478-$470F`, **96 bytes** in bitmap matrix rows 3–21 |
+| Fourth TITLE stream | 700 bytes at `$48A0-$4B5B`, **20 bytes** in hidden text rows |
+| Fifth TITLE stream | 138 bytes at `$75E0-$7669`, **22 bytes** before the cockpit art |
 
-The headless tests use DMA for the title splits, scroller cycle, selector choices,
-first-jump load and death/victory transitions. The packaged itch program uses
-the same entry through the title and reuses the existing ending statistics hooks.
-In VICE x128, check cold boot and scroll, select and confirm with each port-2
-device, then restart from an ending and select a different profile.
+The JS DMA checks compare seven aligned title frames with the C64 bitmap,
+matrix palette and colour-band trace. They compare the selector's five rows,
+the phasor and confirmation timing, the SID pulses and all five starting
+states with both devices. The new checks compare the SID stream with the
+editable score, measure the briefing's 0/24/48-line frames and glyph pacing,
+exercise both skip controls, and verify the packaged itch start and game-over
+detection. The victory reveal also waits for a fresh view window if there is
+too little time for its 520 colour writes before the cockpit split.
+In VICE x128, listen for the cue and selector sounds, let the panel
+open and close, try both skip controls after a restart, and check the scroller
+with a punctuation edit.

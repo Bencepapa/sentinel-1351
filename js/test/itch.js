@@ -65,10 +65,14 @@ module.exports = function ({ boot, run, check, fs, path, ROOT, resumeFromTitle }
     m.setKey(0, 3, false);
     until(() => m.ram[s.TITLEARM], 12);
     input.setJoystick('ControlRight', true);
-    const play = until(() => m.ram[s.GENDONE] && !m.ram[s.M_NSQ], 30);
+    const confirmed = until(() => m.ram[s.TITLEMENU] === 2, 12);
     input.setJoystick('ControlRight', false);
-    check(title && menu && play && m.ram[s.OVOWNER] === 0 && !m.ram[s.OVRUN] && !m.stopped,
-      'itch: packaged C128 program reaches TITLE, opens the selector with F7 and starts with page joystick fire');
+    const intro = until(() => m.ram[s.INTROACTIVE] && m.ram[s.INTROARM], s.TITLECONFIRMFRAMES + 30);
+    input.setJoystick('ControlRight', true);
+    const play = until(() => m.ram[s.GENDONE] && !m.ram[s.M_NSQ] && m.ram[s.MAPSHOWN], 30);
+    input.setJoystick('ControlRight', false);
+    check(title && menu && confirmed && intro && play && m.ram[s.OVOWNER] === 0 && !m.ram[s.OVRUN] && !m.stopped,
+      'itch: packaged C128 program reaches TITLE, confirms the selector and advances from the briefing to the map');
   }
   const state = n => JSON.parse(fs.readFileSync(path.join(__dirname, '../../briefs/ref/' + n), 'utf8')).state;
   const call = (m, a) => {
@@ -196,7 +200,7 @@ module.exports = function ({ boot, run, check, fs, path, ROOT, resumeFromTitle }
       for (let i = 0; i < log.length; i += 4) {
         const line = log[i], cycle = log[i + 1], reg = log[i + 2];
         if ((reg === 32 || reg === 33) && ((line >= 50 && line <= 76) || (line >= 230 && line <= 245)) &&
-            cycle >= 16 && cycle <= 55) late++;
+            cycle >= 16 && cycle <= 55 && m.ram[s.OVOWNER] !== s.TITLEOWNER) late++;   // (the title screen has its own raster work: only flight is budgeted)
       }
     };
     for (let f = 0; f < 320; f++) {

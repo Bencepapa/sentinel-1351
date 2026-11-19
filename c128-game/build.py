@@ -31,6 +31,7 @@ $3800-$3FFF (c128-map/build.py):
          KERNAL routine; the NMI and IRQ vectors point to an RTI)
 """
 
+import importlib.util
 import os
 import json
 import re
@@ -431,48 +432,131 @@ MNEXTRA:''')
 
 LISTING = []
 
+SCROLL_GLYPH_FIRST = 0x1F
+SCROLL_GLYPHS = {
+    ',': (0, 0, 0, 0, 0, 0x18, 0x18, 0x10),
+    "'": (0x18, 0x18, 0x10, 0, 0, 0, 0, 0),
+    '!': (0x18, 0x18, 0x18, 0x18, 0, 0x18, 0x18, 0),
+    '?': (0x3C, 0x66, 0x06, 0x0C, 0x18, 0, 0x18, 0),
+    ':': (0, 0x18, 0x18, 0, 0, 0x18, 0x18, 0),
+    '/': (0x04, 0x0C, 0x18, 0x18, 0x30, 0x60, 0x40, 0),
+    '(': (0x0C, 0x18, 0x30, 0x30, 0x30, 0x18, 0x0C, 0),
+    ')': (0x30, 0x18, 0x0C, 0x0C, 0x0C, 0x18, 0x30, 0),
+}
+
+
+def title_scroller(copy):
+    codes = {' ': 0x40, '.': 0x7A, '-': 0x6C}
+    codes.update((chr(ch), ch) for ch in range(ord('A'), ord('Z') + 1))
+    codes.update((str(i), 0x70 + i) for i in range(10))
+    codes.update((char, SCROLL_GLYPH_FIRST + i) for i, char in enumerate(SCROLL_GLYPHS))
+    lines = []
+    for row, line in enumerate(copy.split('\n'), 1):
+        if not line.strip(' ') or line.lstrip(' ').startswith('#'):
+            continue
+        encoded = bytearray()
+        for column, char in enumerate(line, 1):
+            code = codes.get(char.upper()) if char.isascii() else None
+            if code is None:
+                raise SystemExit(f'title-text.txt:{row}:{column}: unsupported scroller character '
+                                 f'{ascii(char)} (U+{ord(char):04X})')
+            encoded.append(code)
+        lines.append(encoded)
+    text = b'@@@'.join(lines)
+    if not 1 <= len(text) <= 217:
+        raise SystemExit(f'title-text.txt: use 1-217 characters including line gaps (got {len(text)})')
+    return text + b'@' * 38 + b'\xFF'
+
+
+def title_score(score):
+    """Encode frame durations and PAL SID frequencies from editable notes."""
+    semitones = {'C': 0, 'D': 2, 'E': 4, 'F': 5, 'G': 7, 'A': 9, 'B': 11}
+    events = bytearray()
+    for line_number, line in enumerate(score.splitlines(), 1):
+        fields = line.split()
+        if not fields or fields[0].startswith('#'):
+            continue
+        error = f'title-music.txt:{line_number}: expected 1-255 frames and three notes (e.g. 14 D5 C#4 -)'
+        if len(fields) != 4 or not re.fullmatch(r'[0-9]{1,3}', fields[0]) or not 1 <= int(fields[0]) <= 255:
+            raise SystemExit(error)
+        events.append(int(fields[0]))
+        for note in fields[1:]:
+            frequency = 0
+            if note != '-':
+                match = re.fullmatch(r'([A-G])([#b]?)([0-7])', note)
+                if not match:
+                    raise SystemExit(error)
+                letter, accidental, octave = match.groups()
+                pitch = (int(octave) + 1) * 12 + semitones[letter] + {'': 0, '#': 1, 'b': -1}[accidental]
+                frequency = round(440 * 2 ** ((pitch - 69) / 12) * 2 ** 24 / 985248)
+                if frequency > 65535:
+                    raise SystemExit(f'title-music.txt:{line_number}: {note} is above the SID frequency range')
+            events.extend(frequency.to_bytes(2, 'little'))
+    if not 0 < len(events) < 256:
+        raise SystemExit('title-music.txt: enter 1-36 events (the title score uses a one-byte index)')
+    return events + b'\x00'
+
+
+def briefing_source(copy):
+    lines = [line.strip() for line in copy.splitlines() if line.strip() and not line.startswith('#')]
+    if len(lines) != 7 or any(len(line) > 38 or not re.fullmatch(r'[A-Z ]+', line) for line in lines):
+        raise SystemExit('title-intro.txt: enter one welcome and six briefing rows of 1-38 uppercase letters and spaces')
+    welcome, *briefing = (line.replace(' ', '@').encode('ascii') for line in lines)
+    cells = b''.join(b'a' + line.ljust(38, b'@') + b'b' for line in briefing)
+    return as_bytes(welcome + b'@\x00'), as_bytes(cells[:80]), as_bytes(cells[80:])
+
+
+def as_bytes(values):
+    return '.BYTE ' + ','.join(map(str, values))
+
 
 def title_source(read):
-    """Render the new wordmark from the repository's 5x7 emulator font."""
-    font = dict((ch, glyph) for glyph, ch in
-                re.findall(r"'([.#]{35})', // ([A-Z])\n", read('js', 'src/font.js')))
-    pixels = bytearray(96 * 16)  # 24 bitmap cells, two rows, multicolor pixels
-    for letter, ch in enumerate('SENTINEL'):
-        for i, bit in enumerate(font[ch]):
-            if bit == '#':
-                x = letter * 12 + i % 5 * 2
-                y = i // 5 * 2
-                for dy in range(2):
-                    for dx in range(2):
-                        pixels[(y + dy) * 96 + x + dx] = 1
-    for y in range(15, 0, -1):
-        for x in range(95, 0, -1):
-            i = y * 96 + x
-            if not pixels[i] and pixels[i - 97]:
-                pixels[i] = 2
-    logo = [
-        sum(pixels[y * 96 + x + dx] << (6 - dx * 2) for dx in range(4))
-        for row in (0, 8) for x in range(0, 96, 4) for y in range(row, row + 8)
+    """Lay out the supplied C64 credit and menu strings in the cockpit bitmap."""
+    spec = importlib.util.spec_from_file_location('mouse_build', os.path.join(ROOT, 'mouse', 'build.py'))
+    mouse_build = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mouse_build)
+    with open(os.path.join(ROOT, 'Sentinel-1351_v10.d64'), 'rb') as source:
+        disk = source.read()
+    disk_title = mouse_build.read_file(disk, mouse_build.file_sectors(disk, 'SN1'))
+    assert disk_title[:2] == b'\x00\x08'
+
+    def line(row, column, address, length, large=False):
+        bitmap = 0x6000 + row * 320 + column * 8
+        offset = address - 0x800 + 2
+        chars = disk_title[offset:offset + length]
+        return [bitmap & 255, bitmap >> 8, *(ch | (0x80 if large else 0) for ch in chars), 0xFF]
+
+    credits = [
+        line(4, 4, 0x1861, 7), line(4, 20, 0x1868, 8),
+        line(6, 12, 0x1870, 8), line(8, 4, 0x1878, 8, large=True),
+        line(13, 10, 0x1880, 10), line(15, 15, 0x188A, 5),
+        line(16, 9, 0x188F, 11),
     ]
-    copy = '   '.join(read('c128-game', 'title-text.txt').strip().upper().splitlines())
-    assert re.fullmatch(r'[A-Z0-9 .]+', copy), 'TITLE text supports letters, digits, spaces and periods'
-    codes = {' ': 0x40, '.': 0x7A} | {str(i): 0x70 + i for i in range(10)}
-    def encode(value):
-        return [codes.get(ch, ord(ch)) for ch in value]
-
-    def as_bytes(values):
-        return '.BYTE ' + ','.join(map(str, values))
-
-    scroll = encode(copy) + [0x40] * 38 + [0xFF]
-    assert 1 < len(scroll) <= 256, 'TITLE scroller index is one byte'
-    choices = ('CADET', 'PATROL', 'ESCORT', 'VANGUARD', 'FRONTLINE')
-    labels = [v for choice in choices for v in encode(choice) + [0xFF]]
-    menu = '\n'.join(('TITLELABELS: ' + as_bytes(labels),
-                      'TITLEHEADING: ' + as_bytes(encode('FLIGHT PROFILE ')),
-                      'TITLEPROMPT: ' + as_bytes(encode('FIRE TO CONFIRM'))))
-    source = read('c128-game', 'title.asm')
-    return source.replace('; TITLELOGODATA', as_bytes(logo)).replace(
-        '; TITLECOPYDATA', as_bytes(scroll)).replace('; TITLEMENUDATA', menu)
+    options = [
+        line(6, 12, 0x1915, 8), line(8, 13, 0x191D, 7),
+        line(10, 14, 0x1924, 6), line(12, 12, 0x192A, 8),
+        line(14, 10, 0x1932, 10),
+    ]
+    try:
+        with open(os.path.join(HERE, 'title-text.txt'), encoding='utf-8-sig') as copy:
+            scroll = title_scroller(copy.read())
+    except UnicodeDecodeError:
+        raise SystemExit('title-text.txt: save the text file as UTF-8') from None
+    punctuation = bytes(row for glyph in SCROLL_GLYPHS.values() for row in glyph)
+    credit_data = sum(credits, []) + [0, 0]
+    lettering = '\n'.join((f'TITLEOPTIONINDEX = {len(credit_data)}',
+                           'TITLECREDITS: ' + as_bytes(credit_data),
+                           'TITLEOPTIONS: ' + as_bytes(sum(options, []) + [0, 0])))
+    source = f'TITLEPUNCTSIZE = {len(punctuation)}\n' + read('c128-game', 'title.asm')
+    music = read('c128-game', 'title-music.asm').replace(
+        '; MUSICSCOREDATA', as_bytes(title_score(read('c128-game', 'title-music.txt'))))
+    welcome, header, briefing = briefing_source(read('c128-game', 'title-intro.txt'))
+    intro = read('c128-game', 'title-intro.asm').replace(
+        '; BRIEFHEADERDATA', header).replace('; BRIEFBODYDATA', briefing)
+    return source.replace('; TITLECOPYDATA', as_bytes(scroll)).replace(
+        '; TITLELETTERDATA', lettering).replace('; TITLEMUSIC', music).replace(
+        '; TITLEINTRO', intro).replace('; TITLEBRIEFWELCOME', 'BRIEFWELCOME: ' + welcome).replace(
+        '; TITLEPUNCTDATA', as_bytes(punctuation))
 
 
 def audit_s1(symbols):
@@ -536,7 +620,8 @@ def ending_source(source, read):
     text = read('c128-game', 'ending.asm').replace('; ENDRATINGDATA', '\n'.join(lines))
     text = text.replace('ENDCOREEND:', read('c128-game', 'controllers.asm') + '\n'
                         + read('c128-game', 'mission-messages.asm') + '\n'
-                        + read('c128-game', 'title-core.asm') + '\nENDCOREEND:')
+                        + read('c128-game', 'title-core.asm') + '\n'
+                        + read('c128-game', 'intro-core.asm') + '\nENDCOREEND:')
     text = text.replace('; FUNCTIONKEYDATA', read('c128-game', 'function-keys.asm'))
     for name, value in [('ENDDEATHTEXT', ' THE BATTLE IS OVER'),
                         ('ENDLOSTTEXT', '  JARALOBA IS LOST')]:
@@ -666,7 +751,7 @@ ENDHEADS = 0x4900           # hidden text-screen rows 6-16 while an ending runs
 ENDVDCRESERVE = 0           # bytes kept free; the rest bridges the smallest snapshot gaps
 ENDB1SNAP = 0x2C00          # bank 1: the reset snapshot, then the payload (bank1.asm)
 ENDPKG = 0xE970             # the ENDING package's run address in S1 (ending.asm)
-ENDPKGSTAGE = 0xE900        # load-time staging: the core at $E000, the package, the payload
+ENDPKGSTAGE = 0xE980        # load-time staging: packed core at $E000, then packed ENDING
 ENDSTAGE = 0xF100
 ENDB1LIMIT = 0x6400         # bank 1: the first byte after the snapshot and payload area (B1STREAM)
 S1BASE, S1END = 0xE960, 0xF6F9   # the slot (overlay.asm)
@@ -833,10 +918,10 @@ def main():
     assert HIGH2 + len(chunks[HIGH2]) == 0xE960
     assert symbols['ENDCOREEND'] <= 0x0C60
     assert symbols['CLOCKEND'] <= symbols['HENGARM'] < symbols['HENGEND'] <= symbols['ENDCOREEND']
-    assert symbols['ENDCOREEND'] - 0x0200 <= ENDPKGSTAGE - 0xE000 == symbols['ENDCOREPAGES'] * 256, 'resident core staging overlaps ENDING'
+    assert symbols['ENDCOREEND'] <= 0x0C60, 'resident core overlaps the low block'
     assert 0x0557 <= symbols['CLOCKINIT'] < symbols['CLOCKEND'] <= symbols['ENDCOREEND'], 'the clock must fit after the ending core'
     assert symbols['ENDPKGSTART'] == ENDPKG and symbols['ENDINGEND'] <= symbols['MINEFREE'], 'the ENDING package outgrows S1'
-    assert ENDPKGSTAGE + symbols['ENDPKGPAGES'] * 256 <= ENDSTAGE and len(chunks[ENDPKG]) <= symbols['ENDPKGPAGES'] * 256
+    assert len(chunks[ENDPKG]) <= symbols['ENDPKGPAGES'] * 256
     assert symbols['B1ENDING'] >= symbols['B1MINES'] + 13 * 256 and symbols['B1ENDING'] + symbols['ENDPKGPAGES'] * 256 <= 0xFF00
     title = bytes(chunks[symbols['TITLEPKG']])
     title_pages = symbols['TITLEPAGES']
@@ -844,7 +929,9 @@ def main():
     assert len(title) == symbols['TITLEEND'] - symbols['TITLEPKG'] <= title_pages * 256
     assert symbols['B1ENDING'] + symbols['ENDPKGPAGES'] * 256 <= symbols['B1TITLE']
     assert symbols['B1TITLE'] + title_pages * 256 <= 0xFF00
-    assert 0x0C60 <= 0x1000 < 0x1000 + title_pages * 256 <= symbols['LOWEND']
+    title_decode = symbols['TITLEDECODE']
+    decode_pages = max(title_pages, symbols['ENDPKGPAGES'])
+    assert not (title_decode & 255) and 0x0C60 <= title_decode < title_decode + decode_pages * 256 <= symbols['LOWEND']
     assert symbols['ENDLOADEREND'] <= ENTRY, 'ending loader overlaps cockpit entry'
     assert 0xE960 + len(chunks[0xE960]) == symbols['MINEFREE']
     assert symbols['MNSTART'] == 0xEA16
@@ -870,11 +957,23 @@ def main():
     assert symbols['B1INITAT'] + len(b1init) == symbols['ENDSTUBIMG']
     assert symbols['ENDSTUBIMG'] + len(stub) <= symbols['OVLIMG'] == symbols['ENDSTUBIMG'] + 128
     assert symbols['TITLESTAGE'] == symbols['OVLIMG'] + symbols['OVAREALEN']
-    art_offset = symbols['TITLEART'] - symbols['TITLEPKG']
-    title_stream = (0x1000 + art_offset).to_bytes(2, 'little') + lz_pack(title[:art_offset])
-    title_art = (0x1000 + len(title)).to_bytes(2, 'little') + lz_pack(title[art_offset:])
-    assert symbols['TITLEARTSTAGE'] == symbols['PATHX'] == 0x3400 and symbols['PATHY'] == 0x3500
-    assert len(title_art) <= 512, 'TITLE art stream overlaps the scanner scale'
+    mid, tail, extra, last = (symbols[name] - symbols['TITLEPKG'] for name in
+                             ('TITLEMID', 'TITLETAIL', 'TITLEEXTRA', 'TITLELAST'))
+    # Independent streams append into the same staging image in low RAM.
+    title_stream, title_mid, title_tail, title_extra, title_last = (
+        (title_decode + end).to_bytes(2, 'little') + lz_pack(title[start:end])
+        for start, end in ((0, mid), (mid, tail), (tail, extra), (extra, last), (last, len(title)))
+    )
+    assert symbols['TITLEMIDSTAGE'] == symbols['PATHX'] == 0x3400 and symbols['PATHY'] == 0x3500
+    assert len(title_mid) <= 512, f'TITLE middle stream needs {len(title_mid)} / 512 bytes'
+    assert symbols['TITLETAILSTAGE'] == symbols['TITLEMAT'] == 0x4478
+    blank_start = symbols['TITLETAILBLANK']
+    blank_len = symbols['TITLETAILBLANKLEN']
+    assert blank_start == symbols['TITLETAILSTAGE'] + 600 and 0 < blank_len <= 255
+    tail_capacity = blank_start + blank_len - symbols['TITLETAILSTAGE']
+    assert len(title_tail) <= tail_capacity, f'TITLE tail stream needs {len(title_tail)} / {tail_capacity} bytes'
+    assert symbols['TITLEEXTRASTAGE'] == 0x48A0
+    assert len(title_extra) <= 720, f'TITLE extra stream needs {len(title_extra)} / 720 hidden text bytes'
     assert symbols['TITLESTAGE'] + len(title_stream) <= 0xFF00, (
         f'TITLE stream needs {len(title_stream)} bytes, '
         f'{0xFF00 - symbols["TITLESTAGE"]} available below $FF00')
@@ -1017,12 +1116,19 @@ def main():
     assert 0xD000 + len(second) <= 0xD100
     assert 0xD000 + len(second) <= 0xD060
     p(0xD000, second)
-    assert HIGH2SRC + len(packed) <= 0x7680, f'the packed $E000 image ({len(packed)} bytes) overlaps the cockpit art'
+    assert HIGH2SRC + len(packed) <= symbols['TITLELASTSTAGE'], 'the packed high image overlaps the final TITLE stream'
+    assert symbols['TITLELASTSTAGE'] + len(title_last) <= 0x7680, (
+        f'final TITLE stream needs {len(title_last)} bytes before the cockpit art')
     p(HIGH2SRC, packed)
+    p(symbols['TITLELASTSTAGE'], title_last)
     # Consumed by ENDINIT before the high decoder overwrites this staging.
     # Native LOAD can reach the whole payload (never beyond $FF00).
-    p(0xE000, chunks[0x0200])           # ENDINIT copies the core to $0200
-    p(ENDPKGSTAGE, chunks[ENDPKG])      # B1INIT puts it into bank 1 (B1ENDING)
+    core_stream = symbols['ENDCOREEND'].to_bytes(2, 'little') + lz_pack(bytes(chunks[0x0200]))
+    ending_stream = (title_decode + len(chunks[ENDPKG])).to_bytes(2, 'little') + lz_pack(bytes(chunks[ENDPKG]))
+    assert 0xE000 + len(core_stream) <= ENDPKGSTAGE, f'packed resident core needs {len(core_stream)} staging bytes'
+    assert ENDPKGSTAGE + len(ending_stream) <= ENDSTAGE, f'packed ENDING needs {len(ending_stream)} staging bytes'
+    p(0xE000, core_stream)              # ENDINIT decodes the core to $0200
+    p(ENDPKGSTAGE, ending_stream)       # B1INIT decodes it and copies it to bank 1
     # Then the ending payload, which B1INIT puts into bank 1 before GINIT2.
     assert symbols['ENDSTAGE'] == ENDSTAGE and len(PAYLOAD) == symbols['ENDPAYPAGES'] * 256
     p(symbols['ENDSTAGE'], bytes(PAYLOAD))
@@ -1042,19 +1148,34 @@ def main():
     reports = rle_unpack(PAYLOAD[240:vm])
     assert sorted(reports) == list(range(ENDHEADS, ENDHEADS + 532))
 
-    assert not any(body[0x3400 - LOAD:0x3600 - LOAD]), 'TITLE art staging overlaps data'
-    p(symbols['TITLEARTSTAGE'], title_art)
+    assert not any(body[0x3400 - LOAD:0x3600 - LOAD]), 'TITLE staging overlaps the phasor paths'
+    p(symbols['TITLEMIDSTAGE'], title_mid)
+    # Place this after capturing the matrix master and verifying the reset stream.
+    assert body[blank_start - LOAD:blank_start - LOAD + blank_len] == b'\x1e' * blank_len, (
+        'TITLE tail staging must match the uniform rows TITLESTORE restores')
+    p(symbols['TITLETAILSTAGE'], title_tail)
+    assert body[0x48A0 - LOAD:0x4B70 - LOAD] == b'\x60' * 320 + b'\x1e' * 400, (
+        'TITLE extra staging must match the hidden rows TITLEEXTRAUNPACK restores')
+    p(symbols['TITLEEXTRASTAGE'], title_extra)
+    title_font = symbols['TITLEPUNCTFONT']
+    title_font_len = symbols['TITLEPUNCTEND'] - symbols['TITLEPUNCT']
+    assert title_font == 0x4000 + SCROLL_GLYPH_FIRST * 8 and title_font_len == 8 * len(SCROLL_GLYPHS)
+    assert 0 < title_font_len == symbols['TITLEPUNCTSIZE'] <= 128
+    assert not any(body[title_font - LOAD:title_font - LOAD + title_font_len]), 'TITLE punctuation must borrow blank glyphs'
     # The KERNAL's LOAD stops at $FF00 (its store loop ends when AEL reaches $FF),
     # so nothing may be placed there: the tail above is staged beneath I/O instead.
     assert LOAD + len(body) <= 0xFF00, f'the PRG ends at ${LOAD + len(body) - 1:04X}, past the KERNAL LOAD limit'
     with open(OUT, 'wb') as f:
         f.write(bytes((LOAD & 255, LOAD >> 8)) + body)
     ends = ', '.join(f'${a:04X}-${a + len(c) - 1:04X}' for a, c in sorted(chunks.items()))
-    print(f'memory left: high {symbols["MINEEND"] - symbols["MINEFREE"]} bytes (${symbols["MINEFREE"]:04X}-${symbols["MINEEND"]-1:04X}, all modes), packed {0x7680 - HIGH2SRC - len(packed)} bytes, glue {HIGH2SRC - GLUE - len(chunks[GLUE])} bytes; low stream {len(low_stream)} bytes')
+    print(f'memory left: high {symbols["MINEEND"] - symbols["MINEFREE"]} bytes (${symbols["MINEFREE"]:04X}-${symbols["MINEEND"]-1:04X}, all modes), packed high {symbols["TITLELASTSTAGE"] - HIGH2SRC - len(packed)} bytes before TITLE, glue {HIGH2SRC - GLUE - len(chunks[GLUE])} bytes; low stream {len(low_stream)} bytes')
     print(f'clock: ${symbols["CLOCKINIT"]:04X}-${symbols["CLOCKEND"]-1:04X}, '
           f'{symbols["CLOCKDIV"]-symbols["CLOCKINIT"]} code bytes, {symbols["CLOCKEND"]-symbols["CLOCKDIV"]} data bytes')
     print(f'TITLE package: {len(title)} bytes, {len(title_stream)} staged at ${symbols["TITLESTAGE"]:04X} '
-          f'and {len(title_art)} at ${symbols["TITLEARTSTAGE"]:04X}; '
+          f'{len(title_mid)} at ${symbols["TITLEMIDSTAGE"]:04X} and '
+          f'{len(title_tail)} at ${symbols["TITLETAILSTAGE"]:04X} and '
+          f'{len(title_extra)} at ${symbols["TITLEEXTRASTAGE"]:04X} and '
+          f'{len(title_last)} at ${symbols["TITLELASTSTAGE"]:04X}; '
           f'{0xFF00 - LOAD - len(body)} bytes left below $FF00')
     print(f'ending memory: core $0200-${symbols["ENDCOREEND"]-1:04X}, {0xC60-symbols["ENDCOREEND"]} bytes free after it (to $0C5F); '
           f'ENDING package ${ENDPKG:04X}-${symbols["ENDINGEND"]-1:04X} ({symbols["ENDINGEND"]-ENDPKG} bytes), MINES ${symbols["MNSTART"]:04X}-${symbols["MNEXTRAEND"]-1:04X}; '

@@ -13,11 +13,22 @@ It is the browser page's default program.
 
 ## How it plays
 
-- Cold boot opens the cockpit title. **F5**, **F7**, joystick fire or a 1351
-  left click opens the flight profile menu. Move up or down with the joystick
-  or mouse in port 2 and press fire or left click to confirm. Cadet, Patrol,
-  Escort, Vanguard and Frontline run from easiest to hardest.
-  The scroll credits are editable in [title-text.txt](title-text.txt).
+- Cold boot and game-over restart open the cockpit title with the C64 wordmark
+  and animated credits over the stars. **F5**, **F7**, joystick fire or a 1351
+  left click opens the difficulty selector. Move the crosshair with a port-2
+  joystick or mouse. Skirmish, Assault, Battle, Invasion and Armageddon run
+  from easiest to hardest. Press fire or left click again to fire the phasor
+  and confirm. The chosen name flashes with SID pulses for about three
+  seconds, then the welcome ribbon and the 48-line Patrol Control briefing
+  run. The map opens automatically. Release the confirmation button and
+  press **Fire** or **Space** to advance early.
+- The title plays *Night Watch*, an original three-voice SID cue, once per
+  title visit. Opening the selector silences the cue and enables the selector
+  effects. Edit the score in [title-music.txt](title-music.txt), the scroller in
+  [title-text.txt](title-text.txt), and the welcome and briefing in
+  [title-intro.txt](title-intro.txt). Rebuild after editing. The scroller file
+  lists its glyphs. Unsupported characters are reported with their line and
+  column.
 - The ship starts in sector 05.03 (map cell 4,2), empty as in the original.
 - **TIME** starts at `00:00`, advances one game second per 60 gameplay frames,
   and wraps after `59:59`. The colon blinks every 30 frames. The clock freezes
@@ -63,8 +74,8 @@ It is the browser page's default program.
   stations) and SPACE DROID ... CLASS n appear as in the original. Fire restarts after the original
   waiting interval; otherwise it restarts automatically (about 3.5 minutes for
   death and 6.3 for victory at PAL speed). Restart restores the cockpit, ship,
-  sprite slots and movement streams, then opens the title. Confirming a flight
-  profile generates a new world in sector 05.03.
+  sprite slots and movement streams, then opens the title. Confirming a difficulty
+  generates a new world in sector 05.03.
 - The ship (systems, shields, hits, difficulty) is one: the cockpit's model.
 - The second display (VDC) is off in this program for now: its updates take more
   time than a frame has to spare while the cockpit runs.
@@ -85,16 +96,16 @@ behind the cockpit, including while closed; its world arrays are never scratch.
 | `$0100-$0154` | The bank-1 copy stub in common RAM below the stack (`bank1.asm`; the stack never goes below `$01EA`). `$0155-$01BF` (107 bytes) is free common RAM below the stack. |
 | `$0200-$055C` | Resident ending checks, statistics, reset and snapshot helpers in `ending.asm`. |
 | `$055D-$05DA` | Resident TIME clock, staged with the ending core. 119 code bytes and 7 data bytes. |
-| `$05DB-$0AD2` | Later resident helpers, including the TITLE entry and first-jump MINES loader at `$0A6A-$0AD2`. |
-| `$0AD3-$0C5F` | **397 bytes free** in every mode. |
+| `$05DB-$0BC9` | Later resident helpers, including the TITLE entry, first-jump MINES loader, first-map handoff and briefing raster handlers. |
+| `$0BCA-$0C5F` | **150 bytes free** in every mode. |
 | `$0C60-$19F8` | 3,481-byte resident relocated mothership/repair/message/positioning/enemy-proton block. Used in M, message jobs also F/D/H; retained in every mode. |
 | `$19F9-$1A09` | 17 bytes in C128 BASIC's free ML area, installed with the block: `ENDCROSS`, the victory's input hook (issue #20). |
 | `$1A0A-$1A0F` | 6 bytes free. |
 | `$1A10-$1BFE` | The overlay manager (`overlay.asm`, installed by B1INIT from staging), including S1's owner, the loader, MNREQ and the trampolines. `$1BFF` is free. |
 | `$1C01-$1C0C` | BASIC SYS stub; init only (dead after init). |
 | `$1C0D-$1C0F` | Loader-to-entry padding. |
-| `$1C10-$1CC9` | `ENDINIT` and `TITLESTORE` at init, plus resident bank 1 and reset helpers. |
-| `$1CCA-$1CFF` | **54 bytes free** in the loader's tail. |
+| `$1C10-$1CF4` | `ENDINIT` and `TITLESTORE` at init, plus resident bank 1 and reset helpers. |
+| `$1CF5-$1CFF` | **11 bytes free** in the loader's tail. |
 | `$1D00-$28D6` | Cockpit first code/state chunk; resident F/D/M/H. Two holes left by the exit to BASIC (same size, nothing moved): **`$1D14-$1D58` 69 bytes** (START's saves of the caller's state; START jumps over them) and **`$1F79-$1FD8` 96 bytes** (the old `EXIT`; the label stays). `SAVMMU`-`SAV1D` (`$28A3-$28B0`) are dead variables left in place (12 of them restored by the reset snapshot). |
 | `$28D7-$28F5` | Repair art-restore helper; resident, executes M. |
 | `$28F6-$28F7` | Padding. |
@@ -112,7 +123,7 @@ behind the cockpit, including while closed; its world arrays are never scratch.
 | `$3000-$33E7` | Original colour RAM image; resident master, init and scene restoration. |
 | `$33E8-$33FD` | Repair helper; resident, M. |
 | `$33FE-$33FF` | Padding. |
-| `$3400-$35FF` | Title art and text staging at load. `TITLESTORE` clears both pages for the phasor X/Y path buffers before play. |
+| `$3400-$35FF` | Middle TITLE stream at load. `TITLESTORE` clears both pages for the phasor X/Y path buffers before play. |
 | `$3600-$3680` | Long-range scanner scale, 129 bytes; F/D/M/H. |
 | `$3681-$368C` | Repair helper; resident, M. |
 | `$368D-$368F` | Padding. |
@@ -128,7 +139,7 @@ behind the cockpit, including while closed; its world arrays are never scratch.
 | `$3D60-$3DFA` | Repair charging code; resident, M. |
 | `$3DFB-$3DFF` | Padding. |
 | `$3E00-$3FFF` | Type-2 X movement streams; resident, F/D. Disabled VDC text aliases are unusable. |
-| `$4000-$43FF` | VIC character font; displayed HUD/text F/D/M/H. |
+| `$4000-$43FF` | VIC character font. TITLE borrows eight blank glyphs at `$40F8-$4137` and restores them before the briefing. |
 | `$4400-$47E7` | Bitmap screen matrix; live F/D/M/H. |
 | `$47E8-$47FF` | Matrix padding and sprite pointers; reserve the whole tail. |
 | `$4800-$4BE7` | HUD/bottom text and docking report screen; live F/D/M/H. During an ending the hidden rows hold the death reports and rank names (`$4900-$4B13`), unpacked from VDC RAM; reset unpacks the whole screen's master. |
@@ -141,7 +152,7 @@ behind the cockpit, including while closed; its world arrays are never scratch.
 | `$5DFF` | One glue byte free; do not move existing code. |
 | `$5E00-$5FFF` | Packed high-image start at load; becomes 512-byte type-2 Y streams at init, resident F/D. |
 | `$6000-$63BF` | Fighter sprite slots, protected F/D/M/H; enemy proton temporarily borrows `$6000-$607F`. Init temporarily uses `$6000-$6D98` for the low-RAM backup, then restores all slots. |
-| `$63C0-$767F` | 3D-view bitmap: stars/fight, map, rings and hyperspace. Packed image occupies through `$7589` at load, then is dead. The 246-byte packed margin `$758A-$767F` is **load-time capacity**, not persistent runtime RAM. |
+| `$63C0-$767F` | 3D-view bitmap. At load, the high archive ends at `$75D7` and the last TITLE stream uses `$75E0-$7669`. Both are consumed before the view is drawn. |
 | `$7680-$7CBF` | 1,600-byte cockpit bitmap art, always protected. |
 | `$7CC0-$7F3F` | Ten phasor/shot sprite slots; player proton borrows the first two; restored from TSHOT. Protected in every mode. |
 | `$7F40-$7FFF` | Last fighter shape, scanner line and fifth planet frame; protected in every mode. |
@@ -160,8 +171,8 @@ behind the cockpit, including while closed; its world arrays are never scratch.
 | `$DF00-$DF8D` | RAM beneath I/O. During init, 142 runtime bytes are staged here for the reclaimed decoder. |
 | `$DF8E-$DFFF` | No load-time payload; reserved staging/backup tail. |
 | `$D200-$DFFF` (runtime) | Free RAM beneath I/O after init (data only, MMU `$3F`): the low-RAM backup moved to bank 1 (2026-11-17). |
-| `$E000-$E95F` | Resident proton, type and hyperspace code after init. Load-time staging above `$E000` holds the resident core, ENDING, the bank-1 payload, `B1INIT`, the overlay manager and the TITLE code stream through `$FECA`. |
-| `$E960-$F6F8` | **S1, the overlay slot**. `GINIT3` runs here at init. TITLE (`$E963`) owns it at boot and after a reset. MINES (`$EA16-$F6F6`) loads during the first jump or at a base arrival. ENDING (`$E970-$F122`) owns it during a death or victory. |
+| `$E000-$E95F` | Resident proton, type and hyperspace code after init. The load image above `$E000` holds the packed resident core and ENDING, the bank-1 payload, `B1INIT`, the overlay manager and the first TITLE stream through `$FEF1`. The other TITLE stream ranges and workspaces are in the [overlay plan](../briefs/memory-overlay-plan.md#load-and-runtime-space). |
+| `$E960-$F6F8` | **S1, the overlay slot**. `GINIT3` runs here at init. TITLE (`$E963`) owns it at boot and after a reset. MINES (`$EA16-$F6F6`) loads during the first jump or at a base arrival. ENDING (`$E970-$F129`) owns it during a death or victory. |
 | `$F6F7-$F6F8` | Two bytes free in every mode (no package uses them). |
 | `$F6F9-$FE7F` | Unchanged 1,927-byte TORPA stream; resident, player and enemy protons. |
 | `$FE80-$FEFF` | TSHOT, 128 bytes of original shot masters; resident, F/D/M restoration. End of decoded high image. |

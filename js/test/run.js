@@ -40,7 +40,9 @@ function titleDefaultFrame(m, s, frame) {
   const keys = m.keys[0], joy = m.joy2;
   m.mouse.present = m.mouse.left = m.mouse.right = false;
   m.keys[0] = m.ram[s.TITLEARM] && !m.ram[s.TITLEMENU] ? 1 << 6 : 0;
-  m.joy2 = m.ram[s.TITLEARM] && m.ram[s.TITLEMENU] ? 16 : 0;
+  const confirm = m.ram[s.TITLEARM] && m.ram[s.TITLEMENU] === 1;
+  const advance = m.ram[s.INTROACTIVE] && m.ram[s.INTROARM];
+  m.joy2 = confirm || advance ? 16 : 0;
   try {
     return frame();
   } finally {
@@ -50,9 +52,9 @@ function titleDefaultFrame(m, s, frame) {
   }
 }
 
-function resumeFromTitle(m, s) {
-  for (let f = 0; f < 30 && m.ram[s.OVOWNER] === s.TITLEOWNER; f++) {
-    if (!titleDefaultFrame(m, s, () => m.runFrame())) return false;
+function resumeFromTitle(m, s, frame = () => m.runFrame()) {
+  for (let f = 0; f < s.TITLECONFIRMFRAMES + 40 && m.ram[s.OVOWNER] === s.TITLEOWNER; f++) {
+    if (!titleDefaultFrame(m, s, frame)) return false;
   }
   return m.ram[s.OVOWNER] !== s.TITLEOWNER;
 }
@@ -68,12 +70,22 @@ function boot(name, mode, opts) {
     // Play fixtures start the default flight profile through the native UI.
     // Leave subsequent game-over resets at the title for each test to inspect.
     const s = p.symbols, frame = m.runFrame.bind(m);
-    let started = false;
+    // Flight fixtures exercise their own map transitions. The actual first
+    // map is covered by the title and packaged-page startup tests.
+    hooks.skip('TITLEMAPOPEN');
+    let bootingTitle = false, started = false;
+    hooks.on('TITLEBOOT', () => { bootingTitle = true; });
     m.runFrame = function () {
-      if (started || m.ram[s.OVOWNER] !== s.TITLEOWNER) return frame();
-      const result = titleDefaultFrame(m, s, frame);
-      started = m.ram[s.OVOWNER] !== s.TITLEOWNER;
-      return result;
+      if (!started && bootingTitle) {
+        // Keep fixture time independent of the overlay load and selector.
+        for (let f = 0; f < 20 && m.ram[s.OVOWNER] !== s.TITLEOWNER; f++) {
+          if (!frame()) return false;
+        }
+        if (m.ram[s.OVOWNER] !== s.TITLEOWNER) return false;
+        started = resumeFromTitle(m, s, frame);
+        if (!started) return false;
+      }
+      return frame();
     };
     if (!(opts && opts.lazyMines)) {
       // Older fixtures call MINES entries directly or time play with the
@@ -163,7 +175,7 @@ function snap(m, name) {
 function report(hooks, label) {
   for (const a in hooks.handlers) {
     const h = hooks.handlers[a];
-    if (h.fn) check(h.failed === 0 && h.verified > 0, `${label}: ${h.name} verified ${h.verified} calls, ${h.failed} mismatches`);
+    if (h.mode === 'verify') check(h.failed === 0 && h.verified > 0, `${label}: ${h.name} verified ${h.verified} calls, ${h.failed} mismatches`);
   }
   hooks.mismatches.slice(0, 3).forEach(r => console.log('     ', r.name, 'frame', r.frame, r.diffs.join('; ')));
 }
@@ -2088,6 +2100,9 @@ require('./mine-parity')({boot,run,check,fs,path,OUT});
 
 require('./game-end')({boot,run,check,snap,fs,path,OUT,resumeFromTitle});
 require('./title')({boot,check,snap});
+require('./title-music')({boot,check});
+require('./title-intro')({boot,check,snap});
+require('./title-charset')({boot,check,snap});
 require('./c64-arrival')({boot,check,fs,path});
 require('./banks')({boot,run,check,fs,path,ROOT});
 require('./bugs')({boot,run,check,snap,fs,path,OUT});

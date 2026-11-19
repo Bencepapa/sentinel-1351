@@ -6,13 +6,17 @@ is ported from the C64 code and checked against it.
 
 ## Status
 
-Updated 2026-11-19. **Title, scroller and difficulty selector added.** Cold boot,
-F7 restart and both endings return to the TITLE overlay. The cockpit shows a new
-wordmark and a 38-column scroller with editable credits. F5, F7 or fire opens the
-menu. Joystick and 1351 users choose among five flight profiles using the
-original starting ship and squadron values. Confirmation starts play in sector
-05.03. The resident core has 397 bytes free and the PRG has 53 bytes left below
-`$FF00`. See [the overlay plan](briefs/memory-overlay-plan.md#11-title-overlay-and-flight-profile-menu).
+Updated 2026-11-19. **Title, difficulty selector and first briefing (issue #24).**
+Cold boot, F7 restart and both endings return to TITLE. The port uses the C64
+cockpit font for the wordmark and credits, moves the two credit colour bands
+in opposite directions, and clips the editable scroller to 38 columns. The
+scroller accepts letters, digits, spaces and ten punctuation glyphs.
+The replaceable three-voice SID cue plays once and stops on F5, F7 or Fire
+before the selector's effects. Confirm fires the phasor, cycles the selected
+label and beeps for 155 PAL frames. A welcome ribbon and a 48-line typed
+briefing follow. The resident handoff opens the sector map on completion or
+a fresh Fire or Space press. The current build leaves 150 resident bytes and
+14 bytes below the KERNAL load ceiling. [Overlay layout and checks](briefs/memory-overlay-plan.md#11-title-overlay-and-difficulty-selector)
 
 Updated 2026-11-18. **TIME clock ported**. The JS C64 trace found one call to
 `$FAD7` from the raster IRQ at `$0BF6` per active frame. `$FAE9` advances the
@@ -114,10 +118,10 @@ Left, in a suggested order (each with what is already known):
   Entry blanks VDC via registers 25/26 before any delay or snapshot write;
   keep this early blanking when changing the entry or reusing VDC RAM.
   The PRG extends to `$F8DE` for init-only staging (ending core, ENDING package, payload, B1INIT, stub, manager).
-- Title (2026-11-19) adds the third S1 owner and takes the PRG through `$FECA`.
-  See the overlay plan's current memory table before placing new load-time data.
-  Use the title and overlay tests for the unmodified lifecycle. Older play
-  fixtures begin through the selector with the MINES init image seeded in S1.
+- TITLE is the third S1 owner. Its compressed streams extend the PRG through
+  `$FEF1`. See the overlay plan before placing new load-time data. The title
+  and itch tests check real startup. Gameplay fixtures advance through the
+  default selector before measuring play and can seed the MINES init image.
 
 - Read first: `README.md`, `c128-game/README.md`, this file, `MAP-LOGIC.md`,
   `FINDINGS.md`, `SHIP-STATUS.md`. The task briefs in `briefs/` show the expected

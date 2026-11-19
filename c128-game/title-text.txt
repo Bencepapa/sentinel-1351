@@ -1,3 +1,6 @@
+# Edit the lines below and rebuild. Lines starting with # are comments.
+# Supported glyphs are A-Z, a-z (drawn uppercase), 0-9, spaces and . - , ' ! ? : / ( )
+# Up to 217 characters including the three spaces inserted between nonempty lines.
 F5 F7 OR FIRE SELECTS A FLIGHT PROFILE.
 ORIGINAL GAME BY BRYAN BRANDENBURG. RELEASED BY SYNAPSE SOFTWARE IN 1984.
 PATROL CONTROL ONLINE.

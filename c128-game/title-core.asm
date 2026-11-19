@@ -30,8 +30,9 @@ TITLETRAMPEND:
         JSR OVLOAD
         JSR FKEYREAD
         STA FKEYLAST
-        JSR SHIPINIT
-        JMP g_gi9       ; generate the selected world and start its clock
+        JSR g_gi9       ; generate the selected world with TITLE out of S1
+TITLEMAPOPEN:
+        JMP MAPOPEN
 
 ; Spend spare view time during the first jump to load MINES before a base
 ; arrival. The destination can change while the ship is in hyperspace.

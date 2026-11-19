@@ -852,6 +852,9 @@ ew_print:
         BCC ew_done
         LDA ENDTIME
         BPL ew_done
+        LDA $D012       ; the 520-cell reveal takes up to 58 DMA raster lines
+        CMP #136        ; defer to a fresh view window if text used the budget
+        BCS ew_done
         LDX #130        ; revealed: rows 4-16, the letters purple ($F696)
         LDA #$14
 ew_reveal:
