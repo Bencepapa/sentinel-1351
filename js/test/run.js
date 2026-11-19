@@ -457,7 +457,7 @@ function report(hooks, label) {
       run(m, hooks, 10);
       check((K[s.EVIS] & 0x70) === 0, 'game: the slot of a dead fighter shows no sprite in view');
     }
-    check(!m.stopped && shaky <= frames / 25, `game: in a fight the splits' colours change off the screen (${shaky} late writes in ${frames} frames${seen ? ', first ' + seen : ''})`);
+    check(!m.stopped && !shaky, `game: in a fight the splits' colours change off the screen (${shaky} late writes in ${frames} frames${seen ? ', first ' + seen : ''})`);
   }
 }
 
@@ -1586,15 +1586,21 @@ require('./mine-parity')({boot,run,check,fs,path,OUT});
     run(m,g.hooks,80);
     check(K[s.MAPSHOWN] === 1 && K[s.MSLOCK] === 1 && K[s.MSSTATE] === 0,
       'mothership: the normal endpoint opens the map and locks immediate re-entry');
+    // Inject at the frame entry. A host frame can end inside STARS or RADSTEP,
+    // where switching maps would change the state under the active raster job.
+    const atFrameEntry = () => {
+      m.setBreak(s.frame, true);
+      let result;
+      do { result = m.run(); } while (result === 'frame');
+      m.setBreak(s.frame, false);
+      if (result !== 'break' || m.cpu.pc !== s.frame) throw Error('Could not reach the cockpit frame entry');
+    };
+    atFrameEntry();
     K[s.M_CURX] = K[s.M_SELX]; K[s.M_CURY] = K[s.M_SELY];
     call(m, s.M_SELECT); call(m, s.MAPIN);
     check(K[s.MAPSHOWN] === 1 && !K[s.HYPON], 'mothership: firing on the just-completed base sector keeps the map open');
     call(m, s.MAPCLOSE); run(m, g.hooks, 20);
-    // Inject between completed frames, rather than adding a subroutine's cycles
-    // to a RADSTEP already suspended halfway through its vertical-blank work.
-    m.setBreak(s.frame,true);let boundary;
-    while((boundary=m.run())!=='break'&&boundary!=='stopped');
-    m.setBreak(s.frame,false);
+    atFrameEntry();
     call(m, s.SECTORIN);                 // approach under firing/steering load
     for (let f = 0; f < 500 && (K[s.MSSTATE] === 1 || K[s.MSSTATE] === 16); f++) m.runFrame();
     let stressLate = 0;
@@ -1993,44 +1999,43 @@ require('./mine-parity')({boot,run,check,fs,path,OUT});
     check(late===0&&A[S.OVRUN]===0,`friendly repair: held-input DMA sequence has ${late} late writes, ${A[S.OVRUN]} overruns`);
   }
 
-  // Four strategic events route through SURROUND's real stores and VDCMSG's old slot.
+  // Strategic notices use the same display slot as the cockpit's notices.
   const bg=boot('game','trace'), BM=bg.m, BS=bg.p.symbols, B=BM.ram;
   BM.dma=true; run(BM,bg.hooks,60);
   B.fill(0,BS.M_STATE,BS.M_STATE+60); B.fill(0,BS.M_COUNT,BS.M_COUNT+60);
   B.fill(0,BS.M_ENGC,BS.M_ENGC+5); B.fill(0,BS.M_DEAD,BS.M_DEAD+5);
   for(let i=0;i<4;i++){B[BS.M_STATE+B[BS.M_GRP+i]]=1;B[BS.M_COUNT+B[BS.M_GRP+i]]=1;}
   B[BS.M_STATE+12]=0xFF;
-  let texts=[], waited=true;
+  let texts=[], replaced=true;
+  B[BS.WTPEND]=0; B[BS.WTCNT]=200;
   const nextBattle=()=>{
+    const active=B[BS.MSGON];
     call(BM,BS.M_SURROUND);
-    if(B[BS.MSGON]){
-      const active=row(BM,BS), pending=B[BS.GBTCOUNT];
-      call(BM,BS.M_VDCMSG);
-      waited &&= row(BM,BS)===active && B[BS.GBTCOUNT]===pending;
-      B[BS.MSGCD]=B[BS.MSGN]=1;call(BM,BS.MSGTICK);
-    }
-    call(BM,BS.M_VDCMSG);texts.push(row(BM,BS));
+    BM.runFrame();
+    replaced &&= B[BS.MSGON] && !B[BS.NOTICEPEND] && (!texts.length || active);
+    texts.push(row(BM,BS));
   };
   nextBattle();
   B[BS.M_ENGC]=1;nextBattle();
   for(let i=16;i<20;i++){B[BS.M_STATE+B[BS.M_GRP+i]]=1;B[BS.M_COUNT+B[BS.M_GRP+i]]=1;}
   nextBattle();
   B[BS.M_ENGC4]=1;nextBattle();
-  check(waited&&texts.join('|')==='MOTHERSHIP ENGAGED IN BATTLE|MOTHERSHIP DESTROYED|JARALOBA IS SURROUNDED|JARALOBA CEASES TO EXIST'&&B[BS.M_VDCON]===0,
-    `battle messages: all four events wait their turn with VDC off (${texts.join('; ')})`);
+  check(replaced&&texts.join('|')==='MOTHERSHIP ENGAGED IN BATTLE|MOTHERSHIP DESTROYED|JARALOBA IS SURROUNDED|JARALOBA CEASES TO EXIST'&&B[BS.M_VDCON]===0,
+    `battle messages: each event replaces the active notice with VDC off (${texts.join('; ')})`);
   check(B[BS.MSGCOL]===0x87&&B[BS.MSGRATE]===15&&B[BS.MSGN]===15&&B[BS.SNDHI0]===0x1E&&!B[BS.SHIPLOST],
     'battle messages: original yellow/orange timing and siren preserve the ship flag');
-  // Direct subroutine comparisons above advance CPU time outside the raster loop.
-  // Settle those calls before beginning this independent real-frame timing test.
-  B.fill(0,BS.M_DEAD,BS.M_DEAD+5); // end the isolated message fixture before resuming live play
-  B[BS.MSGCD]=B[BS.MSGN]=1;call(BM,BS.MSGTICK);
-  run(BM,bg.hooks,10); B[BS.OVRUN]=0;
-  B.fill(0,BS.M_ENGC,BS.M_ENGC+5);B.fill(0,BS.M_DEAD,BS.M_DEAD+5);
-  for(let i=0;i<20;i++)B[BS.M_STATE+B[BS.M_GRP+i]]=1;
-  B[BS.WTPEND]=1;B[BS.WTCNT]=200;B[BS.M_TICKC]=10;
-  let battleLate=0;for(let f=0;f<10;f++){BM.runFrame();battleLate+=lateWrites(BM);}
-  check(B[BS.GBTCOUNT]===4&&battleLate===0&&B[BS.OVRUN]===0,
-    `battle messages: five simultaneous events queue safely (${B[BS.GBTCOUNT]} waiting), ${battleLate} late writes, ${B[BS.OVRUN]} overruns`);
+
+  // Exercise a whole world tick in flight, independently of the loss scene.
+  const burst=boot('game','trace'), tm=burst.m, ts=burst.p.symbols, b=tm.ram;
+  tm.dma=true; run(tm,burst.hooks,60);
+  b.fill(0,ts.M_ENGC,ts.M_ENGC+5);b.fill(0,ts.M_DEAD,ts.M_DEAD+5);
+  for(let i=0;i<20;i++)b[ts.M_STATE+b[ts.M_GRP+i]]=1;
+  b[ts.WTPEND]=1;b[ts.WTCNT]=200;b[ts.M_TICKC]=10;
+  let battleLate=0, prints=0;
+  burst.hooks.on(ts.GBTEXT,()=>prints++);
+  for(let f=0;f<10;f++){tm.runFrame();battleLate+=lateWrites(tm);}
+  check(b[ts.M_LASTMSG]===3&&row(tm,ts)==='JARALOBA IS SURROUNDED'&&prints===1&&!b[ts.NOTICEPEND]&&battleLate===0&&b[ts.OVRUN]===0,
+    `battle messages: last of five simultaneous events wins (${prints} print), ${battleLate} late writes, ${b[ts.OVRUN]} overruns`);
 
 }
 

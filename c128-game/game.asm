@@ -4221,7 +4221,7 @@ MSOFF:
         LDA #>GSHLOAD
         STA shpj+2
         LDA #$2C
-        JSR MISSIONBASEOFF
+        STA shpj
         RTS
 g_ms0:  STA MSKIND
         JSR MSPOSON
@@ -4304,7 +4304,7 @@ g_mvgo: LDA MSSTATE
         LDA #<MSHOSTILE
         LDX #>MSHOSTILE
 g_msm:  LDY #$0A
-        JSR MSGSTAT
+        JSR BASEMESSAGE
         LDA MSKIND
         CMP #$80
         BNE g_msret
@@ -4720,7 +4720,7 @@ g_msfkill:LDA MSSTATE
         LDY #20
         STY MSGRATE
         LDY #15
-        JSR MSGSTAT
+        JSR BASEMESSAGE
         LDA #$00
         STA MSCPEND
         STA EXPL
@@ -4805,40 +4805,26 @@ g_msrmap:JSR MSOFF
         JMP MAPOPEN
 
 ; SURROUND's STA LASTMSG slots become JSRs, preserving A/X/Y/status.
-GBTQUEUE:PHP
-        PHA
-        TXA
-        PHA
-        TSX
-        LDA $0102,X
-        BEQ g_gbqfull
-        LDX GBTCOUNT
-        CPX #$08
-        BCS g_gbqfull
-        INC GBTCOUNT
-        LDX GBTIN
-        STA GBTBUF,X
-        INX
-        TXA
-        AND #$07
-        STA GBTIN
-g_gbqfull:PLA
-        TAX
-        PLA
+BATTLEEVENT:PHP
         STA M_LASTMSG
-        PLP
+        CMP #0          ; the map also initializes LASTMSG through this hook
+        BEQ battle_end
+        PHA
+        ORA #$10
+        JSR NOTICEREQUEST
+        PLA
+battle_end:PLP
         RTS
-; VDCMSG's idle LDA/BEQ/RTS is unchanged in size and cost.
-GBTEXT: LDY GBTOUT
-        LDA GBTBUF,Y
-        SEC
-        SBC #$01
+; The cockpit calls this only before the explosion slot ends at line 204.
+GUNEXPLOSIONS:
+        LDA #204
+        STA EXLIM
+        JSR EXPLODE
+        JMP EXPLODE2
+        .BYTE 0,0,0,0,0,0,0,0,0,0,0,0,0
+GBTEXT: SEC
+        SBC #$11
         TAX
-        INY
-        TYA
-        AND #$07
-        STA GBTOUT
-        DEC GBTCOUNT
         LDA GBTLO,X
         PHA
         LDA GBTHI,X
@@ -4850,6 +4836,8 @@ GBTEXT: LDY GBTOUT
         STY MSGRATE
         JSR MSGSTAT
         JMP SNDSIREN
+        ; Keep the relocated block's addresses and page crossings.
+        .BYTE 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
 GBTLO:  .BYTE <GBMSG1,<GBMSG2,<GBMSG3,<GBMSG4
 GBTHI:  .BYTE >GBMSG1,>GBMSG2,>GBMSG3,>GBMSG4
 MSPHASE = GUNPACK+81
@@ -4859,10 +4847,7 @@ MSPCOLOR = GUNPACK+91
 MSPROW = GUNPACK+92
 MSKILLED = GUNPACK+93
 MSLOCK = GUNPACK+94
-GBTCOUNT:.BYTE 0
-GBTIN:  .BYTE 0
-GBTOUT: .BYTE 0
-GBTBUF: .BYTE 0,0,0,0,0,0,0,0
+        .BYTE 0,0,0,0,0,0,0,0,0,0,0
 MSDESTROYED: .BYTE $40,$40,$40,$40,$40,$40,$40,$40,$42,$41,$53,$45,$53,$54,$41,$52,$40,$44,$45,$53,$54,$52,$4F,$59,$45,$44,$40,$43,$41,$50,$54,$41,$49,$4E,$FF
 GBMSG1: .BYTE $40,$40,$40,$40,$40,$40,$4D,$4F,$54,$48,$45,$52,$53,$48,$49,$50,$40,$45,$4E,$47,$41,$47,$45,$44,$40,$49,$4E,$40,$42,$41,$54,$54,$4C,$45,$FF
 GBMSG2: .BYTE $40,$40,$40,$40,$40,$40,$40,$40,$40,$40,$4D,$4F,$54,$48,$45,$52,$53,$48,$49,$50,$40,$44,$45,$53,$54,$52,$4F,$59,$45,$44,$FF
@@ -5566,7 +5551,7 @@ et_next:CPX #128
         BNE et_out
         LDA #5
         STA ETC
-et_hits:JSR SHIPHIT
+et_hits:JSR MISSIONHIT
         DEC ETC
         BNE et_hits
 et_out: RTS

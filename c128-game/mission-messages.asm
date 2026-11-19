@@ -22,9 +22,7 @@ boot_ready:
 
 MISSIONINIT:
         LDA #0
-        STA NOTICECOUNT
-        STA NOTICEREAD
-        STA NOTICEWRITE
+        STA NOTICEPEND
         STA CLEARTIME
         LDA #$FF
         STA SYSLAST
@@ -32,28 +30,25 @@ MISSIONINIT:
         JMP SHOWSEC
 
 SECTORNOTICE:
+        LDA #27         ; the first VIEWWORK pass counts the kill frame itself
+        STA CLEARTIME
         LDA #2
-        BNE NOTICEQUEUE
+        BNE NOTICEREQUEST
 
 GROUPNOTICE:
         STA APPR
         LDA #1
-        BNE NOTICEQUEUE
+        BNE NOTICEREQUEST
 
 APPROACHNOTICE:
         LDA #3
-        BNE gorganitor_notice
+        BNE NOTICEREQUEST
 TRACKNOTICE:
         LDA #4
-        JMP NOTICEQUEUE
+        BNE NOTICEREQUEST
 ENTERNOTICE:
         LDA #5
-gorganitor_notice:
-        LDX SYSHP+4     ; a working tracking computer announces its own engagement
-        BEQ gorganitor_queue
-        RTS
-gorganitor_queue:
-        JMP NOTICEQUEUE
+        BNE NOTICEREQUEST
 
 HREAD:  LDA MSGON
         BNE mission_arm_done
@@ -71,26 +66,8 @@ EMPTYROW:
         PLA
         PLA
         RTS
-GBTGATE:
-        LDA MSGON
-        ORA NOTICECOUNT
-        BNE mission_arm_done
-        JMP GBTEXT
-
 MISSIONHIT:
         JSR SHIPHIT
-        JMP mission_queue_damage
-
-; Keep the original timing of mine hits. Transfer the warning when the base
-; releases the message row.
-MISSIONBASEOFF:
-        STA shpj
-        LDA SYSLAST
-        BPL mission_queue_damage
-        LDA NOTICECOUNT
-        BNE mission_arm
-        RTS
-mission_queue_damage:
         LDA SYSLAST
         BMI mission_arm_done
         CLC
@@ -98,86 +75,103 @@ mission_queue_damage:
         LDX #$FF
         STX SYSLAST
 
-NOTICEQUEUE:
-        LDX NOTICECOUNT
-        CPX #8
-        BCS mission_arm_done
-        INC NOTICECOUNT
-        LDX NOTICEWRITE
-        STA NOTICEBUF,X
-        INX
-        TXA
-        AND #7
-        STA NOTICEWRITE
-        LDA #1          ; GROUPNOTICE's caller also stores this in RELAYOUT
-mission_arm:
-        PHA
+; One pending write to the row, published in the next safe view slot.
+; A later request replaces it even while the row is flashing or scrolling.
+NOTICEREQUEST:
+        STA NOTICEPEND
         LDA #<MISSIONFRAME
         STA missionjump+1
         LDA #>MISSIONFRAME
         STA missionjump+2
-        PLA
+        LDA #1          ; GROUPNOTICE's caller also stores this in RELAYOUT
 mission_arm_done:
         RTS
 
 MISSIONREPAIRED:
-        LDA #$FF        ; the report just repaired any queued system
+        LDA #$FF
         STA SYSLAST
         JMP SHIPINIT
 
-mission_idle:
-        JMP ARRSTEP
-mission_finish:
+BASEMESSAGE:
+        PHA             ; this scene prints at its own timed entry point
+        LDA #0
+        STA NOTICEPEND
+        PLA
+        JMP MSGSTAT
+
+MISSIONEND:
+        LDA NOTICEPEND
+        CMP #$14        ; JARALOBA CEASES TO EXIST precedes the loss sequence
+        BNE mission_end_reset
+        JSR GBTEXT
+mission_end_reset:
+        LDA #0
+        STA NOTICEPEND
+        STA CLEARTIME
         JSR mission_disarm
-        JMP ARRSTEP
+        JMP ENDALARM
+
 MISSIONFRAME:
-        LDA NOTICECOUNT
-        ORA CLEARTIME
-        BEQ mission_finish
         LDA ENDMODE
         ORA SHIPLOST
-        ORA MSSTATE
-        BNE mission_finish
-        LDA $D012
-        CMP #145
-        BCS mission_idle
+        BNE mission_cancel
+        LDA MSSTATE
+        CMP #4
+        BCC mission_timer
+        CMP #16         ; base positioning (16) can show damage from mines
+        BCC mission_cancel   ; base exit and the docking report own the screen
+mission_timer:
         LDA CLEARTIME
         BEQ mission_next
         LDA HYPON
         ORA HPEND
-        BEQ mission_wait
+        BEQ mission_count
         LDA #0
         STA CLEARTIME
         BEQ mission_next
-mission_wait:
+mission_count:
         DEC CLEARTIME
+        BNE mission_next
+        LDA MAPSHOWN
         BNE mission_next
         LDA TREQ
         ORA TPF
         ORA WIPE
-        BEQ mission_open
-        INC CLEARTIME
-        BNE mission_next
-mission_open:
-        LDA MAPSHOWN
-        BNE mission_next
+        BNE mission_hold
+        LDA $D012
+        CMP #145
+        BCS mission_hold
         JSR MAPOPEN
         JMP mission_done
+mission_hold:
+        INC CLEARTIME
 mission_next:
-        LDA MSGON
-        ORA MSSTATE
+        LDA NOTICEPEND
+        BEQ mission_idle
+        LDX $D012
+        CPX #145
+        BCS mission_done
+        LDX #0
+        STX NOTICEPEND
+        JSR mission_print
+mission_idle:
+        LDA CLEARTIME
+        ORA NOTICEPEND
         BNE mission_done
-        LDA NOTICECOUNT
-        BEQ mission_done
-        DEC NOTICECOUNT
-        LDX NOTICEREAD
-        LDA NOTICEBUF,X
-        PHA
-        INX
-        TXA
-        AND #7
-        STA NOTICEREAD
-        PLA
+        JSR mission_disarm
+mission_done:
+        JMP ARRSTEP
+mission_cancel:
+        LDA #0
+        STA NOTICEPEND
+        STA CLEARTIME
+        BEQ mission_idle
+
+mission_print:
+        CMP #$11
+        BCC mission_foreground
+        JMP GBTEXT
+mission_foreground:
         CMP #3
         BCS mission_other
         CMP #2
@@ -185,49 +179,46 @@ mission_next:
         LDA #<GROUPMESSAGE
         LDX #>GROUPMESSAGE
         LDY #25
-        JSR mission_show
-        JMP mission_done
+        JMP mission_show
 mission_clear:
-        LDA #26         ; the C64's 55 foreground polls take 26 PAL frames
-        STA CLEARTIME
         LDA #15
         STA MSGRATE
-        LDA #$81
+        LDA #$10
         STA MSGCOL
         LDA #<CLEARMESSAGE
         LDX #>CLEARMESSAGE
         LDY #32
-        JSR MSGSTAT
-        JMP mission_done
+        JMP MSGSTAT
 mission_other:
         CMP #3
         BNE mission_not_approach
-        JSR ALERT
-        JMP mission_done
+        JMP ALERT
 mission_not_approach:
         CMP #4
         BNE mission_not_tracking
-        JSR TRKMSG
-        JMP mission_done
+        JMP TRKMSG
 mission_not_tracking:
         CMP #5
         BNE mission_damage
-        JSR SECALERT
-        JMP mission_done
+        JMP SECALERT
 mission_damage:
         AND #7
         TAX
-        LDA SYSHP,X     ; a repair may have completed while this notice was queued
-        BNE mission_done
+        LDA SYSHP,X     ; discard if a friendly repair already restored it
+        BNE mission_damage_done
         STX WARNIDX
+        LDA #$87
+        STA MSGCOL
+        LDA #5
+        STA MSGRATE
         LDA #<WARNINGEND
         LDX #>WARNINGEND
         LDY #53
-        JSR mission_show
+        JSR MSGSTAT
         JSR mission_systemtext
-        JSR SNDSIREN
-mission_done:
-        JMP ARRSTEP
+        JMP SNDSIREN
+mission_damage_done:
+        RTS
 
 mission_disarm:
         LDA #<ARRSTEP
@@ -240,7 +231,7 @@ mission_show:
         PHA
         LDA #5
         STA MSGRATE
-        LDA #$81
+        LDA #$27
         STA MSGCOL
         PLA
         JMP MSGSTAT
@@ -281,10 +272,7 @@ mission_suffix:
         BNE mission_suffix
         RTS
 
-NOTICECOUNT: .BYTE 0
-NOTICEREAD: .BYTE 0
-NOTICEWRITE: .BYTE 0
-NOTICEBUF: .BYTE 0,0,0,0,0,0,0,0
+NOTICEPEND: .BYTE 0
 WARNIDX: .BYTE 0
 CLEARTIME:  .BYTE 0
 WARNLEN:    .BYTE 0

@@ -119,7 +119,7 @@ mn_cd37: TXA ; $cd37
 mn_cd38: PHA ; $cd38
 mn_cd39: TYA ; $cd39
 mn_cd3a: PHA ; $cd3a
-mn_cd3b: JSR SHIPHIT ; $cd3b
+mn_cd3b: JSR MISSIONHIT ; $cd3b
 mn_cd3e: PLA ; $cd3e
 mn_cd3f: TAY ; $cd3f
 mn_cd40: PLA ; $cd40

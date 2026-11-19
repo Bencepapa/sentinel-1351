@@ -175,6 +175,11 @@ PATCHES_COCKPIT = [
     ('        LDA #194\n        JSR WAITLN\n', 'fkey_guns:LDA #194\n        JSR WAITLN\n'),
     ('        JSR SPRGUNS     ; sprites 0 and 3 become the two guns\n        JSR SWEEPSND\n',
      '        JSR SPRGUNS     ; sprites 0 and 3 become the two guns\n        JSR FKEYGUNS\n'),
+    # Both explosion jobs already stop at line 204. Skip their call overhead
+    # once that slot has passed, leaving time to reach the line-233 split.
+    ('nofgt:\n        LDA #204\n        STA EXLIM\n        JSR EXPLODE\n        JSR EXPLODE2\n',
+     'nofgt:  LDA $D012\n        CMP #204\n        BCS after_gun_explosions\n'
+     '        JSR GUNEXPLOSIONS\n        NOP\nafter_gun_explosions:\n'),
     ('        LDA #230\n        JSR WAITLN\n', 'fkey_strip:LDA #230\n        JSR WAITLN\n'),
     ('        JSR SWEEPSND\n        LDA #242', '        JSR FKEYSWEEP\n        LDA #242'),
     ('        JSR INPUTV      ; vertical blank:', '        JSR FKEYINPUT   ; vertical blank:'),
@@ -191,6 +196,14 @@ PATCHES_COCKPIT = [
      '        JSR EMPTYROW\n        LDA SQCOUNT\n        BNE arr2\n'),
     ('        STA APDLY\n        JSR LRCLEAR\narr9:', '        STA APDLY\n        JSR HREADCLEAR\narr9:'),
     ('        JSR BLIPPOS\n        JSR LRCLEAR\n', '        JSR BLIPPOS\n        JSR HREADCLEAR\n'),
+    # Scanner setup runs on schedule; the message only owns the text row.
+    ('afl5:   LDA MSGON       ; ($C6DE) the scanner waits for a standing message;\n'
+     '        BEQ afl3        ; a scrolling one goes\n'
+     '        LDA MSGMODE\n        BEQ afl4\n        INC APDLY\n        RTS\n'
+     'afl4:   JSR MSGSTOP\n',
+     'afl5:   JMP afl3\n'
+     '        .BYTE 0,0,0,0,0,0,0,0,0,0,0\n'
+     'afl4:   .BYTE 0,0,0\n'),
     ('lr7:    LDA #$7B        ; ($3839) the readings: X (side), Y (up), Z (depth)\n        STA LRROW+9\n',
      'lr7:    JSR SCANROW\n        NOP\n        NOP\n'),
     ('        STA LRROW+13\n', '        JSR SCANZEROX\n'),
@@ -310,12 +323,7 @@ def assemble():
         pattern = r'^%s\s*=\s*\$%04X' % (name, old)
         mapsrc, count = re.subn(pattern, '%s = $%04X' % (name, new), mapsrc, flags=re.M)
         assert count == 1, name
-    mapsrc = mapsrc.replace('        STA LASTMSG', '        JSR GBTQUEUE')
-    mapsrc = mapsrc.replace('VDCMSG: LDA VDCON\n        BEQ vmret',
-                            'VDCMSG: LDA GBTCOUNT\n        BEQ vmret')
-    # Same five bytes, same idle path (LDA/BEQ/RTS); active events drain one per tick.
-    mapsrc = mapsrc.replace('        LDA LASTMSG\n        BEQ vmret',
-                            '        JMP GBTGATE\n        NOP\n        NOP')
+    mapsrc = mapsrc.replace('        STA LASTMSG', '        JSR BATTLEEVENT')
     mapsrc = prefix_map(mapsrc)
     # Same-size raster slots; repair rewrites these only while docked.
     cockpit = cockpit.replace('        LDA #$3B        ; multicolor bitmap:', 'MRMODE: LDA #$3B        ; multicolor bitmap:')
@@ -523,8 +531,8 @@ def ending_source(source, read):
          'ENDSECTOR','ENDHIDE','ENDSHOW','ENDKILL','ENDMSOFF','ENDSHIPFLAG','ENDPLANETFLAG','ENDBASETALLY',
          'OVMNOFF','MNREQ','OVBASEIN','CLOCKFRAME','CLOCKINIT','FKEYVIEW','FKEYGUNS',
          'FKEYSWEEP','FKEYINPUT','FKEYREPAIR','GPOTS','GMAPPOTS','GMAPCENTER','GMAPBUTTONS','HENGARM',
-         'SECTORNOTICE','GROUPNOTICE','MISSIONHIT','MISSIONBASEOFF','MISSIONREPAIRED','STARTPLOT',
-         'TRACKNOTICE','APPROACHNOTICE','ENTERNOTICE','HREAD','HREADCLEAR','GBTGATE','EMPTYROW',
+         'SECTORNOTICE','GROUPNOTICE','MISSIONHIT','MISSIONREPAIRED','STARTPLOT','NOTICEREQUEST','BASEMESSAGE',
+         'TRACKNOTICE','APPROACHNOTICE','ENTERNOTICE','HREAD','HREADCLEAR','EMPTYROW',
          'SCANROW','SCANZEROX','SCANZEROY'))
     _, sym = asm(source+'\n'+placeholder)
     packed_ranges, used = [], set()

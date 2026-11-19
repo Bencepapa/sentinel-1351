@@ -33,7 +33,7 @@ end_check:
         STA ENDMODE
         LDA #255
         STA ENDTIME
-        JSR ENDALARM
+        JSR MISSIONEND
 ENDSTOP:                ; no input, fire, map key or jump; base hooks and enemy fire off
         LDX #<g_mt9
         LDY #>g_mt9

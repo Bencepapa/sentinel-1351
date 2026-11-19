@@ -12,7 +12,8 @@ module.exports = function adoptBank1(m, fresh, S) {
   for (const r of [1, 2, 3, 4]) m.mmu[r] = fresh.mmu[r];
   const armed = (A[S.nov3 + 1] | A[S.nov3 + 2] << 8) !== S.VIEWWORK;
   const ranges = [[0x100, 0x100 + S.B1STUBLEN], [0x200, 0xC60], [0x1C10, 0x1D00],
-    [S.MSUNPACK, S.ENDEVENTEND], [0x5258, 0x5300]];
+    [S.MSUNPACK, S.ENDEVENTEND], [0x5258, 0x5300],
+    [S.M_VDCMSG, S.M_VDCMSG + 5]]; // the old VDC entry can point into the MINES image
   if (S.OVBASE !== undefined) ranges.push([S.OVBASE, S.OVEND]);
   for (const [s, e] of ranges) A.set(F.subarray(s, e), s);
   if (armed) { A[S.nov3 + 1] = S.ENDVIEW & 255; A[S.nov3 + 2] = S.ENDVIEW >> 8; }
