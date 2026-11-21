@@ -434,6 +434,7 @@ LISTING = []
 
 SCROLL_GLYPH_FIRST = 0x1F
 SCROLL_GLYPHS = {
+    '-': (0, 0, 0, 0x3C, 0x3C, 0, 0, 0),
     ',': (0, 0, 0, 0, 0, 0x18, 0x18, 0x10),
     "'": (0x18, 0x18, 0x10, 0, 0, 0, 0, 0),
     '!': (0x18, 0x18, 0x18, 0x18, 0, 0x18, 0x18, 0),
@@ -446,10 +447,10 @@ SCROLL_GLYPHS = {
 
 
 def title_scroller(copy):
-    codes = {' ': 0x40, '.': 0x7A, '-': 0x6C}
+    codes = {' ': 0x40, '.': 0x7A}
     codes.update((chr(ch), ch) for ch in range(ord('A'), ord('Z') + 1))
     codes.update((str(i), 0x70 + i) for i in range(10))
-    codes.update((char, SCROLL_GLYPH_FIRST + i) for i, char in enumerate(SCROLL_GLYPHS))
+    used = []  # punctuation glyphs only take a font slot (and staging bytes) when the text uses them
     lines = []
     for row, line in enumerate(copy.split('\n'), 1):
         if not line.strip(' ') or line.lstrip(' ').startswith('#'):
@@ -457,6 +458,10 @@ def title_scroller(copy):
         encoded = bytearray()
         for column, char in enumerate(line, 1):
             code = codes.get(char.upper()) if char.isascii() else None
+            if code is None and char in SCROLL_GLYPHS:
+                if char not in used:
+                    used.append(char)
+                code = SCROLL_GLYPH_FIRST + used.index(char)
             if code is None:
                 raise SystemExit(f'title-text.txt:{row}:{column}: unsupported scroller character '
                                  f'{ascii(char)} (U+{ord(char):04X})')
@@ -465,45 +470,43 @@ def title_scroller(copy):
     text = b'@@@'.join(lines)
     if not 1 <= len(text) <= 217:
         raise SystemExit(f'title-text.txt: use 1-217 characters including line gaps (got {len(text)})')
-    return text + b'@' * 38 + b'\xFF'
+    return text + b'@' * 38 + b'\xFF', used
 
 
-def title_score(score):
-    """Encode frame durations and PAL SID frequencies from editable notes."""
-    semitones = {'C': 0, 'D': 2, 'E': 4, 'F': 5, 'G': 7, 'A': 9, 'B': 11}
-    events = bytearray()
-    for line_number, line in enumerate(score.splitlines(), 1):
-        fields = line.split()
-        if not fields or fields[0].startswith('#'):
-            continue
-        error = f'title-music.txt:{line_number}: expected 1-255 frames and three notes (e.g. 14 D5 C#4 -)'
-        if len(fields) != 4 or not re.fullmatch(r'[0-9]{1,3}', fields[0]) or not 1 <= int(fields[0]) <= 255:
-            raise SystemExit(error)
-        events.append(int(fields[0]))
-        for note in fields[1:]:
-            frequency = 0
-            if note != '-':
-                match = re.fullmatch(r'([A-G])([#b]?)([0-7])', note)
-                if not match:
-                    raise SystemExit(error)
-                letter, accidental, octave = match.groups()
-                pitch = (int(octave) + 1) * 12 + semitones[letter] + {'': 0, '#': 1, 'b': -1}[accidental]
-                frequency = round(440 * 2 ** ((pitch - 69) / 12) * 2 ** 24 / 985248)
-                if frequency > 65535:
-                    raise SystemExit(f'title-music.txt:{line_number}: {note} is above the SID frequency range')
-            events.extend(frequency.to_bytes(2, 'little'))
-    if not 0 < len(events) < 256:
-        raise SystemExit('title-music.txt: enter 1-36 events (the title score uses a one-byte index)')
-    return events + b'\x00'
+def title_music(disk_title):
+    """The original title tune from the disk's SN1: the player's initial state
+    ($1ED6), the note tables ($1EE8, $1EF4) and the three (pitch, duration)
+    streams ($1F01-$2074), as the data block of title-music.asm."""
+    def at(address, length):
+        offset = address - 0x800 + 2
+        return list(disk_title[offset:offset + length])
+
+    state, low, high = at(0x1ED6, 6), at(0x1EE8, 12), at(0x1EF4, 12)
+    streams = [at(0x1F01, 158), at(0x1F9F, 96), at(0x1FFF, 118)]
+    assert state == [0x46, 0x2E, 0x50, 0x41, 0x47, 0x45] and low[0] == 0x1E and high[-1] == 0xFD
+    assert [stream[-1] for stream in streams] == [0, 0, 0]
+    setup = ([5, 12, 19, 6, 13, 20, 24, 3, 10, 17, 4, 11, 18],
+             [0x59] * 3 + [0xAA] * 3 + [0x0F, 0x0B, 0x0B, 0x0A, 0x40, 0x40, 0x40])
+    start = [0, len(streams[0]) // 2, (len(streams[0]) + len(streams[1])) // 2]
+    lines = ['MUIDX: ' + as_bytes(start), 'MUFL: ' + as_bytes(state[0::2]), 'MUFH: ' + as_bytes(state[1::2]),
+             'MUSICSETUP: ' + as_bytes(setup[0] + setup[1]),
+             'MUSICLO: ' + as_bytes(low), 'MUSICHI: ' + as_bytes(high),
+             'MUSICP: ' + as_bytes([p for stream in streams for p in stream[0::2]]),
+             'MUSICD: ' + as_bytes([p for stream in streams for p in stream[1::2]])]
+    return '\n'.join(lines)
 
 
-def briefing_source(copy):
-    lines = [line.strip() for line in copy.splitlines() if line.strip() and not line.startswith('#')]
-    if len(lines) != 7 or any(len(line) > 38 or not re.fullmatch(r'[A-Z ]+', line) for line in lines):
-        raise SystemExit('title-intro.txt: enter one welcome and six briefing rows of 1-38 uppercase letters and spaces')
-    welcome, *briefing = (line.replace(' ', '@').encode('ascii') for line in lines)
-    cells = b''.join(b'a' + line.ljust(38, b'@') + b'b' for line in briefing)
-    return as_bytes(welcome + b'@\x00'), as_bytes(cells[:80]), as_bytes(cells[80:])
+def title_briefing(disk_title):
+    """The original welcome ribbon ($97D9, $FF terminated) and the Starfleet briefing
+    ($9821, 231 glyph codes and $FF) from the disk's SN1."""
+    def at(address, length):
+        offset = address - 0x800 + 2
+        return list(disk_title[offset:offset + length])
+
+    welcome, briefing = at(0x97D9, 72), at(0x9821, 232)
+    assert welcome[0] == 0x40 and welcome[-1] == 0xFF and welcome.count(0xFF) == 1
+    assert briefing[0] == 0x61 and briefing[-1] == 0xFF and briefing.count(0xFF) == 1
+    return 'BRIEFWELCOME: ' + as_bytes(welcome), as_bytes(briefing)
 
 
 def as_bytes(values):
@@ -539,24 +542,25 @@ def title_source(read):
     ]
     try:
         with open(os.path.join(HERE, 'title-text.txt'), encoding='utf-8-sig') as copy:
-            scroll = title_scroller(copy.read())
+            scroll, glyphs = title_scroller(copy.read())
     except UnicodeDecodeError:
         raise SystemExit('title-text.txt: save the text file as UTF-8') from None
-    punctuation = bytes(row for glyph in SCROLL_GLYPHS.values() for row in glyph)
+    punctuation = bytes(row for char in glyphs for row in SCROLL_GLYPHS[char])
     credit_data = sum(credits, []) + [0, 0]
     lettering = '\n'.join((f'TITLEOPTIONINDEX = {len(credit_data)}',
                            'TITLECREDITS: ' + as_bytes(credit_data),
                            'TITLEOPTIONS: ' + as_bytes(sum(options, []) + [0, 0])))
     source = f'TITLEPUNCTSIZE = {len(punctuation)}\n' + read('c128-game', 'title.asm')
-    music = read('c128-game', 'title-music.asm').replace(
-        '; MUSICSCOREDATA', as_bytes(title_score(read('c128-game', 'title-music.txt'))))
-    welcome, header, briefing = briefing_source(read('c128-game', 'title-intro.txt'))
-    intro = read('c128-game', 'title-intro.asm').replace(
-        '; BRIEFHEADERDATA', header).replace('; BRIEFBODYDATA', briefing)
+    if not punctuation:  # the text uses none: no font slots to fill or blank again
+        copy_code = source[source.index('TITLESETUP:'):source.index('; TITLEBRIEFWELCOME')]
+        source = source.replace(copy_code, 'TITLESETUP:\n        RTS\nTITLEFONTRESTORE:\n        LDY #$FF\n        RTS\n')
+    music = read('c128-game', 'title-music.asm').replace('; MUSICDATA', title_music(disk_title))
+    welcome, briefing = title_briefing(disk_title)
+    intro = read('c128-game', 'title-intro.asm').replace('; BRIEFTEXTDATA', briefing)
     return source.replace('; TITLECOPYDATA', as_bytes(scroll)).replace(
         '; TITLELETTERDATA', lettering).replace('; TITLEMUSIC', music).replace(
-        '; TITLEINTRO', intro).replace('; TITLEBRIEFWELCOME', 'BRIEFWELCOME: ' + welcome).replace(
-        '; TITLEPUNCTDATA', as_bytes(punctuation))
+        '; TITLEINTRO', intro).replace('; TITLEBRIEFWELCOME', welcome).replace(
+        '; TITLEPUNCTDATA', as_bytes(punctuation) if punctuation else '')
 
 
 def audit_s1(symbols):
@@ -751,7 +755,7 @@ ENDHEADS = 0x4900           # hidden text-screen rows 6-16 while an ending runs
 ENDVDCRESERVE = 0           # bytes kept free; the rest bridges the smallest snapshot gaps
 ENDB1SNAP = 0x2C00          # bank 1: the reset snapshot, then the payload (bank1.asm)
 ENDPKG = 0xE970             # the ENDING package's run address in S1 (ending.asm)
-ENDPKGSTAGE = 0xE980        # load-time staging: packed core at $E000, then packed ENDING
+ENDPKGSTAGE = 0xE9C0        # load-time staging: packed core at $E000, then packed ENDING
 ENDSTAGE = 0xF100
 ENDB1LIMIT = 0x6400         # bank 1: the first byte after the snapshot and payload area (B1STREAM)
 S1BASE, S1END = 0xE960, 0xF6F9   # the slot (overlay.asm)
@@ -957,23 +961,36 @@ def main():
     assert symbols['B1INITAT'] + len(b1init) == symbols['ENDSTUBIMG']
     assert symbols['ENDSTUBIMG'] + len(stub) <= symbols['OVLIMG'] == symbols['ENDSTUBIMG'] + 128
     assert symbols['TITLESTAGE'] == symbols['OVLIMG'] + symbols['OVAREALEN']
-    mid, tail, extra, last = (symbols[name] - symbols['TITLEPKG'] for name in
-                             ('TITLEMID', 'TITLETAIL', 'TITLEEXTRA', 'TITLELAST'))
-    # Independent streams append into the same staging image in low RAM.
-    title_stream, title_mid, title_tail, title_extra, title_last = (
-        (title_decode + end).to_bytes(2, 'little') + lz_pack(title[start:end])
-        for start, end in ((0, mid), (mid, tail), (tail, extra), (extra, last), (last, len(title)))
-    )
-    assert symbols['TITLEMIDSTAGE'] == symbols['PATHX'] == 0x3400 and symbols['PATHY'] == 0x3500
-    assert len(title_mid) <= 512, f'TITLE middle stream needs {len(title_mid)} / 512 bytes'
+    # The package is cut into five independently packed streams, one per staging hole,
+    # each as long as its hole holds (the cuts need no labels: decoding is sequential).
     assert symbols['TITLETAILSTAGE'] == symbols['TITLEMAT'] == 0x4478
     blank_start = symbols['TITLETAILBLANK']
     blank_len = symbols['TITLETAILBLANKLEN']
     assert blank_start == symbols['TITLETAILSTAGE'] + 600 and 0 < blank_len <= 255
-    tail_capacity = blank_start + blank_len - symbols['TITLETAILSTAGE']
-    assert len(title_tail) <= tail_capacity, f'TITLE tail stream needs {len(title_tail)} / {tail_capacity} bytes'
-    assert symbols['TITLEEXTRASTAGE'] == 0x48A0
-    assert len(title_extra) <= 720, f'TITLE extra stream needs {len(title_extra)} / 720 hidden text bytes'
+    holes = [('main', 0xFF00 - symbols['TITLESTAGE']), ('middle', 512),
+             ('tail', blank_start + blank_len - symbols['TITLETAILSTAGE']), ('extra', 800),
+             ('final', 0x7680 - symbols['TITLELASTSTAGE']), ('exit', EXIT_FREE), ('start', START_FREE)]
+    cuts, start = [0], 0
+    for name, capacity in holes:
+        low, high = 0, len(title) - start
+        while low < high:  # the largest prefix that still packs into the hole
+            middle = (low + high + 1) // 2
+            if len(lz_pack(title[start:start + middle])) + 2 <= capacity:
+                low = middle
+            else:
+                high = middle - 1
+        start += low
+        cuts.append(start)
+    assert start == len(title), (
+        f'TITLE package ({len(title)} bytes) is {len(title) - start} bytes too long for its five staging holes '
+        f'({", ".join(f"{name} {capacity}" for name, capacity in holes)})')
+    # Independent streams append into the same staging image in low RAM.
+    title_stream, title_mid, title_tail, title_extra, title_last, title_exit, title_start = (
+        (title_decode + end).to_bytes(2, 'little') + lz_pack(title[begin:end])
+        for begin, end in zip(cuts, cuts[1:])
+    )
+    assert symbols['TITLEMIDSTAGE'] == symbols['PATHX'] == 0x3400 and symbols['PATHY'] == 0x3500
+    assert symbols['TITLEEXTRASTAGE'] == 0x4878
     assert symbols['TITLESTAGE'] + len(title_stream) <= 0xFF00, (
         f'TITLE stream needs {len(title_stream)} bytes, '
         f'{0xFF00 - symbols["TITLESTAGE"]} available below $FF00')
@@ -1121,6 +1138,10 @@ def main():
         f'final TITLE stream needs {len(title_last)} bytes before the cockpit art')
     p(HIGH2SRC, packed)
     p(symbols['TITLELASTSTAGE'], title_last)
+    assert not any(body[symbols['CKEXITFREE'] - LOAD:symbols['CKEXITFREE'] - LOAD + EXIT_FREE]), 'the dead EXIT code is not free'
+    p(symbols['CKEXITFREE'], title_exit)
+    assert not any(body[symbols['CKSTARTFREE'] - LOAD:symbols['CKSTARTFREE'] - LOAD + START_FREE]), 'the dead START saves are not free'
+    p(symbols['CKSTARTFREE'], title_start)
     # Consumed by ENDINIT before the high decoder overwrites this staging.
     # Native LOAD can reach the whole payload (never beyond $FF00).
     core_stream = symbols['ENDCOREEND'].to_bytes(2, 'little') + lz_pack(bytes(chunks[0x0200]))
@@ -1154,13 +1175,13 @@ def main():
     assert body[blank_start - LOAD:blank_start - LOAD + blank_len] == b'\x1e' * blank_len, (
         'TITLE tail staging must match the uniform rows TITLESTORE restores')
     p(symbols['TITLETAILSTAGE'], title_tail)
-    assert body[0x48A0 - LOAD:0x4B70 - LOAD] == b'\x60' * 320 + b'\x1e' * 400, (
+    assert body[0x4878 - LOAD:0x4B98 - LOAD] == b'\x11' * 40 + b'\x60' * 320 + b'\x1e' * 400 + b'\xbe' * 40, (
         'TITLE extra staging must match the hidden rows TITLEEXTRAUNPACK restores')
     p(symbols['TITLEEXTRASTAGE'], title_extra)
     title_font = symbols['TITLEPUNCTFONT']
     title_font_len = symbols['TITLEPUNCTEND'] - symbols['TITLEPUNCT']
-    assert title_font == 0x4000 + SCROLL_GLYPH_FIRST * 8 and title_font_len == 8 * len(SCROLL_GLYPHS)
-    assert 0 < title_font_len == symbols['TITLEPUNCTSIZE'] <= 128
+    assert title_font == 0x4000 + SCROLL_GLYPH_FIRST * 8
+    assert 0 <= title_font_len == symbols['TITLEPUNCTSIZE'] <= 128
     assert not any(body[title_font - LOAD:title_font - LOAD + title_font_len]), 'TITLE punctuation must borrow blank glyphs'
     # The KERNAL's LOAD stops at $FF00 (its store loop ends when AEL reaches $FF),
     # so nothing may be placed there: the tail above is staged beneath I/O instead.
@@ -1175,7 +1196,9 @@ def main():
           f'{len(title_mid)} at ${symbols["TITLEMIDSTAGE"]:04X} and '
           f'{len(title_tail)} at ${symbols["TITLETAILSTAGE"]:04X} and '
           f'{len(title_extra)} at ${symbols["TITLEEXTRASTAGE"]:04X} and '
-          f'{len(title_last)} at ${symbols["TITLELASTSTAGE"]:04X}; '
+          f'{len(title_last)} at ${symbols["TITLELASTSTAGE"]:04X} and '
+          f'{len(title_exit)} at ${symbols["CKEXITFREE"]:04X} and '
+          f'{len(title_start)} at ${symbols["CKSTARTFREE"]:04X}; '
           f'{0xFF00 - LOAD - len(body)} bytes left below $FF00')
     print(f'ending memory: core $0200-${symbols["ENDCOREEND"]-1:04X}, {0xC60-symbols["ENDCOREEND"]} bytes free after it (to $0C5F); '
           f'ENDING package ${ENDPKG:04X}-${symbols["ENDINGEND"]-1:04X} ({symbols["ENDINGEND"]-ENDPKG} bytes), MINES ${symbols["MNSTART"]:04X}-${symbols["MNEXTRAEND"]-1:04X}; '

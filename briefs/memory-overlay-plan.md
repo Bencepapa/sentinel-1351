@@ -783,31 +783,41 @@ eight-frame cadence. The strip scrolls one pixel per frame in 38 columns. It
 borrows eight blank glyphs at `$40F8-$4137` for punctuation and restores them
 before the briefing. [Editable scroll text and glyph list](../c128-game/title-text.txt)
 
-The newly composed cue *Night Watch* starts once per title visit. Its editable score
-encodes 24 events as frame durations and three SID frequency words per event.
-The player ticks in the view window and clears the SID when the score ends or
-when F5, F7 or Fire opens the selector. The selector resets master volume for
-its own sounds. The score and player state stay in the bank-0 copy of TITLE
-through playback. [Editable score](../c128-game/title-music.txt)
+The original title tune starts once per title visit. The player
+([title-music.asm](../c128-game/title-music.asm)) reads the disk's three
+(pitch, duration) streams (stored as one pitch plane and one duration plane, 372 bytes) and
+writes the SID in the original's order: the init's 39 writes, six frequency
+writes every second frame, the gate pairs of new events, the final clear (13,150
+writes, SHA-256 10743917...). F5, F7 and Fire switch the three controls off and
+start the engine hum (voice 3 noise, `$D418` = `$1F`), as `$18B4` and `$C38E` do.
+The original selector writes nothing when the selection moves.
 
 F5, F7 and Fire open the bitmap selector. Joystick or 1351 motion moves the
 crosshair across the five difficulty rows. A fresh fire press runs the cockpit
 phasor and hides the unselected entries. The chosen entry cycles through the
-reference colours and voice 2 repeats its pulse every 12 frames. At 155 frames
-the handoff restores the view and sets the ship through `SHIPINIT`. The
-welcome ribbon scrolls, then the resident raster IRQ moves the text/bitmap
-boundary from line 75 to 123 at one line per 1 MHz frame. The briefing writes
-one cell every two frames and clicks on letters. It holds for 240 frames and
-closes at the opening rate. Fire or Space after release can advance early.
+reference colours and the original's welcome ribbon (`RIBTICK`: fine X 7-5-3-1,
+a cell every fourth frame, ink flipping black/white with a voice 2 beep every 12
+frames, 42 times, then light green) runs from the accept, with the engine hum's
+burst every sixth frame; the briefing rows are prepared a row a frame at age 100.
+At 155 frames the handoff sets the ship through `SHIPINIT`; the view, stars and
+ribbon go on. When the ribbon ends the resident raster IRQ moves the text/bitmap
+boundary from line 75 to 123 at one line per 1 MHz frame (voice 1 blip each step).
+The briefing writes one glyph every two frames (a click on every glyph but a space),
+holds for 240 frames with its last row flashing 15/1 every 40 frames, and
+closes at the opening rate. Guns and crosshair sprites stay (the IRQ chain has a
+line-194 gun stage), the stars move in the main loop (line 243 sync). The IRQ
+handlers repeat the title loop's split sequences exactly (WAITST at 56 with the HUD's
+border edge, the view's white edge line, the ribbon strip with border and background);
+the first bar steps wait at line 78 (the bad line 75 would stretch WAITST's tail). Fire or Space after release can advance early.
 The handoff disables the IRQ, restores the scanner row, evicts TITLE, and
 initializes the world and first map with resident code. The first hyperspace
 jump preloads MINES in bounded chunks. Direct base entry can load it synchronously.
-[Editable briefing](../c128-game/title-intro.txt)
+The original briefing and welcome text are copied from the disk by `build.py` (`title_briefing`).
 
 ### Load and runtime space
 
-The 2,844-byte image occupies `$E963-$F47E` and lives in twelve pages of bank 1
-at `$8600-$91FF` between title visits. Before `GINIT2` installs the low block,
+The 3,320-byte image occupies `$E963-$F62A` and lives in thirteen pages of bank 1
+at `$8600-$92FF` between title visits (the decode area `$0D00-$19FF` limits it to 3,328). Before `GINIT2` installs the low block,
 `TITLESTORE` appends five compressed streams into `$0D00` and transfers the
 image to bank 1. The loader clears the phasor paths, restores the view matrix
 from `MMAT`, and restores the uniform matrix and hidden text rows. The build
@@ -818,25 +828,22 @@ resident briefing IRQ within the same PRG.
 
 | Area | Layout and free bytes |
 |---|---|
-| Resident tail | `$0BCA-$0C5F`, **150 bytes** |
+| Resident tail | `$0C27-$0C5F`, **57 bytes** (the packed core stages up to `$E9C0` now; ENDING's stream moved up 64 bytes) |
 | Overlay manager | `$1A10-$1BFE` used, **1 byte** at `$1BFF` |
 | Loader tail | `$1CF5-$1CFF`, **11 bytes** |
-| S1 while TITLE runs | **637 bytes** outside its loaded image |
-| Bank 1 | **44,789 bytes** free, including the range from `$9200` |
-| First TITLE stream | 712 bytes at `$FC2A-$FEF1`, **14 bytes** below `$FF00` |
-| Second TITLE stream | 459 bytes at `$3400-$35CA`, **53 bytes** in the phasor path pages |
-| Third TITLE stream | 664 bytes at `$4478-$470F`, **96 bytes** in bitmap matrix rows 3–21 |
-| Fourth TITLE stream | 700 bytes at `$48A0-$4B5B`, **20 bytes** in hidden text rows |
-| Fifth TITLE stream | 138 bytes at `$75E0-$7669`, **22 bytes** before the cockpit art |
+| S1 while TITLE runs | **158 bytes** outside its loaded image |
+| Bank 1 | **44,533 bytes** free, including the range from `$9300` |
+| TITLE streams | `build.py` cuts the image into seven independently packed streams, each as long as its hole: 687 bytes at `$FC51-$FEFF` (full), 512 at `$3400` (the phasor path pages, full), 760 at `$4478` (bitmap matrix rows, full), 799 of 800 at `$4878` (hidden text rows 3-22, restored by `TITLEEXTRAUNPACK` incl. the `$11` and `$BE` edge rows), 160 at `$75E0` (full), 95 of 96 at `$1F79` (the dead EXIT code), 29 of 69 at `$1D14` (the dead START saves: **40 bytes** free) |
 
 The JS DMA checks compare seven aligned title frames with the C64 bitmap,
 matrix palette and colour-band trace. They compare the selector's five rows,
 the phasor and confirmation timing, the SID pulses and all five starting
-states with both devices. The new checks compare the SID stream with the
-editable score, measure the briefing's 0/24/48-line frames and glyph pacing,
-exercise both skip controls, and verify the packaged itch start and game-over
+states with both devices. The new checks compare the whole SID stream of the tune,
+the ribbon, the engine hum, the bar's blips and the typing clicks, the ribbon's text/ink/fine scroll, the
+typed message and its ink, the HUD and the guns with the original, measure the bar's
+line steps, exercise both skip controls, and verify the packaged itch start and game-over
 detection. The victory reveal also waits for a fresh view window if there is
 too little time for its 520 colour writes before the cockpit split.
-In VICE x128, listen for the cue and selector sounds, let the panel
+In VICE x128, listen for the tune, the selector's hum, the ribbon beeps and the briefing sounds, let the panel
 open and close, try both skip controls after a restart, and check the scroller
 with a punctuation edit.

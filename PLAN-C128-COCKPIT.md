@@ -11,12 +11,18 @@ Cold boot, F7 restart and both endings return to TITLE. The port uses the C64
 cockpit font for the wordmark and credits, moves the two credit colour bands
 in opposite directions, and clips the editable scroller to 38 columns. The
 scroller accepts letters, digits, spaces and ten punctuation glyphs.
-The replaceable three-voice SID cue plays once and stops on F5, F7 or Fire
-before the selector's effects. Confirm fires the phasor, cycles the selected
-label and beeps for 155 PAL frames. A welcome ribbon and a 48-line typed
-briefing follow. The resident handoff opens the sector map on completion or
-a fresh Fire or Space press. The current build leaves 150 resident bytes and
-14 bytes below the KERNAL load ceiling. [Overlay layout and checks](briefs/memory-overlay-plan.md#11-title-overlay-and-difficulty-selector)
+The original three-voice SID tune (the same 13,150 writes at the same frames as
+the C64) plays once and stops on F5, F7 or Fire; the selector starts the original's
+engine hum. Confirm fires the phasor and cycles the selected label for 155 PAL
+frames while the original's welcome ribbon scrolls (white/black ink, a beep every 12
+frames, the hum every 6); the original Starfleet briefing (231 glyphs, the original
+bar, typing, flash and closing sounds, stars and guns kept in the view) follows. The
+resident handoff opens the sector map on completion or a fresh Fire or Space press.
+The title package is 3,320 bytes (S1 158 free, 8 under its 13 decode pages); its seven
+streams use two newly staged holes (the dead EXIT and START-save bytes) and 40
+bytes remain in the START hole; 57 resident bytes remain (the intro's IRQ handlers repeat the title loop's HUD border sequence). The VIC raster IRQ
+the C128 KERNAL arms is switched off at TITLEBOOT (it made OVSTART refuse the
+TITLE load in VICE). [Overlay layout and checks](briefs/memory-overlay-plan.md#11-title-overlay-and-difficulty-selector)
 
 Updated 2026-11-18. **TIME clock ported**. The JS C64 trace found one call to
 `$FAD7` from the raster IRQ at `$0BF6` per active frame. `$FAE9` advances the

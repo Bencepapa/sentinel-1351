@@ -25,11 +25,13 @@ python c128-game/build.py
 ```
 
 The cockpit title uses the C64 bitmap lettering, animated credit colours,
-a 38-column scroller and a one-shot SID cue. F5, F7 or Fire opens the difficulty selector. Move the
+a 38-column scroller and the original's one-shot three-voice SID tune. F5, F7 or Fire opens the
+difficulty selector (the original's engine hum starts). Move the
 crosshair with a port-2 joystick or 1351 mouse and fire to confirm Skirmish,
 Assault, Battle, Invasion or Armageddon. The phasor fires and the selected
-difficulty flashes for about three seconds. A scrolling welcome and an
-expanding briefing panel follow. The sector map opens when the panel closes.
+difficulty flashes for about three seconds while the original's welcome ribbon scrolls
+(white and black, with a beep every 12 frames). The original Starfleet briefing opens a 48-line
+panel and is typed glyph by glyph. The sector map opens when the panel closes.
 A fresh Fire or Space press advances from the briefing straight to the map.
 [Editable title text and music](c128-game/README.md#how-it-plays)
 

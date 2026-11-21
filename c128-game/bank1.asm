@@ -158,10 +158,20 @@ TITLEEXTRAUNPACK:
         LDA #>TITLELASTSTAGE
         STA CSRC+1
         JSR g_upb
+        LDA #<CKEXITFREE
+        STA CSRC
+        LDA #>CKEXITFREE
+        STA CSRC+1
+        JSR g_upb
+        LDA #<CKSTARTFREE
+        STA CSRC
+        LDA #>CKSTARTFREE
+        STA CSRC+1
+        JSR g_upb
         LDX #0
 title_extrablank:
         LDA #$60
-        STA TITLEEXTRASTAGE,X
+        STA TITLEEXTRASTAGE+40,X
         LDA #$1E
         STA $49E0,X
         STA $4A70,X
@@ -173,6 +183,14 @@ title_extratail:
         STA $49A0,X
         DEX
         BPL title_extratail
+        LDX #39
+title_extraedge:
+        LDA #$11
+        STA TITLEEXTRASTAGE,X
+        LDA #$BE
+        STA $4B70,X
+        DEX
+        BPL title_extraedge
         RTS
 ENDSTUBIMG:
 B1INITEND:

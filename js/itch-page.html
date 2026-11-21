@@ -8,27 +8,52 @@
 html, body { margin: 0; height: 100%; background: #000; overflow: hidden; overscroll-behavior: none; }
 body { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent; }
 
-/* the game fills the frame at the screen's 384:272 shape; the rest is black */
-#stage { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; touch-action: none; outline: none; }
+/* The selector shows the whole 384:272 picture. A game shows its 200 pixel rows, the C64's display window (rows 36-235
+   of the 272, the black border above and below is cut off), at the largest size that fits: the screen's width or
+   height, whichever comes first. Where it goes: see TOUCH CONTROLS below. --W x --H = the viewport. */
+:root { --W: 100vw; --H: 100vh; }
+@supports (height: 100dvh) { :root { --H: 100dvh; } }
+#stage { position: fixed; inset: 0; display: flex; align-items: center; justify-content: flex-start; touch-action: none; outline: none; box-sizing: border-box; }
 /* the mouse pointer is hidden only by the browser while the mouse is captured (pointer lock) */
-#box { position: relative; width: min(100vw, calc(100vh * 384 / 272)); width: min(100vw, calc(100dvh * 384 / 272)); aspect-ratio: 384 / 272; }
-#vic, #ov { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+#box { position: relative; --gw: min(var(--W), calc(var(--H) * 384 / 272)); width: var(--gw); aspect-ratio: 384 / 272; flex: none; overflow: hidden;
+  margin-left: min(calc(var(--W) - var(--gw)), calc((var(--W) - var(--gw) + var(--tcol, 0px)) / 2)); }     /* (centred: --tcol is 0) */
+#vic, #ov { position: absolute; left: 0; top: 0; width: 100%; height: 100%; display: block; }
 #vic { image-rendering: crisp-edges; image-rendering: pixelated; }
 #ov { pointer-events: none; }
+body.ingame #box { --gw: min(var(--W), calc(var(--H) * 384 / 200)); aspect-ratio: 384 / 200; }
+body.ingame #vic { top: -18%; height: 136%; }                                    /* the 272 rows, shifted up by 36 of 200 */
 
 /* ---- TOUCH CONTROLS: edit the look here ------------------------------------------------
-   Shown on touch devices while a game runs. FIRE = left mouse button, MAP = right,
-   TORPEDO = both. Aiming is a drag anywhere else on the screen. */
-.tbtn { display: none; position: fixed; z-index: 3; box-sizing: border-box; padding: 0; margin: 0;
-  border: 2px solid rgba(255, 255, 255, 0.45); border-radius: 50%;
-  background: rgba(255, 255, 255, 0.16); color: rgba(255, 255, 255, 0.85);
-  font: 700 13px/1 system-ui, sans-serif; letter-spacing: 0.08em;
-  touch-action: none; -webkit-user-select: none; user-select: none; }
-.tbtn.down { background: rgba(255, 255, 255, 0.42); }
-body.touch.ingame .tbtn { display: block; }
-#b-fire { left: max(16px, env(safe-area-inset-left)); bottom: max(16px, env(safe-area-inset-bottom)); width: 96px; height: 96px; }
-#b-torp { right: max(16px, env(safe-area-inset-right)); bottom: max(16px, env(safe-area-inset-bottom)); width: 72px; height: 72px; }
-#b-map  { right: max(16px, env(safe-area-inset-right)); bottom: calc(max(16px, env(safe-area-inset-bottom)) + 88px); width: 72px; height: 72px; }
+   Shown on touch devices while a game runs, at the bottom left. Landscape: a vertical stack, PROTON, MAP, FIRE
+   from the top (FIRE nearest to the thumb, MAP between, so a proton torpedo is never thrown by accident).
+   Portrait: one row, FIRE at the far left, then MAP, then PROTON, at thumb height (--tlift from the bottom).
+   --tgap is the space between the buttons. FIRE = left mouse button, MAP = right, PROTON = both. Aiming is a drag
+   anywhere else on the screen. Landscape: the game fills the screen top to bottom (or the full width where the
+   screen is less wide than the picture) and is centred in the area right of the buttons (--tcol wide); it slides
+   under the buttons where it is wider than that. Portrait: the picture fills the width, --ttop from the top. */
+body.touch.ingame { --tcol: calc(max(14px, env(safe-area-inset-left, 0px)) + 112px); --tgap: 26px; --ttop: calc(max(10px, env(safe-area-inset-top, 0px)) + 14px); }
+#tpad { display: none; position: fixed; z-index: 3; pointer-events: none;      /* (the gaps pass touches on) */
+  left: max(14px, env(safe-area-inset-left, 0px)); bottom: max(14px, env(safe-area-inset-bottom, 0px));
+  flex-direction: column; align-items: center; gap: var(--tgap, 26px); }
+@media (orientation: portrait) {
+  body.touch.ingame { --tcol: 0px; }
+  body.touch.ingame #stage { align-items: flex-start; padding-top: var(--ttop); }
+  #tpad { flex-direction: row-reverse; --tlift: calc(var(--H) * 0.2); bottom: max(max(14px, env(safe-area-inset-bottom, 0px)), var(--tlift)); }   /* FIRE, MAP, PROTON from the left */
+}
+body.touch.ingame #tpad { display: flex; }
+.tbtn { position: relative; pointer-events: auto; box-sizing: border-box; padding: 0; margin: 0;
+  border: 4px solid var(--tc); background: rgba(0, 0, 0, 0.32); color: var(--tc);
+  font: 900 15px/1 system-ui, sans-serif; letter-spacing: 0.06em; text-shadow: 0 0 2px #000;
+  touch-action: none; -webkit-user-select: none; user-select: none; -webkit-tap-highlight-color: transparent; }
+.tbtn::after { content: ''; position: absolute; inset: -6px; }                  /* a roomier hit area than the ring (the gaps are wider than 2 x 6 px) */
+.tbtn.down { background: color-mix(in srgb, var(--tc) 38%, transparent); }
+.tsmall { width: 100px; height: 46px; border-radius: 14px; }                    /* MAP, PROTON: rounded rectangles */
+#b-map { --tc: #ffd23f; }                                                       /* yellow: the map */
+#b-proton { --tc: #ffffff; }                                                    /* white: the proton torpedo */
+#tsys { display: flex; flex-direction: row; gap: 12px; pointer-events: none; }   /* PAUSE and >>: side by side in landscape (above PROTON), stacked in portrait (after PROTON) */
+@media (orientation: portrait) { #tsys { flex-direction: column; } }
+.tsys { --tc: #a8a8a8; width: 50px; height: 40px; border-width: 3px; border-radius: 10px; font-size: 11px; letter-spacing: 0.02em; }
+#b-fire { --tc: #ff4a3a; width: 88px; height: 88px; border-radius: 50%; border-width: 6px; font-size: 22px; letter-spacing: 0.04em; }
 /* ---- end of touch controls ------------------------------------------------------------- */
 </style>
 </head>
@@ -39,9 +64,12 @@ body.touch.ingame .tbtn { display: block; }
     <canvas id="ov" width="384" height="272"></canvas>
   </div>
 </div>
-<button id="b-fire" class="tbtn" type="button" aria-label="Fire">FIRE</button>
-<button id="b-map" class="tbtn" type="button" aria-label="Map">MAP</button>
-<button id="b-torp" class="tbtn" type="button" aria-label="Torpedo">TORP</button>
+<div id="tpad">
+  <div id="tsys"><button id="b-pause" class="tbtn tsys" type="button" aria-label="Pause">PAUSE</button><button id="b-go" class="tbtn tsys" type="button" aria-label="Double speed">&gt;&gt;</button></div>
+  <button id="b-proton" class="tbtn tsmall" type="button" aria-label="Proton torpedo">PROTON</button>
+  <button id="b-map" class="tbtn tsmall" type="button" aria-label="Map">MAP</button>
+  <button id="b-fire" class="tbtn" type="button" aria-label="Fire">FIRE</button>
+</div>
 <!--SCRIPTS-->
 </body>
 </html>

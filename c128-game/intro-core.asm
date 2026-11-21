@@ -1,7 +1,7 @@
 ; Resident raster handlers. Only the split line and ribbon scroll change
 ; while TITLE owns the overlay slot. IRQs are off before it releases S1.
 INTROTOP = 47
-INTROBASE = 75
+INTROBASE = 74
 INTROEND = INTROBASE+48
 INTROROW = $4878
 
@@ -35,23 +35,37 @@ INTROIRQOFF:
         STY $FFFF
         JMP ENDHIDE
 
+; The handlers repeat the title loop's split sequences exactly (same WAITST lines, the
+; HUD's border edge at line 56, the view's white edge line): without the border
+; writes the HUD loses its side blocks and frame.
 intro_irq_top:
         PHA
         TXA
         PHA
         TYA
         PHA
+        LDA #56
+        JSR WAITST
+        LDA #1
+        STA BG
+        STA BORDER
         LDA #$1B
         STA $D011
         LDA #$08
         STA $D016
         LDA #$20
         STA $D018
+        LDY #20
+intro_hud_edge:
+        DEY
+        BNE intro_hud_edge
+        LDA HUDBRD
+        STA BORDER
         LDA #$0B
         STA BG
         LDA INTROSPLIT
         SEC
-        SBC #2
+        SBC #5
         LDX #<intro_irq_view
         LDY #>intro_irq_view
         JMP intro_irq_next
@@ -62,17 +76,47 @@ intro_irq_view:
         PHA
         TYA
         PHA
-        LDX #0
         LDA INTROSPLIT
-intro_wait_split:
-        CMP $D012
-        BNE intro_wait_split
-        STX BG
+        CMP #75         ; the bad line 75 would stretch WAITST's tail: the first steps wait at 78
+        BCC intro_viewline
+        CMP #78
+        BCS intro_viewline
+        LDA #78
+intro_viewline:
+        JSR WAITST
+        LDA #1
+        STA BG
+        STA BORDER
+        LDY #10
+intro_view_edge:
+        DEY
+        BNE intro_view_edge
         LDA #$3B
         STA $D011
         LDA #$18
-        STA $D018
         STA $D016
+        STA $D018
+        BIT VIEWBG
+        NOP
+        LDA #0
+        STA BG
+        STA BORDER
+        LDA #194
+        LDX #<intro_irq_guns
+        LDY #>intro_irq_guns
+        JMP intro_irq_next
+
+; Below the view the cockpit's guns, as the title's loop shows them.
+intro_irq_guns:
+        PHA
+        TXA
+        PHA
+        TYA
+        PHA
+        JSR SPR7
+        JSR SPRGUNS
+        AND #$8B
+        STA VICENA
         LDA #230
         LDX #<intro_irq_ribbon
         LDY #>intro_irq_ribbon
@@ -84,19 +128,23 @@ intro_irq_ribbon:
         PHA
         TYA
         PHA
+        LDA #0
+        STA VICENA
         LDA #233
         JSR WAITST
+        LDA INTROFINE   ; $D016 first, as the title loop (no x shake)
+        STA $D016
         LDA #$0B
+        STA BORDER
         STA BG
         LDA #$1B
         STA $D011
         LDA #$20
         STA $D018
-        LDA INTROFINE
-        STA $D016
         LDA #242
         JSR WAITST
         LDA #0
+        STA BORDER
         STA BG
         LDA #8
         STA $D016

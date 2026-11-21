@@ -7,9 +7,26 @@ running the original game's routines in VICE 3.7 next to the C128 port (see
 The tick's timing depends on what the ship does, because the original's main loops
 call it and are not tied to the frame. Measured with the VIC's stolen cycles (`m.dma`
 in the JS machine): a tick every 33 frames with the map open, 44 in flight and in
-hyperspace, 54 in a fight, 200 while the tracking computer flies (0.7-4 s). The map
-program (`c128-map`) ticks every 256 frames; the game (`c128-game`, `WORLD`) uses the
-measured rates.
+the hyperspace jump, 54 in a fight, 200 while the tracking computer flies (0.7-4 s).
+The map program (`c128-map`) ticks every 256 frames; the game (`c128-game`, `WORLD`)
+uses the measured rates, except in hyperspace (below).
+
+### Hyperspace (issue #13)
+
+The original does not stop the world in a jump. `$B3E0` runs the path plot and
+acceleration (`$B3F6`-`$B55C`, no `$BE29`), then the jump loop `$B55D`-`$B6CE`, which
+calls `$BE29` every 128 passes (`DEC $89; AND #$7F` at `$B660`: every 41-44 frames, 13
+frames and 38 passes per step), then the deceleration `$B6CF` (no `$BE29`). Every 16th
+tick is a squadron move, so a long jump (36-48 steps, 14-15 ticks) nearly always holds
+one: in 23 of 30 random jumps the table changed, in 10 of 30 the destination's group had
+moved (a type 1 hunter heads for the ship's sector, away from a far destination). The
+original's scanner follows the table (`$B696`-`$B6A6` blank the blips of an empty
+destination every 16 passes), so it showed the loss at once.
+The port's scanner shows the destination as it was at the start of the jump, so a move
+in between made the sector empty on arrival. The port therefore holds the whole world
+still from the path plot to the arrival (`WORLD`: no tick, none pending), a deliberate
+difference: the groups seen on the scanner are the ones met. (The port also lacks the
+original's 20 ignored ticks at the game start: `$B0C9` sets `$BDB0` to 20.)
 
 ## The map
 

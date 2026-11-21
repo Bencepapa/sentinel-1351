@@ -48,11 +48,11 @@ var SentinelProfiles = {
       { label: 'Torpedo L+R', mouse: 'both' },
       { label: 'Track (A)', key: 'KeyA' },
       { label: 'SPACE', key: 'Space' },
-      { label: 'C=', key: 'AltLeft' },
+      { label: 'C= (Tab)', key: 'Tab' },
       { label: 'RUN/STOP', key: 'Escape' },
     ],
     pad: { map: { mouse: 'right' }, proton: { mouse: 'both' } },   // full screen buttons
-    help: 'Joystick: arrows steer, Right Ctrl / Numpad 0 fires, Left Alt opens the map, Space launches a proton. Mouse: move to aim, left fires, right opens the map, both launch a proton.',
+    help: 'Joystick: arrows steer, Right Ctrl / Numpad 0 fires, Tab (the C= key) opens the map, Space launches a proton. Mouse: move to aim, left fires, right opens the map, both launch a proton.',
     fastStart: 'GAMEENTRY',     // run at full speed until the depacker reaches the game
   },
   cockpit: {
@@ -164,12 +164,13 @@ SentinelProfiles.game = (function (c) {
     ]),
     keys: [
       { label: 'Fire / L', mouse: 'left' },
-      { label: 'C= (map)', key: 'AltLeft' },
+      { label: 'C= (map, Tab)', key: 'Tab' },
+      { label: 'Torpedo L+R', mouse: 'both' },
       { label: 'Track (A)', key: 'KeyA' },
       { label: 'SPACE', key: 'Space' },
     ],
-    pad: { map: { key: 'AltLeft' } },   // full screen buttons (no proton torpedoes in the port yet)
-    help: 'Cockpit: mouse or arrows aim (off centre steers), left button / Right Ctrl fires, A tracking on / off, C= (Alt) or the right button opens the map, H a hyperspace cursor test (mouse), SPACE or both buttons a proton torpedo; RUN/STOP does nothing (no return to BASIC). ' +
+    pad: { map: { key: 'Tab' }, proton: { mouse: 'both' } },   // full screen buttons (the C= key; both mouse buttons = a proton torpedo)
+    help: 'Cockpit: mouse or arrows aim (off centre steers), left button / Right Ctrl fires, A tracking on / off, C= (Tab) or the right button opens the map, H a hyperspace cursor test (mouse), SPACE or both buttons a proton torpedo; RUN/STOP does nothing (no return to BASIC). ' +
           'Map: move the cursor, fire on another sector jumps there, SPACE goes back.',
   };
 })(SentinelProfiles.cockpit);

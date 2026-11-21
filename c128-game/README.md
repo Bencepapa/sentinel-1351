@@ -19,15 +19,24 @@ It is the browser page's default program.
   joystick or mouse. Skirmish, Assault, Battle, Invasion and Armageddon run
   from easiest to hardest. Press fire or left click again to fire the phasor
   and confirm. The chosen name flashes with SID pulses for about three
-  seconds, then the welcome ribbon and the 48-line Patrol Control briefing
-  run. The map opens automatically. Release the confirmation button and
+  seconds (the original's welcome ribbon scrolls from the accept, blinking
+  and beeping every 12 frames, the engine hum bursts every sixth frame), then the
+  48-line Starfleet briefing opens, types, holds for 240 frames and closes. The
+  stars, crosshair and guns stay in the view. The map opens automatically. Release the confirmation button and
   press **Fire** or **Space** to advance early.
-- The title plays *Night Watch*, an original three-voice SID cue, once per
-  title visit. Opening the selector silences the cue and enables the selector
-  effects. Edit the score in [title-music.txt](title-music.txt), the scroller in
-  [title-text.txt](title-text.txt), and the welcome and briefing in
-  [title-intro.txt](title-intro.txt). Rebuild after editing. The scroller file
-  lists its glyphs. Unsupported characters are reported with their line and
+- The title plays the original's three-voice SID tune once per title visit
+  (13,150 SID writes, the same frames as the C64: `js/test/title-music.js` compares
+  every write). Opening the selector (F5, F7, Fire) switches the three controls off and
+  starts the engine hum ($C38E: voice 3 noise, volume `$1F`); the original has no
+  sound of its own when the selection moves (traced with joystick and mouse), only
+  the hum, which bursts again every sixth frame from the confirm to the map.
+  The tune, the welcome ribbon and the briefing text are the original's: the
+  build copies them from the disk's `SN1` (`title_music` and `title_briefing` in
+  `build.py`, player in [title-music.asm](title-music.asm), briefing in
+  [title-intro.asm](title-intro.asm)). To use another tune or text, change those
+  two functions. Edit the scroller in [title-text.txt](title-text.txt) and rebuild;
+  its punctuation glyphs take a font slot only when the text uses them. The scroller
+  file lists its glyphs. Unsupported characters are reported with their line and
   column.
 - The ship starts in sector 05.03 (map cell 4,2), empty as in the original.
 - **TIME** starts at `00:00`, advances one game second per 60 gameplay frames,
@@ -50,8 +59,9 @@ It is the browser page's default program.
 - **SPACE (or both mouse buttons) launches a proton torpedo** (the HUD's PROTONS count): the original's pre-drawn rotating torpedo flies up the view for 32 steps, then every ship in view goes down and orange rings spread from the middle. With none left, a click. **RUN/STOP does nothing**: the game never returns to BASIC (since 2026-11-17; reset the machine to leave).
 - **Fire on another sector** closes the map and jumps there through hyperspace: the stars speed up (about 4.5 s), then streak into lines while the energy runs out ten times as fast and the steps left count down in big digits over the radar, then slow down (about 2.4 s). A step is a point of the map's flight path (the longer of 12 x columns and 16 x rows), 13.5 frames each, so the far corner takes longest. First the path is plotted on the map, a brown point a frame with beeps, while the map's lines are erased from both sides (the brown path and boxes stay); the upper HUD's border pulses through grays, and the engine's noise rises while the ship accelerates, holds in the jump and falls while it slows down. When the jump begins, the radar silently switches to long range and shows the destination's groups with the first group's readings (00 for an empty sector; no blip until the arrival); steering moves them nearer or farther, left or right (the original's positioning), and on arrival the approach starts with them where they were put. With a mouse the crosshair becomes the hyperspace cursor once the map is gone, until the arrival (as the H test): it steers while the mouse moves, changes colour, spins its digits and springs back to the centre when the mouse rests; while the ship slows down its digits count from 999 to 000. In the jump meteors come (five at most, as the original's): they grow, drift outward and hit the ship at full size (flash, a system hit, the rattle) unless steered away or met with the deflector: fire turns the view green and shows the shield's lines, at 10 energy a frame. The abort comes later. Fire on the ship's own sector just closes the map.
 - **The world runs all the time**: the map's clock (squadrons move every 16th
-  tick, motherships attack, the planet's ring) ticks as often as in the original on a real machine (every 33 frames with the map open, 44 in flight, 54 in a fight, 200 while the tracking computer flies), whether the map is open or not; the icons are only drawn while it is open (cells that changed
+  tick, motherships attack, the planet's ring) ticks as often as in the original on a real machine (every 33 frames with the map open, 44 in flight, 54 in a fight, 200 while the tracking computer flies), whether the map is open or not (except in hyperspace, where it holds still from the path plot to the arrival: the groups seen on the long range scanner are there on arrival; the original keeps ticking in the jump and lost them in about a third of all jumps: issue #13, MAP-LOGIC.md); the icons are only drawn while it is open (cells that changed
   are drawn a few a frame).
+- **F3 / Shift+F3** during a friendly base's repair report ends the system checks and refills the energy at once; the ship is repaired and gets its proton as before. (The original ends only the checks, its refill, +9 a frame, still runs: with a drained ship F3 seemed dead.) A tap while the text is typed counts when the checks start; F3 does nothing anywhere else.
 - In a squadron's sector the cockpit's approach begins (the long range scanner:
   groups far away, fire chooses one, aligned in front the ship rushes in, the
   group becomes up to three fighters; all type 1 for now, whatever the squadron's

@@ -84,21 +84,51 @@ select:focus-visible, button:focus-visible, input:focus-visible, #screen:focus-v
 #screenbox { position: relative; }
 .fsbtn { position: absolute; top: 16px; left: 16px; z-index: 3; min-height: 30px; padding: 3px 9px; font: 500 0.7rem var(--mono); letter-spacing: 0.06em; text-transform: uppercase;
   background: rgba(20,19,17,0.72); color: #e7e2d6; border: 1px solid rgba(255,255,255,0.18); border-radius: 5px; }
-#firebtn { display: none; position: absolute; z-index: 3; left: max(18px, env(safe-area-inset-left, 0px)); bottom: max(18px, env(safe-area-inset-bottom, 0px));
-  width: 92px; height: 92px; border-radius: 50%; border: 2px solid rgba(255,255,255,0.35); background: rgba(181,38,30,0.55); color: #fff;
-  font: 600 0.95rem var(--display); letter-spacing: 0.08em; touch-action: none; user-select: none; -webkit-user-select: none; -webkit-tap-highlight-color: transparent; }
-.padbtn { display: none; position: absolute; z-index: 3; width: 60px; height: 60px; border-radius: 50%; border: 2px solid rgba(255,255,255,0.3);
-  background: rgba(40,40,36,0.6); color: #eee; font: 600 0.7rem var(--display); letter-spacing: 0.06em; touch-action: none; user-select: none; -webkit-user-select: none; -webkit-tap-highlight-color: transparent;
-  left: calc(max(18px, env(safe-area-inset-left, 0px)) + 22px); }
-#padproton { bottom: calc(max(18px, env(safe-area-inset-bottom, 0px)) + 116px); background: rgba(60,90,170,0.55); }
-#padmap { bottom: calc(max(18px, env(safe-area-inset-bottom, 0px)) + 188px); background: rgba(40,120,70,0.55); }
-.padbtn.down { filter: brightness(1.5); transform: scale(0.95); }
-#screen:fullscreen .padbtn.on, #screen.fs .padbtn.on { display: block; }
-#firebtn.down { background: rgba(225,60,40,0.85); transform: scale(0.95); }
+/* ---- TOUCH CONTROLS (full screen): edit the look here -------------------------------------
+   Shown in full screen once the page has seen a touch (body.touch), never with mouse and keyboard only. The same look
+   as the itch page, at the bottom left. Landscape: a vertical stack, PROTON, MAP, FIRE from the top (FIRE nearest to
+   the thumb; PROTON far from it). Portrait: one row, FIRE at the far left, then MAP, then PROTON, at thumb height
+   (--tlift from the bottom). MAP / PROTON only where the program's profile has them (pad in js/src/profiles.js). FIRE =
+   left mouse button, MAP = right (the C= key in the C128 game), PROTON = both. The full screen picture is the 200 rows
+   of the display window (the black border above and below is cut off) at the largest size that fits. Landscape: it is
+   centred in the area right of the buttons (--tcol wide) and slides under them where it is wider than that. Portrait:
+   it fills the width, --ttop from the top. Without touch it is centred. */
+#tpad { display: none; position: absolute; z-index: 3; pointer-events: none;
+  left: max(14px, env(safe-area-inset-left, 0px)); bottom: max(14px, env(safe-area-inset-bottom, 0px));
+  flex-direction: column; align-items: center; gap: var(--tgap); }
+body.touch #screen:fullscreen #tpad, body.touch #screen.fs #tpad { display: flex; }
+@media (orientation: portrait) {
+  #tpad { flex-direction: row-reverse; --tlift: calc(var(--H) * 0.2); bottom: max(max(14px, env(safe-area-inset-bottom, 0px)), var(--tlift)); }   /* FIRE, MAP, PROTON from the left */
+}
+.tbtn { display: none; position: relative; pointer-events: auto; box-sizing: border-box; padding: 0; margin: 0; min-height: 0;
+  border: 4px solid var(--tc); background: rgba(0, 0, 0, 0.32); color: var(--tc);
+  font: 900 15px/1 system-ui, sans-serif; letter-spacing: 0.06em; text-shadow: 0 0 2px #000;
+  touch-action: none; user-select: none; -webkit-user-select: none; -webkit-tap-highlight-color: transparent; }
+.tbtn::after { content: ''; position: absolute; inset: -6px; }                  /* a roomier hit area than the ring (the gaps are wider than 2 x 6 px) */
+.tbtn.down { background: color-mix(in srgb, var(--tc) 38%, transparent); }
+.tsmall { width: 100px; height: 46px; border-radius: 14px; }                    /* MAP, PROTON: rounded rectangles */
+#padmap { --tc: #ffd23f; }                                                      /* yellow: the map */
+#padproton { --tc: #ffffff; }                                                   /* white: the proton torpedo */
+#firebtn { --tc: #ff4a3a; width: 88px; height: 88px; border-radius: 50%; border-width: 6px; font-size: 22px; letter-spacing: 0.04em; }
+body.touch #screen:fullscreen #firebtn, body.touch #screen.fs #firebtn, body.touch #screen:fullscreen .tbtn.on, body.touch #screen.fs .tbtn.on { display: block; }
+/* ---- end of touch controls ------------------------------------------------------------- */
+/* full screen: --W x --H is the screen's own size (container units where the browser has them, so a page scroll bar
+   does not push the picture off centre) */
+#vicbox { position: relative; }
 #screen:fullscreen, #screen.fs { position: fixed; inset: 0; z-index: 50; border-radius: 0; padding: 0; background: #000;
-  display: flex; align-items: center; justify-content: center; }
-#screen:fullscreen canvas, #screen.fs canvas { width: min(100vw, calc(100vh * 384 / 272)); height: auto; }
-#screen:fullscreen #firebtn, #screen.fs #firebtn { display: block; width: 104px; height: 104px; }
+  display: flex; align-items: center; justify-content: flex-start; box-sizing: border-box;
+  --tgap: 26px; --ttop: 56px; --tcol: 0px;
+  --W: 100vw; --H: 100vh; --gw: min(var(--W), calc(var(--H) * 384 / 200)); }
+@supports (height: 100dvh) { #screen:fullscreen, #screen.fs { --H: 100dvh; } }
+@supports (width: 1cqw) { #screen:fullscreen, #screen.fs { container-type: size; --W: 100cqw; --H: 100cqh; } }
+body.touch #screen:fullscreen, body.touch #screen.fs { --tcol: calc(max(14px, env(safe-area-inset-left, 0px)) + 112px); }
+@media (orientation: portrait) {
+  body.touch #screen:fullscreen, body.touch #screen.fs { --tcol: 0px; align-items: flex-start; padding-top: var(--ttop); }
+}
+#screen:fullscreen #vicbox, #screen.fs #vicbox { flex: none; width: var(--gw); aspect-ratio: 384 / 200; overflow: hidden;
+  margin-left: min(calc(var(--W) - var(--gw)), calc((var(--W) - var(--gw) + var(--tcol)) / 2)); }
+#screen:fullscreen #vic, #screen.fs #vic { position: absolute; left: 0; top: -18%; width: 100%; height: 136%; }   /* the 272 rows, shifted up by 36 of 200 */
+html:has(#screen.fs) { overflow: hidden; }
 #screen:fullscreen .tag, #screen.fs .tag, #screen:fullscreen #lockhint, #screen.fs #lockhint { display: none; }
 body.nodebug .bench { grid-template-columns: minmax(0, 1fr); max-width: 980px; width: 100%; margin: 0 auto; }
 body.nodebug .bench > .col:first-child { position: static; }
@@ -192,14 +222,16 @@ td canvas { display: block; width: 120px; height: 22px; }
   <div class="bench">
     <div class="col">
       <div class="monitor" id="screen" tabindex="0">
-        <canvas id="vic" width="384" height="272"></canvas>
+        <div id="vicbox"><canvas id="vic" width="384" height="272"></canvas></div>
         <span class="tag" id="victag">VIC-II</span>
         <span id="lockhint">Click to capture the mouse · drag on touch</span>
         <div id="overlay" style="display:none"></div>
         <button class="fsbtn" id="fsbtn" type="button" aria-label="Full screen">⛶ Full screen</button>
-        <button id="firebtn" type="button" aria-label="Fire">FIRE</button>
-        <button id="padmap" class="padbtn" type="button" aria-label="Map">MAP</button>
-        <button id="padproton" class="padbtn" type="button" aria-label="Proton torpedo">PROTON</button>
+        <div id="tpad">
+          <button id="padproton" class="tbtn tsmall" type="button" aria-label="Proton torpedo">PROTON</button>
+          <button id="padmap" class="tbtn tsmall" type="button" aria-label="Map">MAP</button>
+          <button id="firebtn" class="tbtn" type="button" aria-label="Fire">FIRE</button>
+        </div>
       </div>
 
       <div class="keys" id="keys"></div>

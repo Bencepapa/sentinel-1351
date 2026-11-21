@@ -122,7 +122,9 @@ module.exports = function ({boot, run, check, resumeFromTitle}) {
       'F7 shuts down the mine IRQ and returns to TITLE through ENDING');
   }
 
-  function repair(skip) {
+  // A friendly base's report. press = frames after the text is typed (state 10) when F3 is tapped
+  // (negative: tapped during the typing, state 9), shift = Shift+F3 (= F4), energy = the starting HUD energy.
+  function repair(skip, energy = '9890', shift = false, press = 0) {
     const {m, S, A} = ready();
     const base = 12;
     A[S.M_SELX] = base % 10;
@@ -134,13 +136,20 @@ module.exports = function ({boot, run, check, resumeFromTitle}) {
     A[S.SHLD] = 1;
     A[0x485A] = 0x70;
     A[0x485B] = 0x75;
-    A.set([0x79, 0x78, 0x79, 0x70], S.HUDE);
+    A.set([...energy].map(c => 0x70 + Number(c)), S.HUDE);
     call(m, S.MRSTART);
-    if (!until(m, () => A[S.MSSTATE] === 10, 600)) return {};
+    if (!until(m, () => A[S.MSSTATE] === (press < 0 ? 9 : 10), 600)) return {};
+    for (let f = 0; f < press; f++) m.runFrame();
     const start = m.frame;
-    if (skip) pulse(m, 5);
+    if (skip) {
+      if (shift) m.setKey(1, 7, true);
+      pulse(m, 5);
+      m.setKey(1, 7, false);
+    }
+    let late = 0;
+    const done = until(m, () => { late += lateWrites(m); return A[S.MSSTATE] === 0; }, 1500);
     return {
-      done: until(m, () => A[S.MSSTATE] === 0, 1200),
+      done, late,
       frames: m.frame - start,
       systems: [...A.subarray(S.SYSHP, S.SYSHP + 8)],
       energy: [...A.subarray(S.HUDE, S.HUDE + 4)],
@@ -156,5 +165,38 @@ module.exports = function ({boot, run, check, resumeFromTitle}) {
       normal.systems.join() === skipped.systems.join() && skipped.energy.every(digit => digit === 0x79) &&
       skipped.shields === normal.shields && skipped.protons === 6 && !skipped.overrun,
       `F3 skips the friendly inspection (${normal.frames} to ${skipped.frames} DMA frames), refills energy and awards exactly one proton`);
+    // A drained ship used to wait out the whole refill (+9 a frame) after F3, as the original does: F3 looked dead.
+    const drained = repair(false, '0000'), fast = repair(true, '0000'), shifted = repair(true, '0000', true, 40);
+    check(drained.done && drained.frames > 1000 && fast.done && fast.frames < 40 &&
+      fast.energy.every(digit => digit === 0x79) && fast.systems.join() === drained.systems.join() &&
+      fast.shields === drained.shields && fast.protons === 6 && !fast.overrun && !fast.late,
+      `F3 on a drained ship completes the repair at once (${drained.frames} to ${fast.frames} DMA frames): systems repaired, shields and energy full, one proton`);
+    check(shifted.done && shifted.frames < 40 && shifted.energy.every(digit => digit === 0x79) &&
+      shifted.systems.join() === drained.systems.join() && shifted.protons === 6 && !shifted.overrun,
+      `Shift+F3 (F4) skips the same way, tapped 40 frames into the report (${shifted.frames} frames)`);
+    // A tap while the text is still being typed (the original polls only afterwards) counts once the checks start.
+    const early = repair(true, '5000', false, -1);
+    check(early.done && early.frames < 120 && early.energy.every(digit => digit === 0x79) &&
+      early.systems.join() === drained.systems.join() && early.protons === 6 && !early.overrun,
+      `F3 tapped during the typing is honoured when the checks start (${early.frames} frames)`);
+  }
+
+  {
+    // Outside the report F3 does nothing: normal flight and the mine tunnel.
+    const {m, S, A} = ready();
+    A.set([0x70, 0x70, 0x70, 0x70], S.HUDE);
+    const state = () => [S.MSSTATE, S.MRROW, S.MREN, S.PAUSED, S.FKEYGO].map(a => A[a]).join();
+    const before = state();
+    for (let f = 0; f < 10; f++) { pulse(m, 5); m.runFrame(); }
+    check(before === state() && A.subarray(S.HUDE, S.HUDE + 4).every(digit => digit < 0x79) && A[S.OVRUN] === 0,
+      'F3 in normal flight does nothing: no latch, no energy refill, no state change');
+    A[S.M_SELX] = A[S.M_SELY] = 0;
+    A[S.M_STATE] = 0x80;
+    call(m, S.SECTORIN);
+    until(m, () => A[S.MSSTATE] === 16 && A[S.MTPHASE] > 3, 600);
+    const energy = A.subarray(S.HUDE, S.HUDE + 4).join();
+    for (let f = 0; f < 6; f++) { pulse(m, 5); m.runFrame(); }
+    check(A[S.MSSTATE] === 16 && !A[S.FKEYGO] && !A[S.PAUSED] && energy === A.subarray(S.HUDE, S.HUDE + 4).join(),
+      'F3 in the mine tunnel does nothing');
   }
 };

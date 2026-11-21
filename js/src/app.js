@@ -17,7 +17,7 @@
     Digit9: [4, 0], KeyI: [4, 1], KeyJ: [4, 2], Digit0: [4, 3], KeyM: [4, 4], KeyK: [4, 5], KeyO: [4, 6], KeyN: [4, 7],
     Equal: [5, 0], KeyP: [5, 1], KeyL: [5, 2], Minus: [5, 3], Period: [5, 4], Semicolon: [5, 5], BracketLeft: [5, 6], Comma: [5, 7],
     Backslash: [6, 0], BracketRight: [6, 1], Quote: [6, 2], Home: [6, 3], ShiftRight: [6, 4], Slash: [6, 7],
-    Digit1: [7, 0], Backquote: [7, 1], ControlLeft: [7, 2], Digit2: [7, 3], Space: [7, 4], AltLeft: [7, 5], KeyQ: [7, 6], Escape: [7, 7],
+    Digit1: [7, 0], Backquote: [7, 1], ControlLeft: [7, 2], Digit2: [7, 3], Space: [7, 4], Tab: [7, 5], KeyQ: [7, 6], Escape: [7, 7],   // Tab = the C= key (Alt is for the hotkeys)
   };
   var m = null, hooks = null, dbg = null, prog = null, progName = 'game', profile = null;
   var input = null;
@@ -429,6 +429,13 @@
     if (document.pointerLockElement !== screenEl && input) input.clearButtons('mouse');
   });
 
+  // touch detection (as on the itch page): a coarse primary pointer, or the first touch. The full screen buttons
+  // (body.touch in the CSS) show only then, never on a desktop with mouse and keyboard.
+  function setTouch() { document.body.classList.add('touch'); }
+  try { if (window.matchMedia && window.matchMedia('(pointer: coarse)').matches) setTouch(); } catch (err) { /* ignore */ }
+  window.addEventListener('pointerdown', function (e) { if (e.pointerType === 'touch' || e.pointerType === 'pen') setTouch(); }, true);
+  window.addEventListener('touchstart', setTouch, { capture: true, passive: true });
+
   // touch: drag moves the mouse, buttons below the screen click it
   var lastTouch = null;
   screenEl.addEventListener('touchstart', function (e) {
@@ -548,6 +555,8 @@
     if (typing(e) || !m) return;
     audio.start();
     if (SentinelInput.isJoystick(e.code)) { input.setJoystick(e.code, true, e.repeat); e.preventDefault(); return; }
+    if (e.code === 'AltLeft' || e.code === 'AltRight') { e.preventDefault(); return; }   // Alt alone does nothing
+    if (e.code === 'Tab' && (e.ctrlKey || e.altKey || e.metaKey)) return;
     var k = KEYS[e.code];
     if (k) { m.setKey(k[0], k[1], true); e.preventDefault(); }
   });

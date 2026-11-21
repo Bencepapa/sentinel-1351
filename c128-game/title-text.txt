@@ -1,8 +1,11 @@
 # Edit the lines below and rebuild. Lines starting with # are comments.
 # Supported glyphs are A-Z, a-z (drawn uppercase), 0-9, spaces and . - , ' ! ? : / ( )
 # Up to 217 characters including the three spaces inserted between nonempty lines.
-F5 F7 OR FIRE SELECTS A FLIGHT PROFILE.
-ORIGINAL GAME BY BRYAN BRANDENBURG. RELEASED BY SYNAPSE SOFTWARE IN 1984.
-PATROL CONTROL ONLINE.
-USE A PORT 2 JOYSTICK OR 1351 MOUSE.
-PORT CREDITS GO HERE
+SENTINEL
+BY SYNAPSE SOFTWARE 1984
+F5: LEVEL F7: START
+PORT 2: JOY OR 1351
+LEFT: FIRE  RIGHT: MAP  BOTH: TORPEDO
+C128 PORT BY BURWOR 2026
+AI USED: CLAUDE CODEX OPENCODE
+

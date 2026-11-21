@@ -735,12 +735,12 @@ GENDONE:.BYTE 0
 WORLD:  JSR GCOLCYC     ; types 2 and 3: the colours
         LDA GENDONE     ; (the world exists)
         BEQ g_wd9
-        LDA HYPON       ; no tick while the path is plotted and the ship accelerates
-        CMP #$01        ; (the original's $B3F6 loop does not call $BE29)
-        BEQ g_wd9
-        CMP #$04
-        BEQ g_wd9
-        DEC WTCNT
+        LDA HYPON       ; the world is frozen in the whole hyperspace (issue #13): path,
+        BEQ g_wd0       ; acceleration, jump and deceleration, and no tick left pending.
+        LDA #0          ; (The original's $B55D loop still calls $BE29 every 128 passes,
+        STA WTPEND      ; and its squadrons left the destination in about a third of all
+        RTS             ; jumps while the scanner showed them: the port holds still.)
+g_wd0:  DEC WTCNT
         BNE g_wd9
         LDA #33
         LDX MAPSHOWN

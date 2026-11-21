@@ -115,9 +115,23 @@ module.exports = function ({boot, check, snap}) {
       }
       spaced = spaced && A[S.TITLEPOS] === last;
     }
-    const scrollText = Buffer.from(A.subarray(S.TITLETEXT, S.TITLETEXTEND - 1)).toString()
-      .replaceAll('@', ' ').trimEnd();
-    check(sameScroll && stable && spaced && wraps === 1 && scrollText.endsWith('PORT CREDITS GO HERE'),
+    // The expected scroller comes from the editable credits file: lines joined by three gaps, 38 blanks, end $FF.
+    const lines = require('fs').readFileSync(require('path').join(__dirname, '../../c128-game/title-text.txt'), 'utf8')
+      .replace(/^\uFEFF/, '').split('\n').map(l => l.replace(/\r$/, ''))
+      .filter(l => l.trim() && !l.trimStart().startsWith('#'));
+    const expected = lines.join('   ');
+    const ram = Array.from(A.subarray(S.TITLETEXT, S.TITLETEXTEND));
+    const glyphOf = new Map();
+    let sameText = ram.length === expected.length + 38 + 1 && ram.at(-1) === 0xff &&
+      ram.slice(expected.length, -1).every(c => c === 0x40);
+    for (let i = 0; sameText && i < expected.length; i++) {
+      const ch = expected[i].toUpperCase(), c = ram[i];
+      const base = (ch >= 'A' && ch <= 'Z') ? ch.charCodeAt(0) : (ch >= '0' && ch <= '9') ? 0x70 + +ch :
+        ch === ' ' ? 0x40 : ch === '.' ? 0x7a : null;
+      if (base !== null) sameText = c === base;
+      else { if (glyphOf.has(ch) && glyphOf.get(ch) !== c) sameText = false; glyphOf.set(ch, c); }
+    }
+    check(sameScroll && stable && spaced && wraps === 1 && sameText,
       'title: C64 38-column fine scroll 7..0, eight frames per character, editable credits and no late splits/OVRUN');
   }
 
@@ -218,6 +232,7 @@ module.exports = function ({boot, check, snap}) {
         .some(frame => frame.color === sequence[f]?.color));
     check(confirmOK && splitOK,
       `title: ${device} level ${level} phasor, palette and SID beeps through ${duration} DMA frames with 0 late splits/OVRUN`);
+    for (let f = 0; f < 60 && !A[S.MAPSHOWN]; f++) tick();
     const map = A.subarray(S.M_STATE, S.M_STATE + 60);
     const groups = [...map].filter(v => v >= 1 && v <= 3).length;
     const saneMap = map[24] === 0 && [0, 9, 50, 59].every(i => map[i] === 0x80) &&

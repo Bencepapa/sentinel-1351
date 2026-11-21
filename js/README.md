@@ -15,7 +15,7 @@ The chips around them are replaced by JS:
 | SID | `src/audio.js`: register writes replayed in an AudioWorklet at their cycle in the frame; voice 3 noise readable at `$D41B` |
 | CIA1 | keyboard matrix, joystick in port 2 |
 | 1351 | proportional mode on the port 2 pots (pointer lock on desktop, drag on touch) |
-| ROMs | none: an original font (`src/font.js`) stands in for the character ROM and the VDC character set |
+| ROMs | none, except the 8x8 glyphs of the C64 character ROM (uppercase / graphics set, 2 KB as hex in `src/font.js`): the VIC's character ROM, the VDC character set and the itch page's text (selector and overlay) use them; no KERNAL or BASIC |
 
 Timing is a PAL frame of 312 lines x 63 cycles; `$D012` follows the cycle
 count, so the tests' raster waits work unchanged. `$D030` bit 0 doubles the
@@ -111,9 +111,10 @@ page uses from `programs.js` (run `python js/build.py` first when the programs c
 | Ctrl+S / Ctrl+L | quick save / load, one slot per program (`localStorage`; kept in memory for the visit where the browser gives no storage; a save only loads into the build that made it) |
 | Ctrl+R | back to the selector (overlay `RESET`) |
 
-The browser's own meaning of these keys is cancelled, and the game does not see them (Alt is the C= key that opens the
-map: it is held back for 120 ms, so Alt+W / Alt+Q do not open it; a tap still gives a C= press). Everything else is as on
-the debugger page. Arrows steer, Right Ctrl or Numpad 0 fires, Left Alt opens the map, and Space launches a proton.
+The browser's own meaning of these keys is cancelled, and the game does not see them (Alt alone does nothing in the
+game). The C= key, which opens the map, is **Tab** (on both pages and for both games; the browser's focus does not move).
+Everything else is as on the debugger page. Arrows steer, Right Ctrl or Numpad 0 fires, Tab opens the map, and Space
+launches a proton.
 Mouse motion aims, the left button fires, the right button opens the map, and pressing both launches a proton.
 In the C64 game, pointer movement or a mouse button switches to mouse mode, and a fresh arrow or Fire press
 switches back to joystick mode. The page can capture the pointer on click and shows `ESC - RELEASE MOUSE` on capture.
@@ -124,9 +125,18 @@ fading: top left `MUTE ON/OFF`, `SAVED`, `LOADED`, `NO SAVE`, `RESET`; top left 
 upper right `JOYSTICK` / `MOUSE` in the C64 game; bottom `>>` / `>>>>>`
 while the speed is up; in the black strip at the very top at a game over (death or victory, either program) `SCORE nnnnnn` (with `NEW HI` when it beats the stored best); the game's own end screen shows the rank and class. Sizes and times: `CONFIG` at the top of `src/itch.js`.
 
-**Touch.** Touch is detected by a coarse primary pointer or the first touch. FIRE (left button), MAP (right) and TORP (both) buttons
-appear while a game runs (their CSS is one block at the top of `itch-page.html`, "TOUCH CONTROLS"); dragging anywhere else aims
-the crosshair. The selector takes taps.
+**Touch.** Touch is detected by a coarse primary pointer or the first touch. Three buttons appear on the left while a game runs,
+in landscape as a vertical stack, PROTON (both buttons, white rounded rectangle) at the top, then MAP (right button, yellow
+rounded rectangle), then FIRE (left button, round, red ring) at the bottom nearest the thumb; in portrait as a row with FIRE at the
+far left, then MAP, then PROTON. The gaps are wide (`--tgap`) and PROTON is never next to FIRE, so a torpedo is not thrown by
+accident. They are drawn over the page, not beside the game. A running game shows only the C64's 200 display rows (rows 36-235 of the 272;
+the black border above and below is cut off) at the largest size that fits (contain). With touch in landscape the picture fills the
+screen top to bottom, and is centred in the area right of the buttons, sliding under them where it is wider than that (`--tcol`);
+in portrait it fills the width, a little below the top (`--ttop`), and the button row sits at thumb height (`--tlift`: 20% of the
+screen height from the bottom). Without touch the picture is simply centred. The overlay texts are moved into the visible rows.
+The CSS is one block at the top of `itch-page.html`, "TOUCH CONTROLS"; the debugger page's full screen view has the same block in
+`page.html` and shows the buttons only after touch detection (`body.touch`, as here).
+Dragging anywhere else aims the crosshair (several fingers work: fire while steering). The selector takes taps.
 
 **Score.** The original has no point score: its end screen shows a rank name and a class digit (the results of its rating routine
 at `$F440`, the C128 port's `ENDRATING`) and the counters. The page leaves those to the game and adds a point score built from what the

@@ -1,14 +1,14 @@
 ; TITLE runs with the raster IRQ off and returns to resident code before S1
 ; can be reused. The HUD and bitmap use the same splits as the cockpit.
 TITLEPKG = $E963
-TITLEPAGES = 12
+TITLEPAGES = 13
 TITLEDECODE = $0D00    ; init only, before the resident low block is unpacked
 FKEYF5 = $BF
 TITLEMIDSTAGE = $3400   ; init only, in the empty phasor path buffers
 TITLETAILSTAGE = $4478  ; init only, in the bitmap matrix (restored from MMAT)
 TITLETAILBLANK = $46D0  ; the remaining staging rows have uniform ink
 TITLETAILBLANKLEN = 160
-TITLEEXTRASTAGE = $48A0 ; init only, in the hidden text matrix
+TITLEEXTRASTAGE = $4878 ; init only, in the hidden text rows (800 bytes, rows 3-22)
 TITLELASTSTAGE = $75E0  ; init only, between the high archive and cockpit art
 TITLECOLOR = $DB98
 TITLEPUNCTFONT = $40F8 ; eight spare glyphs, restored before the briefing
@@ -16,6 +16,8 @@ TITLELOGOBMP = $6A20    ; row 8, column 4, 32 cells wide and four rows
 TITLELOGOMAT = $4544
 TITLEMAT = $4478       ; first row of the view's matrix
 TITLECONFIRMFRAMES = 155
+TITLEPREPAGE = 100
+TITLERIBBONAGE = 3     ; the ribbon starts here (the original's $9BE5 three frames after the accept)
 
         * = TITLEPKG
 TITLERUN:
@@ -56,6 +58,13 @@ title_white:
         INX
         CPX #40
         BNE title_white
+title_sync:
+        BIT $D011       ; the tune starts when the picture is complete ($0A68), at a frame's top
+        BPL title_sync  ; (its 39 init writes belong to one frame, as the original's)
+title_syncwrap:
+        BIT $D011
+        BMI title_syncwrap
+        JSR MUSICINIT
 
 title_frame:
         BIT $D011
@@ -111,6 +120,11 @@ title_aim:
         LDA TITLEMENU
         CMP #2
         BNE title_lower
+        JSR RIBTICK     ; update the row and fine scroll before this frame's strip
+        JSR ENGTICK     ; the hum's burst every sixth frame, as the original's fades
+        NOP             ; (three NOPs of slack here move the title run's cycle phase: two suite
+        NOP             ; tests, the fight's splits and the map's C= close, are phase-sensitive)
+        NOP
         LDA TITLEAGE
         BNE title_fly
         JSR CHARGESND
@@ -140,13 +154,13 @@ title_guns:
         STA VICENA
         LDA #233
         JSR WAITST
-        LDA #$0B
+        LDA TITLEFINE   ; first (CSEL stays clear for the 38-column strip): written after
+        STA $D016       ; line 233 began, the fine scroll jittered across its first pixels
+        LDA #$0B        ; (an x shake); at the end of line 232 it moves lines 233-234 whole
         STA BORDER
         STA BG
         LDA #$1B
         STA $D011
-        LDA TITLEFINE   ; CSEL stays clear for the 38-column strip
-        STA $D016
         LDA #$20
         STA $D018
         LDA #242
@@ -218,9 +232,18 @@ title_fade:
         LDA TITLEAGE
         CMP #TITLECONFIRMFRAMES
         BCS title_leave
-        DEC TITLEBEEP
-        BNE title_fadecolor
-        JSR title_beep
+        LDA TITLEAGE
+        CMP #TITLERIBBONAGE
+        BNE title_prepare
+        JSR RIBINIT
+title_prepare:
+        LDA TITLEAGE
+        SEC
+        SBC #TITLEPREPAGE
+        CMP #6
+        BCS title_prepared
+        JSR BRIEFPREP   ; one row a frame
+title_prepared:
 title_fadecolor:
         LDA TITLEAGE
         CMP #10
@@ -239,16 +262,17 @@ title_fadecolor:
 title_fadeset:
         STA TITLEWAIT
         JSR title_nextink
+        LDX TITLEAGE
+        CPX #TITLECONFIRMFRAMES-5
+        BCC title_inkok
+        LDA #$10        ; the retained label goes too ($86FA), a few frames before the briefing
+title_inkok:
         LDX DIFF
         JSR title_optionink
         JMP title_frame
 
-title_leave:
-        JSR ENDHIDE
-        JSR GVIEWCLEAR
+title_leave:            ; the view, the stars and the ribbon go on into the briefing
         LDA #0
-        STA $D40B
-        STA $D404
         STA SHOTS
         STA SHOTS+1
         LDA #$7E
@@ -257,16 +281,18 @@ title_leave:
         STA CURY
         LDA #$79
         STA HUDE+2
-        LDA #$0F
-        STA $D418
-        JSR TITLEMATBACK
-        JSR LRCLEAR
         JSR SHIPINIT
         JMP BRIEFRUN
 
 title_openselect:
         JSR MUSICSTOP
-        LDA #$0F        ; the selector has its own phasor and confirmation sounds
+        LDA #1          ; the engine's hum ($C38E): a burst now, then sustained until
+        STA ENGON       ; the confirm's ticks (the original's count then is 2; the ticks run in
+        STA ENGC        ; the frame's body now)
+        JSR ENGBURST
+        LDA #2
+        STA ENGC
+        LDA #$1F        ; ($18EA)
         STA $D418
         JSR ENDHIDE
         JSR GVIEWCLEAR
@@ -277,8 +303,6 @@ title_openselect:
         STX TITLEARM
         STX TITLEAGE
         STX DIFF
-        LDA #13
-        STA TITLEBEEP
         LDA #1
         STA TITLEWAIT
         LDA #2
@@ -529,15 +553,54 @@ title_inkready:
         LDA TITLEPALETTE,X
         RTS
 
-; Confirm's voice-2 pulse, from the reference welcome ribbon's cadence.
-title_beep:
-        LDA #12
-        STA TITLEBEEP
+; The welcome ribbon ($9BE5, $9CD3, $9D4A): from the confirm on, the bottom row
+; scrolls 2 pixels a frame (fine X 7, 5, 3, 1), a cell every fourth frame; every
+; third cell step its ink flips between black and white with a voice 2 pulse (42
+; times, 504 frames), then it turns light green. The text is $97D9 (BRIEFWELCOME).
+RIBINIT:
+        LDX #39
+rib_blank:
+        LDA #$60
+        STA LRROW,X
+        LDA #0
+        STA TITLECOLOR,X
+        DEX
+        BPL rib_blank
+        STX RIBON       ; (X = $FF: running; the rest is the package image's: fine 0, toggle 0, ...)
+        RTS
+
+RIBTICK:
+        LDA RIBON
+        BEQ rib_done
+        LDA RIBWAIT
+        BEQ rib_move
+        DEC RIBWAIT
+rib_done:
+        RTS
+rib_move:
+        LDA TITLEFINE
+        SEC
+        SBC #2
+        BPL rib_fine
+        LDA #7
+rib_fine:
+        STA TITLEFINE
+        STA INTROFINE
+        CMP #7
+        BNE rib_done
+        DEC RIBDIVIDE
+        BNE rib_shift
+        LDA #3
+        STA RIBDIVIDE
+        LDA RIBTOGGLE
+        EOR #1
+        STA RIBTOGGLE
+        JSR rib_ink
         LDA #0
         STA $D40B
         STA $D407
-        STA $D409
         STA $D40D
+        STA $D409
         LDA #3
         STA $D40A
         LDA #2
@@ -546,6 +609,36 @@ title_beep:
         STA $D408
         LDA #$41
         STA $D40B
+        DEC RIBLEFT
+        BNE rib_shift
+        LDA #0          ; the last: light green, no more scrolling
+        STA RIBON
+        LDA #13
+rib_ink:
+        LDX #39
+rib_inkrow:
+        STA TITLECOLOR,X
+        DEX
+        BPL rib_inkrow
+        RTS
+rib_shift:
+        LDX #0
+rib_copy:
+        LDA LRROW+1,X
+        STA LRROW,X
+        INX
+        CPX #39
+        BNE rib_copy
+        LDY RIBINDEX
+        LDA BRIEFWELCOME,Y
+        CMP #$FF
+        BNE rib_char
+        LDA #$60
+        BNE rib_put
+rib_char:
+        INC RIBINDEX
+rib_put:
+        STA LRROW+39
         RTS
 
 ; Draw from the live cockpit character set. Each descriptor gives a VIC
@@ -718,7 +811,12 @@ TITLEPORT:.BYTE 0
 TITLEAGE: .BYTE 0
 TITLEINK: .BYTE 4
 TITLEWAIT:.BYTE 0
-TITLEBEEP:.BYTE 0
+RIBON:   .BYTE 0
+RIBWAIT: .BYTE 1       ; skip the first frame after RIBINIT, then start the scroll
+RIBDIVIDE:.BYTE 3
+RIBLEFT: .BYTE 42
+RIBTOGGLE:.BYTE 0
+RIBINDEX:.BYTE 0
 TITLEINDEX:.BYTE 0
 TITLEBITS:.BYTE 0
 TITLEGLYPHY:.BYTE 0
@@ -744,7 +842,7 @@ title_fontcopy:
         STA TITLEPUNCTFONT,Y
         DEY
         BPL title_fontcopy
-        JMP MUSICINIT
+        RTS
 
 TITLEFONTRESTORE:
         LDA #0

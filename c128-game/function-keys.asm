@@ -135,19 +135,29 @@ fkey_tunneldone:
         RTS
 FKEYTUNNELEND:
 
-; Leave the title/typewriter, refill and cleanup paths alone. The original
-; F3 ends the eight remaining system checks, not the actual ship repairs.
+; F3/F4: the report's remaining system checks end and the energy is full at once.
+; (The original only ends the checks: its energy refill, +9 a frame, still has to
+; finish, so with a drained ship F3 looked dead. A tap while the text is typed
+; counts too: the original polls only after the text.)
 FKEYREPAIR:
         LDA FKEYLAST
         CMP #FKEYF3
-        BNE fkey_repair
+        BNE fkey_nokey
+        STA FKEYGO
+fkey_nokey:
         LDA MSSTATE
         CMP #10
         BNE fkey_repair
+        LDA FKEYGO
+        BEQ fkey_repair
+        LDA #0
+        STA FKEYGO
+        STA MRROW       ; the report's remaining inspection noise
         LDA #8
         STA MRINDEX
-        LDA #0
-        STA MRROW       ; the report's remaining inspection noise
+        LDY #3
+        LDA #$79
+        JSR g_mrcfull   ; energy 9999 and the recharge done
 fkey_repair:
         JMP MRREPAIR
 
@@ -157,6 +167,7 @@ FKEYRESTART:
         JSR ENDHIDE
         LDX #$17
         LDA #0
+        STA FKEYGO
 fkey_clrsid:
         STA $D400,X
         DEX
@@ -168,3 +179,4 @@ fkey_clrsid:
 PAUSED:  .BYTE 0
 FKEYLAST:.BYTE $FF
 FKEYCOLON:.BYTE $6E
+FKEYGO:  .BYTE 0

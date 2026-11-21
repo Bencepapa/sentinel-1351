@@ -2109,6 +2109,7 @@ require('./bugs')({boot,run,check,snap,fs,path,OUT});
 require('./overlay')({boot,run,check,fs,path,OUT});
 require('./joystick')({boot,run,check});
 require('./hyperspace-sid')({boot,run,check});
+require('./hyperspace-freeze')({boot,run,check});
 require('./function-keys')({boot,run,check,resumeFromTitle});
 require('./c128-controllers')({boot,run,check});
 require('./mission-messages')({boot,run,check});

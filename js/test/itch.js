@@ -33,6 +33,77 @@ module.exports = function ({ boot, run, check, fs, path, ROOT, resumeFromTitle }
   {
     const html = fs.readFileSync(path.join(ROOT, 'dist/itch.html'), 'utf8');
     const packaged = JSON.parse(html.match(/^var SENTINEL_PROGRAMS = (.+);$/m)[1]);
+    {
+      // the C= (map) key is Tab on both pages (matrix column 7, row 5); Alt alone sends nothing (no AltLeft key, no 120 ms delay)
+      const debuggerPage = fs.readFileSync(path.join(ROOT, 'dist/sentinel.html'), 'utf8');
+      const Profiles = require('../src/profiles.js');
+      const tabKey = page => /Space: \[7, 4\], Tab: \[7, 5\]/.test(page) && !/AltLeft: \[7, 5\]/.test(page);
+      const keyNames = Object.values(Profiles).flatMap(p => (p.keys || []).concat(Object.values(p.pad || {})).map(k => k.key)).filter(Boolean);
+      check(tabKey(html) && tabKey(debuggerPage) && !/altTimer|altHeld|altSent/.test(html) && !keyNames.includes('AltLeft') &&
+        !Object.values(Profiles).some(p => /Left Alt|\(Alt\)/.test(p.help)),
+        'itch: the C= key is Tab on both pages (Alt only for the hotkeys, no delay logic, the help texts say Tab)');
+      const touchIds = ['b-map', 'b-proton', 'b-fire'].map(id => html.indexOf(`id="${id}"`));
+      check(touchIds.every(i => i > 0) && touchIds[1] < touchIds[0] && touchIds[0] < touchIds[2] && !/TORP\b/.test(html),
+        'itch: the touch buttons are PROTON, MAP, FIRE from the top (no TORP)');
+      // the debugger page's full screen buttons show only after touch detection; both pages crop a game to the 200 display rows
+      check(/body\.touch #screen:fullscreen #tpad/.test(debuggerPage) && !/\n#screen:fullscreen #tpad, #screen\.fs #tpad \{ display/.test(debuggerPage) &&
+        /classList\.add\('touch'\)/.test(debuggerPage) && /pointer: coarse/.test(debuggerPage),
+        'debugger page: the full screen touch buttons need touch detection (body.touch), as on the itch page');
+      check(/body\.ingame #vic \{ top: -18%; height: 136%; \}/.test(html) && /#screen:fullscreen #vic, #screen\.fs #vic \{[^}]*top: -18%; width: 100%; height: 136%/.test(debuggerPage),
+        'itch / debugger page: a game is shown cropped to the 200 display rows (rows 36-235 of 272), 384:200 contain');
+      for (const name of ['game', 'c64game']) {
+        const pad = Profiles[name].pad;
+        check(pad && pad.map && pad.proton && pad.proton.mouse === 'both',
+          `debugger page: the ${name} profile has full screen MAP and PROTON buttons`);
+      }
+    }
+    {
+      // the overlay draws a dark backing (alpha 0.55, rounded) behind every shown text block and fades it with the text
+      // (js/src/itch.js run against a stub DOM)
+      let now = 1000;
+      const rects = [];     // the pixels the overlay draws (one rect per set font bit)
+      const ctx2d = () => new Proxy({}, { get(t, k) { if (k in t) return t[k]; return k === 'rect' ? (...r) => rects.push(r) : () => ({data: new Uint8ClampedArray(384 * 272 * 4)}); }, set(t, k, v) { t[k] = v; return true; } });
+      const el = () => ({classList: {_s: new Set(), add(c) { this._s.add(c); }, remove(c) { this._s.delete(c); }, toggle(c, on) { if (on) this._s.add(c); else this._s.delete(c); }, contains(c) { return this._s.has(c); }},
+        width: 768, height: 544, style: {}, addEventListener() {}, getContext: ctx2d, getBoundingClientRect: () => ({left: 0, top: 0, width: 768, height: 544}), setPointerCapture() {}, contains: () => false});
+      const els = {};
+      const sandbox = {console, performance: {now: () => now}, requestAnimationFrame() {}, setTimeout() {}, clearTimeout() {}, Uint32Array, Uint8Array, Uint8ClampedArray, Math, Object, Set, Map, JSON,
+        atob: s => Buffer.from(s, 'base64').toString('binary'), devicePixelRatio: 1, addEventListener() {}, matchMedia: () => ({matches: false}), localStorage: {getItem: () => null, setItem() {}}};
+      sandbox.window = sandbox;
+      sandbox.document = {body: el(), getElementById: id => els[id] || (els[id] = el()), addEventListener() {}, hidden: false, hasFocus: () => true};
+      const context = vm.createContext(sandbox);
+      vm.runInContext('var SENTINEL_PROGRAMS = {};', context);
+      for (const s of ['cpu6502', 'font', 'video', 'machine', 'hooks', 'hiscore', 'pacing', 'audio', 'input', 'itch']) vm.runInContext(fs.readFileSync(path.join(ROOT, `src/${s}.js`), 'utf8'), context, {filename: s});
+      const O = vm.runInContext('SentinelItch', context).overlay;
+      O.show('tl', ['MUTE ON']); O.show('mode', ['MOUSE']); O.show('bottom', ['>>'], {sticky: true}); O.show('center', ['HELLO', 'WORLD']);
+      O.draw();
+      const shown = O.backings();
+      const sound = shown.length === 4 && shown.every(b => b.alpha === 0.55 && b.w > 0 && b.h > 0);
+      const widest = shown.find(b => b.slot === 'center').w > shown.find(b => b.slot === 'bottom').w;   // follows the text width
+      now += 3300; O.draw();
+      const fading = O.backings().filter(b => b.slot !== 'bottom').every(b => b.alpha > 0 && b.alpha < 0.55) && O.backings().find(b => b.slot === 'bottom').alpha === 0.55;
+      now += 1000; O.draw();
+      check(sound && widest && fading && O.backings().length === 1,
+        'itch: every shown overlay text block gets a 0.55 dark backing the width of its text, fading with it and gone with it');
+      O.clear('bottom');
+      // the glyphs: every character the overlay and the selector can draw is the C64 character ROM bitmap (screen codes), the S included
+      const Font = vm.runInContext('SentinelFont', context);
+      const crc32 = bytes => { let c = ~0; for (const b of bytes) { c ^= b; for (let k = 0; k < 8; k++) c = (c >>> 1) ^ (0xEDB88320 & -(c & 1)); } return ~c >>> 0; };
+      const romPath = 'C:/dev/c64/GTK3VICE-3.9-win64/C64/chargen-901225-01.bin';     // (the local VICE, when there)
+      const sameRom = !fs.existsSync(romPath) || Buffer.from(Font.rom).equals(fs.readFileSync(romPath).subarray(0, 2048));
+      check(Font.rom.length === 2048 && crc32(Font.rom) === 0xa494a648 && sameRom && Buffer.from(Font.rom.subarray(19 * 8, 20 * 8)).toString('hex') === '3c66603c06663c00',
+        'itch: the page font is the C64 character ROM (uppercase set: checksum, and the S = $3C $66 $60 $3C $06 $66 $3C $00)');
+      let wrong = [];
+      for (const ch of 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 !"#$%&\'()*+,-./:;<=>?') {
+        const code = ch >= 'A' ? ch.charCodeAt(0) - 64 : ch.charCodeAt(0);
+        O.clear('center'); O.show('center', [ch], {scale: 1}); rects.length = 0; O.draw();
+        // rebuild by rows from the absolute y: row r sits at (544 - 20) / 2 + 2 r
+        const rows = new Uint8Array(8);
+        for (const [x, y] of rects) rows[(y - (544 - 20) / 2) / 2] |= 0x80 >> ((x - 376) / 2);
+        if (Buffer.from(rows).toString('hex') !== Buffer.from(Font.rom.subarray(code * 8, code * 8 + 8)).toString('hex')) wrong.push(ch);
+      }
+      check(wrong.length === 0, `itch: the overlay draws the C64 ROM glyph for every character it can show (A-Z, 0-9, punctuation)${wrong.length ? ': wrong ' + wrong.join('') : ''}`);
+      O.clear('center');
+    }
     for (const name of ['game', 'c64game']) {
       const {m, p} = boot(name, 'trace');
       const symbols = packaged[name].symbols;

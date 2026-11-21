@@ -3,6 +3,7 @@
 // save / load and the hi-scores. No debugger. See js/README.md ("The itch.io page").
 //
 //   M mute | Alt+W 5x | Alt+Q 2x | Ctrl+S quick save | Ctrl+L quick load | Ctrl+R back to the selector
+//   Tab = the C= key (opens the map); Alt alone does nothing in the game
 'use strict';
 
 (function () {
@@ -14,6 +15,7 @@
     sens: 0.5,              // mouse counts per pixel of pointer movement
     touchSens: 0.9,         // touch: counts per game pixel dragged
     overlayMs: 3000,        // how long a message stays, then it fades
+    backAlpha: 0.55,        // the dark box behind each overlay text block
     fadeMs: 700,
   };
   // the selector's colours follow the entry that is selected: the C64's own blue / light blue, and the C128
@@ -36,7 +38,7 @@
     Digit9: [4, 0], KeyI: [4, 1], KeyJ: [4, 2], Digit0: [4, 3], KeyM: [4, 4], KeyK: [4, 5], KeyO: [4, 6], KeyN: [4, 7],
     Equal: [5, 0], KeyP: [5, 1], KeyL: [5, 2], Minus: [5, 3], Period: [5, 4], Semicolon: [5, 5], BracketLeft: [5, 6], Comma: [5, 7],
     Backslash: [6, 0], BracketRight: [6, 1], Quote: [6, 2], Home: [6, 3], ShiftRight: [6, 4], Slash: [6, 7],
-    Digit1: [7, 0], Backquote: [7, 1], ControlLeft: [7, 2], Digit2: [7, 3], Space: [7, 4], AltLeft: [7, 5], KeyQ: [7, 6], Escape: [7, 7],
+    Digit1: [7, 0], Backquote: [7, 1], ControlLeft: [7, 2], Digit2: [7, 3], Space: [7, 4], Tab: [7, 5], KeyQ: [7, 6], Escape: [7, 7],   // Tab = the C= key
   };
   var canvas = $('vic'), box = $('box'), stage = $('stage'), ovc = $('ov');
   var ctx = canvas.getContext('2d'), ovx = ovc.getContext('2d');
@@ -191,7 +193,8 @@
   function setSpeed(s) {
     if (s === speed) return;
     speed = s; pacer.reset();
-    audio.silence();                          // the SID log is only played at normal speed
+    $('b-go').classList.toggle('down', speed === 2);
+    audio.silence();                        // the SID log is only played at normal speed
     if (speed === 1) overlay.clear('bottom'); else overlay.show('bottom', [speed === 2 ? '>>' : '>>>>>'], { scale: 2, sticky: true });
   }
 
@@ -233,7 +236,7 @@
   // Slots include 'tl' (hotkeys and pointer hint), 'mode' (input), 'top' (score), and 'bottom' (speed).
 
   var overlay = (function () {
-    var slots = {}, w = 0, h = 0, dirty = false;
+    var slots = {}, w = 0, h = 0, dirty = false, backings = [];
     function resize() {
       var r = box.getBoundingClientRect(), d = window.devicePixelRatio || 1;
       w = Math.max(1, Math.round(r.width * d)); h = Math.max(1, Math.round(r.height * d));
@@ -271,22 +274,39 @@
       if (w === 0) resize();
       ovx.clearRect(0, 0, w, h);
       dirty = any;                            // keep redrawing while something fades
+      backings = [];
       var unit = w / Video.VIC_W;             // device px per game pixel
+      var cut = document.body.classList.contains('ingame') ? 36 * unit : 0;   // a game shows rows 36-235 of the 272: the rows above are off the box
+      // the rows of the slots (game pixels from the top of the box): as in the full picture, or, in a game, below one another at the top
+      var rows = cut ? { top: 2, tl: 22, mode: 42 } : { top: 2, tl: 14, mode: 34 };
       for (name in slots) {
         var s2 = slots[name], total = 0, y = 0, us = s2.lines.map(function (l) {
           var u = Math.min(unit * l[1], 0.94 * w / (l[0].length * 8));   // a long line shrinks to fit
           total += 10 * u; return u;
         });
         var alpha = (s2.sticky || now < s2.until) ? 1 : Math.max(0, 1 - (now - s2.until) / CONFIG.fadeMs);
+        var y0 = rows[name] !== undefined ? rows[name] * unit : name === 'bottom' ? h - (cut ? 8 : 20) * unit - total : (h - total) / 2;
+        var xs = s2.lines.map(function (l, i) {
+          var right = w - l[0].length * 8 * us[i];
+          return name === 'tl' ? 14 * unit : name === 'mode' ? right - 14 * unit : right / 2;
+        });
+        // a dark backing behind the whole block, as wide as its widest line, fading with the text
+        var bx0 = Infinity, bx1 = -Infinity;
+        s2.lines.forEach(function (l, i) { bx0 = Math.min(bx0, xs[i]); bx1 = Math.max(bx1, xs[i] + l[0].length * 8 * us[i]); });
+        var pad = Math.max(4, Math.round(unit * 3)), last = us[us.length - 1];
+        var back = { slot: name, x: bx0 - pad, y: y0 - pad, w: bx1 - bx0 + 2 * pad, h: total - 2 * last + 2 * pad, alpha: alpha * CONFIG.backAlpha };
+        backings.push(back);
+        ovx.globalAlpha = back.alpha;
+        ovx.fillStyle = '#000';
+        ovx.beginPath();
+        if (ovx.roundRect) ovx.roundRect(back.x, back.y, back.w, back.h, pad * 1.5); else ovx.rect(back.x, back.y, back.w, back.h);
+        ovx.fill();
         ovx.globalAlpha = alpha * 0.95;
         ovx.fillStyle = '#fff'; ovx.shadowBlur = 0;                      // plain text, no glow
         ovx.beginPath();
-        var y0 = name === 'tl' ? 14 * unit : name === 'mode' ? 34 * unit : name === 'top' ? 2 * unit : name === 'bottom' ? h - 20 * unit - total : (h - total) / 2;
         for (var li = 0; li < s2.lines.length; li++) {
-          var t = s2.lines[li][0], u = us[li], right = w - t.length * 8 * u;
-          var x = name === 'tl' ? 14 * unit : name === 'mode' ? right - 14 * unit : right / 2;
-          glyphs(ovx, t, x, y0 + y, u);
-          y += 10 * u;
+          glyphs(ovx, s2.lines[li][0], xs[li], y0 + y, us[li]);
+          y += 10 * us[li];
         }
         ovx.fill();
       }
@@ -294,7 +314,7 @@
     }
     window.addEventListener('resize', resize);
     if (window.ResizeObserver) new ResizeObserver(resize).observe(box);
-    return { show: show, clear: clear, draw: draw, resize: resize };
+    return { show: show, clear: clear, draw: draw, resize: resize, backings: function () { return backings; } };
   })();
 
   // ---- pointer: mouse (captured), touch (drag to aim, buttons) -------------------------------
@@ -386,8 +406,8 @@
   });
   stage.addEventListener('contextmenu', function (e) { e.preventDefault(); });
 
-  // touch buttons: FIRE = left, MAP = right, TORPEDO = both (the mouse buttons, as the game reads them)
-  [['fire', 'left'], ['map', 'right'], ['torp', 'both']].forEach(function (b) {
+  // touch buttons: FIRE = left, MAP = right, PROTON = both (the mouse buttons, as the game reads them)
+  [['fire', 'left'], ['map', 'right'], ['proton', 'both']].forEach(function (b) {
     var el = $('b-' + b[0]);
     function dn(e) { e.preventDefault(); e.stopPropagation(); try { el.setPointerCapture(e.pointerId); } catch (err) { /* ignore */ } if (input) input.setButton(el, b[1], true); el.classList.add('down'); audioGesture(); }
     function up(e) { e.preventDefault(); if (input) input.setButton(el, b[1], false); el.classList.remove('down'); }
@@ -397,9 +417,23 @@
     el.addEventListener('lostpointercapture', up);
   });
 
+  // PAUSE = the game's own F1 pause (any aim movement resumes); >> toggles 2x speed (tap on, tap off)
+  function tapButton(id, fn) {
+    var el = $(id);
+    el.addEventListener('pointerdown', function (e) { e.preventDefault(); e.stopPropagation(); audioGesture(); if (scene === 'game' && m) fn(el); });
+    el.addEventListener('click', function (e) { e.preventDefault(); });
+  }
+  tapButton('b-pause', function () {
+    if (!m.ram[prog.symbols.PAUSED ?? 0x9f]) pauseFrames = 8;
+  });
+  tapButton('b-go', function (el) {
+    setSpeed(speed === 2 ? 1 : 2);
+    el.classList.toggle('down', speed === 2);
+  });
+
   // ---- keyboard --------------------------------------------------------------------------------
 
-  var altTimer = 0, altHeld = false, altSent = false, suppress = { AltLeft: false, ControlLeft: false };
+  var suppress = { ControlLeft: false };
 
   function setKeyCode(code, on) {
     var k = KEYS[code];
@@ -409,12 +443,9 @@
 
   // A hotkey was used: the game must not see the modifier that came with it
   function swallowModifiers() {
-    clearTimeout(altTimer);
-    if (altHeld) suppress.AltLeft = true;
     suppress.ControlLeft = true;
-    setKeyCode('AltLeft', false); setKeyCode('ControlLeft', false);
+    setKeyCode('ControlLeft', false);
     if (input) input.setJoystick('ControlRight', false);
-    altSent = false;
   }
 
   function toggleMute() {
@@ -467,31 +498,17 @@
     }
     if (!m) return;
     if (SentinelInput.isJoystick(code)) { input.setJoystick(code, true, e.repeat); e.preventDefault(); return; }
+    if (code === 'AltLeft' || code === 'AltRight') { e.preventDefault(); return; }   // Alt alone does nothing (the hotkeys use it)
     if (!KEYS[code]) return;
+    if (code === 'Tab' && mod(e)) return;    // Tab is the C= key; Ctrl+Tab and friends stay the browser's
     e.preventDefault();
-    if (code === 'AltLeft') {                // Alt is the C= key: held back briefly, in case it starts Alt+W / Alt+Q
-      if (e.repeat) return;
-      altHeld = true; suppress.AltLeft = false; altSent = false;
-      clearTimeout(altTimer);
-      altTimer = setTimeout(function () { if (altHeld && !suppress.AltLeft) { setKeyCode('AltLeft', true); altSent = true; } }, 120);
-      return;
-    }
     if (suppress[code]) return;
     setKeyCode(code, true);
   });
 
   window.addEventListener('keyup', function (e) {
     var code = e.code;
-    if (code === 'AltLeft') {
-      e.preventDefault();
-      clearTimeout(altTimer);
-      if (altHeld && !altSent && !suppress.AltLeft && m) {   // a quick tap: still a press, long enough to be seen
-        setKeyCode('AltLeft', true);
-        setTimeout(function () { setKeyCode('AltLeft', false); }, 80);
-      } else setKeyCode('AltLeft', false);
-      altHeld = false; altSent = false; suppress.AltLeft = false;
-      return;
-    }
+    if (code === 'AltLeft' || code === 'AltRight') { e.preventDefault(); return; }
     if (code === 'ControlLeft') suppress.ControlLeft = false;
     if (!m) return;
     if (SentinelInput.isJoystick(code)) { input.setJoystick(code, false); return; }
@@ -499,10 +516,10 @@
   });
 
   function releaseAll() {
-    clearTimeout(altTimer); altHeld = altSent = false; suppress.AltLeft = suppress.ControlLeft = false;
+    suppress.ControlLeft = false;
     aim = null;
     if (m) { m.keys.fill(0); input.release(); }
-    ['fire', 'map', 'torp'].forEach(function (n) { $('b-' + n).classList.remove('down'); });
+    ['fire', 'map', 'proton'].forEach(function (n) { $('b-' + n).classList.remove('down'); });
   }
   function backgroundGame() {
     releaseAll();
@@ -527,7 +544,7 @@
 
   window.SentinelItch = {           // for tests and the console
     state: function () { return { scene: scene, prog: progName, inputMode: input ? input.mode : null, speed: speed, fast: fast, frame: m ? m.frame : 0, audio: audio.kind, running: audio.running(), touch: touch }; },
-    audio: audio, store: store, machine: function () { return m; }, start: startGame, menu: showMenu,
+    overlay: overlay, audio: audio, store: store, machine: function () { return m; }, start: startGame, menu: showMenu,
     frames: function (n) {          // n emulated frames at once, then draw (a page whose animation frames are throttled)
       for (var i = 0; i < n && m; i++) if (!oneFrame()) return;
       if (m) { px.set(m.video.px); ctx.putImageData(img, 0, 0); }

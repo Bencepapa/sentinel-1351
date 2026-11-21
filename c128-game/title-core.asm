@@ -5,6 +5,8 @@ TITLERESET:
         JMP frame
 
 TITLEBOOT:
+        LDA #0          ; the C128 KERNAL arms a VIC raster IRQ (never taken: SEI); OVSTART
+        STA $D01A       ; refuses to load a package over S1 while one is armed
         JSR ENDHIDE
         JSR CLOCKINIT
         LDA #0
@@ -30,6 +32,8 @@ TITLETRAMPEND:
         JSR OVLOAD
         JSR FKEYREAD
         STA FKEYLAST
+        NOP             ; two NOPs of slack: the world's noise ($D41B) starts at g_gi9, so the cycle phase
+        NOP             ; here moves the fight test's one heavy frame (phase-sensitive, see briefs)
         JSR g_gi9       ; generate the selected world with TITLE out of S1
 TITLEMAPOPEN:
         JMP MAPOPEN
