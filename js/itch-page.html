@@ -50,9 +50,10 @@ body.touch.ingame #tpad { display: flex; }
 .tsmall { width: 100px; height: 46px; border-radius: 14px; }                    /* MAP, PROTON: rounded rectangles */
 #b-map { --tc: #ffd23f; }                                                       /* yellow: the map */
 #b-proton { --tc: #ffffff; }                                                    /* white: the proton torpedo */
-#tsys { display: flex; flex-direction: row; gap: 12px; pointer-events: none; }   /* PAUSE and >>: side by side in landscape (above PROTON), stacked in portrait (after PROTON) */
-@media (orientation: portrait) { #tsys { flex-direction: column; } }
-.tsys { --tc: #a8a8a8; width: 50px; height: 40px; border-width: 3px; border-radius: 10px; font-size: 11px; letter-spacing: 0.02em; }
+#tsys { display: flex; flex-direction: row; gap: 10px; pointer-events: none; }   /* PAUSE and >>: landscape: above PROTON, side by side */
+@media (orientation: landscape) { body.touch.ingame { --tgap: 8px; } }                     /* the stack must fit the short landscape screen */
+@media (orientation: portrait) { #tsys { position: absolute; left: 0; bottom: calc(100% + 14px); } }   /* portrait: above the button row */
+.tsys { --tc: #a8a8a8; width: 46px; height: 40px; border-width: 3px; border-radius: 10px; font-size: 11px; letter-spacing: 0.02em; }
 #b-fire { --tc: #ff4a3a; width: 88px; height: 88px; border-radius: 50%; border-width: 6px; font-size: 22px; letter-spacing: 0.04em; }
 /* ---- end of touch controls ------------------------------------------------------------- */
 </style>
@@ -65,7 +66,7 @@ body.touch.ingame #tpad { display: flex; }
   </div>
 </div>
 <div id="tpad">
-  <div id="tsys"><button id="b-pause" class="tbtn tsys" type="button" aria-label="Pause">PAUSE</button><button id="b-go" class="tbtn tsys" type="button" aria-label="Double speed">&gt;&gt;</button></div>
+  <div id="tsys"><button id="b-pause" class="tbtn tsys" type="button" aria-label="Pause">&#10073;&#10073;</button><button id="b-go" class="tbtn tsys" type="button" aria-label="Double speed">&gt;&gt;</button></div>
   <button id="b-proton" class="tbtn tsmall" type="button" aria-label="Proton torpedo">PROTON</button>
   <button id="b-map" class="tbtn tsmall" type="button" aria-label="Map">MAP</button>
   <button id="b-fire" class="tbtn" type="button" aria-label="Fire">FIRE</button>
