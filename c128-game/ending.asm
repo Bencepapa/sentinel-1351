@@ -237,7 +237,7 @@ ENDRESET2:
         JSR EFRESET
         JSR GVIEWCLEAR  ; erase the ending's bitmap before drawing the title
         LDA #0
-        STA ENDMODE
+        JSR OECLRM      ; (STA ENDMODE, and not out of energy)
         STA ENDWIN
         STA ENDENER
         STA ENDENER+1

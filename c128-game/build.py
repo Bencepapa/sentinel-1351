@@ -170,7 +170,8 @@ PATCHES_COCKPIT = [
     ('INPUT:  JSR POTS', 'INPUT:  JSR GPOTS'),
     ('MAPINHK:RTS ', 'MAPINHK:JMP MAPIN '),
     ('MAPVBHK:RTS ', 'MAPVBHK:JMP MAPVB '),
-    ('TICKHK: RTS ', 'TICKHK: JMP WORLD '),
+    ('TICKHK: RTS ', 'TICKHK: JMP OEWORLD '),
+    ('STARS:  INC FRMC\n', 'STARS:  JMP OESTARS    ; (out of energy: the stars slow down and stop)\nSTARS2:\n'),
     ('        STA CIA1PA\n        JMP frame\n', '        STA CIA1PA\n        JMP CLOCKFRAME\n'),
     ('        JSR FIREPH      ; the phasors,', '        JSR FKEYVIEW    ; the phasors,'),
     ('        LDA #194\n        JSR WAITLN\n', 'fkey_guns:LDA #194\n        JSR WAITLN\n'),
@@ -192,7 +193,7 @@ PATCHES_COCKPIT = [
     ('        JSR SHIPHIT     ; ($84D7)\n', '        JSR MISSIONHIT  ; ($84D7)\n'),
     ('        JMP TRKMSG\n', '        JMP TRACKNOTICE\n'),
     ('        JMP ALERT       ;', '        JMP APPROACHNOTICE ;'),
-    ('arr2:   JSR SECALERT    ;', 'arr2:   JSR ENTERNOTICE  ;'),
+    ('arr2:   JSR SECALERT    ;', 'arr2:   JSR OEENT        ;'),
     ('        JSR SHOWTG\n        LDA SQCOUNT\n        BNE arr2\n',
      '        JSR EMPTYROW\n        LDA SQCOUNT\n        BNE arr2\n'),
     ('        STA APDLY\n        JSR LRCLEAR\narr9:', '        STA APDLY\n        JSR HREADCLEAR\narr9:'),
@@ -337,6 +338,21 @@ def assemble():
                               '        BIT HITS\n        BIT HITS+1\n        JMP SHOWSH')
     cockpit = cockpit.replace('        LDA #$30\n        STA SUBN', 'PHBUD: LDA #$30\n        STA SUBN')
     glue = read('c128-game', 'game.asm')
+    # Out of energy (energy-pads.asm): code in game.asm's zero padding (same bytes, same addresses).
+    pads = dict(re.findall(r';;PAD (\w+)\n(.*?)(?=;;PAD|\Z)', read('c128-game', 'energy-pads.asm'), re.S))
+    for frag, before_label, count, size in (('STARS', 'g_gi9:', 26, 26), ('ENT', 'g_mowipe:LDA #15', 8, 8),
+                                            ('ARR', 'g_mcwipe:LDA #15', 11, 11), ('FRC', 'MSDESTROYED:', 11, 11),('CLK', 'FHROW:  JSR FROW', 10, 6),
+                                            ('SQ', 'GBTEXT: SEC', 13, 11)):
+        zero = '        .BYTE ' + ','.join(['0'] * count)
+        m = re.search(re.escape(zero) + r'[^\n]*\n(?=' + re.escape(before_label) + ')', glue)
+        assert m, 'energy pad %s not found' % frag
+        text = pads[frag].rstrip('\n') + '\n'
+        if count > size:
+            text += '        .BYTE ' + ','.join(['0'] * (count - size)) + '\n'
+        glue = glue[:m.start()] + text + glue[m.end():]
+    sq_old = '        LDA #$00\n        LDY M_STATE,X\n        BEQ g_sin1      ; empty\n'
+    assert glue.count(sq_old) == 1
+    glue = glue.replace(sq_old, sq_old.replace('LDY M_STATE,X', 'JSR OEMS'))   # out of energy: an empty arrival sector
     # Blank before delays or snapshot writes, after START banks out BASIC ROM:
     # the helper at $52AC is inaccessible under BASIC's initial MMU mapping.
     # Five bytes replace LDA/STA without moving any cockpit symbol.
@@ -355,6 +371,10 @@ def assemble():
     glue = glue.replace('JSR MRGLYPHBACK', 'JSR ENDBASETALLY')
     cockpit = cockpit.replace('        LDY HUDE+2      ; OUT OF ENERGY',
                               '        JSR ENDENERGY   ; OUT OF ENERGY')
+    # Out of energy ($F8E0): the digits' wrap (en3) runs OESET first; the same 15 bytes.
+    old_en3 = 'en3:    LDY #$70\n        STY HUDE\n        STY HUDE+1\n        STY HUDE+2\n        STY HUDE+3\n        RTS\n'
+    assert old_en3 in cockpit
+    cockpit = cockpit.replace(old_en3, 'en3:    LDY #$70\n        STY HUDE\n        STY HUDE+1\n        STY HUDE+2\n        NOP\n        JMP OESET\n', 1)
     glue = glue.replace('g_tp9:  DEC $485B', 'g_tp9:  JSR ENDPROTONUSED')
     glue = glue.replace('        LDY HUDE+3      ; the ones digit',
                         '        JSR ENDONE      ; the ones digit')
@@ -408,9 +428,9 @@ MNEXTRA:''')
     glue = glue.replace('        JSR g_upb\n        LDX #141', '        JSR MTINIT\n        LDX #141')
     global MAPCODE
     for _ in range(3):              # the map's code goes right after the cockpit's second chunk
-        source = cockpit + '\n' + mapsrc.replace('        * = $1D00\n', '        * = $%04X\n' % MAPCODE) + '\n' + glue
+        source = 'OEFLAG = $2D\n' + cockpit + '\n' + mapsrc.replace('        * = $1D00\n', '        * = $%04X\n' % MAPCODE) + '\n' + glue
         source += '\n' + ending_source(source, read) + '\n' + read('c128-game', 'end-loader.asm') + '\n' + read('c128-game', 'end-events.asm')
-        source += '\n' + read('c128-game', 'bank1.asm') + '\nB1STUBLEN = B1STUBEND-256\n'
+        source += '\n' + read('c128-game', 'bank1.asm') + '\nB1STUBLEN = OESTUBEND-256\n' + read('c128-game', 'energy.asm')
         source += '\n' + read('c128-game', 'overlay.asm')
         source += '\n' + title_source(read)
         LISTING.clear()
@@ -667,7 +687,7 @@ def ending_source(source, read):
          'FKEYSWEEP','FKEYINPUT','FKEYREPAIR','GPOTS','GMAPPOTS','GMAPCENTER','GMAPBUTTONS','HENGARM',
          'SECTORNOTICE','GROUPNOTICE','MISSIONHIT','MISSIONREPAIRED','STARTPLOT','NOTICEREQUEST','BASEMESSAGE',
          'TRACKNOTICE','APPROACHNOTICE','ENTERNOTICE','HREAD','HREADCLEAR','EMPTYROW',
-         'SCANROW','SCANZEROX','SCANZEROY'))
+         'SCANROW','SCANZEROX','SCANZEROY','OESET','OEIN','OEFRAME','CLOCKDIV','ENDMODE'))
     _, sym = asm(source+'\n'+placeholder)
     packed_ranges, used = [], set()
     readonly = [(0xE960,0xEA16), (sym['MSUNPACK'],sym['MSPOS']),
@@ -745,7 +765,7 @@ def ending_source(source, read):
                  'ENDVHEAD': vpay+240, 'ENDVRANKS': vpay+240+ranks_at, 'ENDVRANKHALF': vpay+240+rank_half_at,
                  'ENDRANKTEXT': rank_text, 'ENDRANKHALF': rank_half, 'ENDVMASTER': vpay+240+len(reports_stream),
                  'ENDPAYPAGES': pages, 'ENDB1END': vpay+pages*256, 'ENDB1SNAP': ENDB1SNAP, 'ENDB1SNAPEND': ENDB1SNAP+snapshot,
-                 'ENDPAYLEN': len(payload), 'ENDHEADS': ENDHEADS, 'B1INITAT': ENDSTAGE+pages*256}
+                 'ENDPAYLEN': len(payload), 'OEZPIMG': ENDSTAGE+len(payload), 'ENDHEADS': ENDHEADS, 'B1INITAT': ENDSTAGE+pages*256}
     # (the constants first: the package's origin, * = ENDPKG, needs ENDPKG defined)
     return '\n'.join(f'{k} = {v}' for k, v in constants.items()) + '\n' + \
         text.replace('; ENDRANGEDATA', '.BYTE '+','.join(map(str,descriptors))) + '\n'
@@ -914,7 +934,7 @@ def main():
     for name, address in fixed.items():
         assert symbols.get(name) == address, f'fixed symbol {name} moved from ${address:04X}'
     if set(chunks) != {ENTRY, CODE2, MAPCODE, GLUE, HIGH, HIGH2, 0x0C60, 0xE960, 0x3D60, 0x3BD8, 0x3768, 0x3BC0, 0x2CDE, 0x2FEE, 0x33E8, 0x28D7, 0xBFC3, 0x3BD1, 0x3681, 0x0200, 0x1C10, 0x5258,
-                       0x0100, symbols['B1INITAT'], symbols['OVBASE'], ENDPKG, symbols['TITLEPKG']}:
+                       0x0100, 0x2D, symbols['B1INITAT'], symbols['OVBASE'], ENDPKG, symbols['TITLEPKG']}:
         raise SystemExit(f'unexpected assembly chunks: {[hex(c) for c in chunks]}')
     for start, limit in ((0x5258, 0x5300), (ENTRY, 0x28D7), (CODE2, MAPCODE), (MAPCODE, 0xBFC3), (GLUE, HIGH2SRC), (HIGH, 0xD000), (HIGH2, 0xF6F9), (0x3D60, 0x3E00), (0x3BD8, 0x3C00), (0x3768, 0x3800), (0x3BC0, 0x3BD8), (0x2CDE, 0x2D00), (0x2FEE, 0x3000), (0x33E8, 0x3400), (0x28D7, 0x2900), (0xBFC3, 0xC000), (0x3BD1, 0x3BD8), (0x3681, 0x3690)):
         if start + len(chunks[start]) > limit:
@@ -959,7 +979,7 @@ def main():
     assert symbols['ENDB1SNAPEND'] <= symbols['ENDBPAY'] and symbols['ENDB1END'] <= ENDB1LIMIT
     b1init = chunks[symbols['B1INITAT']]
     assert symbols['B1INITAT'] + len(b1init) == symbols['ENDSTUBIMG']
-    assert symbols['ENDSTUBIMG'] + len(stub) <= symbols['OVLIMG'] == symbols['ENDSTUBIMG'] + 128
+    assert symbols['ENDSTUBIMG'] + len(stub) <= symbols['OVLIMG'] == symbols['ENDSTUBIMG'] + 122
     assert symbols['TITLESTAGE'] == symbols['OVLIMG'] + symbols['OVAREALEN']
     # The package is cut into five independently packed streams, one per staging hole,
     # each as long as its hole holds (the cuts need no labels: decoding is sequential).
@@ -1152,6 +1172,13 @@ def main():
     p(ENDPKGSTAGE, ending_stream)       # B1INIT decodes it and copies it to bank 1
     # Then the ending payload, which B1INIT puts into bank 1 before GINIT2.
     assert symbols['ENDSTAGE'] == ENDSTAGE and len(PAYLOAD) == symbols['ENDPAYPAGES'] * 256
+    # The out-of-energy code (energy.asm, assembled at $2D in zero page) rides in the
+    # payload's padding; B1INIT copies OEZPCOPY bytes of it to zero page.
+    zpcode = bytes(chunks[0x2D])
+    packed = (0x2D + len(zpcode)).to_bytes(2, 'little') + lz_pack(zpcode)     # (GUNPACK's stream: its end address first)
+    pad = symbols['ENDPAYPAGES'] * 256 - symbols['ENDPAYLEN']
+    assert 0x2D + len(zpcode) <= 0xFB and len(packed) <= pad, 'energy code %d bytes, packed %d, padding %d' % (len(zpcode), len(packed), pad)
+    PAYLOAD[symbols['ENDPAYLEN']:symbols['ENDPAYLEN'] + len(packed)] = packed
     p(symbols['ENDSTAGE'], bytes(PAYLOAD))
     assert symbols['ENDBPAY'] & 255 == 0 and symbols['ENDVRANK'] == symbols['ENDVTEXT'] + 220
     assert symbols['B1INITAT'] == symbols['ENDSTAGE'] + len(PAYLOAD)

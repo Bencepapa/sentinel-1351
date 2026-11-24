@@ -23,8 +23,8 @@ module.exports=function({boot,run,check,fs,path,OUT}) {
   }
   check(cursors,'parity: mouse and joystick cursor positions match C64 in both directions for every clamp step');
   call(m,S.MNOFF);
-  check(A[S.BND+2]===88&&A[S.BNDH+2]===173&&A[S.YCEN]===129&&A[S.g_hk2+6]===(S.INPUT&255)&&A[S.g_hk2+7]===(S.INPUT>>8),
-    'parity: base exit restores cursor bounds and direct INPUT hook (no idle wrapper)');
+  check(A[S.BND+2]===88&&A[S.BNDH+2]===173&&A[S.YCEN]===129&&A[S.g_hk2+6]===(S.OEIN&255)&&A[S.g_hk2+7]===(S.OEIN>>8),
+    'parity: base exit restores cursor bounds and direct input hook (INPUT, with out of energy: OEIN; no idle wrapper)');
   // The standing entry message is ticked by the original fine-scroll clock:
   // five character ticks, four frames each. Both programs get the same clock
   // phase and toggle phase here; compare all 40 characters/colours every frame.

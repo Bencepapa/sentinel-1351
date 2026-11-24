@@ -2542,12 +2542,16 @@ g_he1:  LDA #$00
         BEQ g_he2
         STY HUDE+3
 g_he9:  RTS
-g_he2:  LDA HUDE        ; (0000 stays)
-        ORA HUDE+1
-        ORA HUDE+2
-        CMP #$70
-        BEQ g_he9
-        LDY #$79
+g_he2:  LDA OEFLAG      ; out of energy already: 0000 stays, and a jump ends (OEFORCE); else the
+        BEQ g_he3       ; wrap runs OESET ($F8E0) once
+        JMP OEFORCE
+        NOP
+        NOP
+        NOP
+        NOP
+        NOP
+        NOP
+g_he3:  LDY #$79
         STY HUDE+3
         JMP ENERGY10
 
@@ -2941,7 +2945,7 @@ g_hk1:  LDA #$00
         STA HKPREV
 g_hk2:  LDA #$BF        ; port 2 again: its pots are read next
         STA CIA1PA
-        JSR INPUT
+        JSR OEIN        ; (INPUT, and out of energy: no steering, fire, proton or map)
         LDA HYPON       ; hyperspace: no phasor (fire is the deflector there, later)
         BEQ g_hk3
         LDA #$00

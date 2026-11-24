@@ -114,7 +114,7 @@ function boot(name, mode, opts) {
       // $F440's), the stack page between the stub and $01C0)
       const free=[[s.MINEFREE,s.MINEEND],[s.ENDCOREEND,0xC60],[s.OVEND,0x1C00],[s.ENDLOADEREND,0x1D00],
         [s.CKEXITFREE,s.SPRCROSS],[s.CKSTARTFREE,s.g_st1],[s.VDCFREE,s.VDCFREE+5],
-        [0x02,0x2B],[0x2D,0xFB],[0xFF,0x100],[0x100+s.B1STUBLEN,0x1C0]];
+        [0x02,0x2B],[s.OEZPEND,0xFB],[0xFF,0x100],[0x100+s.B1STUBLEN,0x1C0]];
       if (!record.armed && m.mmuCR===0x3E && m.ram[s.GUNPACK]===(s.TORPA&255)) {
         for(const [lo,hi] of free) m.ram.fill(0xA5,lo,hi);
         record.armed=true;
@@ -2113,6 +2113,7 @@ require('./hyperspace-freeze')({boot,run,check});
 require('./function-keys')({boot,run,check,resumeFromTitle});
 require('./c128-controllers')({boot,run,check});
 require('./mission-messages')({boot,run,check});
+require('./out-of-energy')({boot,run,check,resumeFromTitle});
 const itchDone=require('./itch')({boot,run,check,fs,path,ROOT,resumeFromTitle});   // (its audio checks are asynchronous)
 
 for(const r of freeMemoryRuns) if(!r.intact) console.log(`     free RAM written: ${r.bad} (boot${r.at})`);

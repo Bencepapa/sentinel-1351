@@ -23,6 +23,8 @@
 ;   $FFFA-$FFFF          the NMI/RESET/IRQ vectors: NMIB1
 ;   free: $0400-$2BFF, the payload's end-$63FF, $6700-$6FFF, $7D00-$7DFF,
 ;   after B1TITLE-$FEFF, $FF05-$FFF9 ($FF00-$FF04 are the MMU's in every bank)
+OEZP = $2D              ; energy.asm: the code and data in zero page (copied as OEZP-1,X for X = n..1)
+OEZPCOPY = 149          ; (bytes copied from the payload's padding at init; build.py checks)
 B1STREAM = $6400        ; $8100-$83FF, the type-1 movement streams the mines borrow
 B1MINES = $7000         ; the MINES package (S1 at $EA16), as decoded at init
 B1ENDING = $7E00        ; the ENDING package (S1 at ENDPKG), ENDPKGPAGES pages from its staging
@@ -81,6 +83,25 @@ b1w:    STA $FFFF
 b1wd:   RTS
 NMIB1:  RTI
 B1STUBEND:
+; The input, with out of energy (energy.asm): no steering, proton or map, and no new phasor shot (one
+; in the air must finish: its end clears FIREFLAG); the crosshair has moved already. (In the stub's page:
+; it has room, the PRG has none.)
+OEIN:   JSR INPUT
+        LDA OEFLAG
+        BEQ oe_i1
+        LDA #$00        ; the tracking computer is out ($89E6 never runs in the original's $F927)
+        STA SYSHP+4
+        STA TREQ
+        LDA #$FF
+        STA JOY
+        LDA #$01
+        STA CPREV
+        LDA SHOTON
+        ORA SHOTARM
+        BNE oe_i1
+        STA FIREFLAG
+oe_i1:  RTS
+OESTUBEND:
 
 ; Init (ENDINIT, before GINIT2 decodes the high image over this staging): the
 ; stub, the preconfigurations and bank 1's vectors (set, not saved: there is no
@@ -92,7 +113,16 @@ bi_stub:LDA ENDSTUBIMG,X
         STA $0100,X
         DEX
         BPL bi_stub
-        LDA #$3E        ; PCRA: the game's bank 0 (RAM, I/O); PCRB: bank 1, all RAM
+        LDA #<OEZPIMG   ; energy.asm: staged packed in the payload's padding, unpacked into zero page
+        STA CSRC
+        LDA #>OEZPIMG
+        STA CSRC+1
+        LDA #$2D
+        STA CDST
+        LDA #$00
+        STA CDST+1
+        JSR g_upb
+        LDA #$3E       ; PCRA: the game's bank 0 (RAM, I/O); PCRB: bank 1, all RAM
         STA $D501
         LDA #$7F
         STA $D502
@@ -106,7 +136,7 @@ bi_vwrite:LDA #<NMIB1
         JSR ELWRITE
         DEX
         BNE bi_vwrite
-        LDX #0          ; the overlay manager into BASIC's free ML area
+                        ; the overlay manager into BASIC's free ML area (X = 0 from the loop above)
 bi_ovl: LDA OVLIMG,X
         STA OVBASE,X
         INX
@@ -134,13 +164,9 @@ bi_ovl2:LDA OVLIMG+255,X
         STA CDST+1
         LDX #ENDPKGPAGES
         JSR B1PUT
-        LDA #<ENDSTAGE  ; the payload (the victory text, the reports, the display masters)
-        LDX #>ENDSTAGE
+        LDX #>ENDSTAGE  ; the payload (the victory text, the reports, the display masters): $F100; CSRC/CDST low are 0 after B1PUT
         LDY #>ENDBPAY
-        STA CSRC
         STX CSRC+1
-        LDA #0
-        STA CDST
         STY CDST+1
         LDX #ENDPAYPAGES
         JSR B1PUT
@@ -194,6 +220,6 @@ title_extraedge:
         RTS
 ENDSTUBIMG:
 B1INITEND:
-OVLIMG = ENDSTUBIMG+128 ; (build.py stages the stub, then the manager's area)
+OVLIMG = ENDSTUBIMG+122; (build.py stages the stub, then the manager's area)
 OVAREALEN = 496         ; OVBASE-$1BFF (build.py checks)
 TITLESTAGE = OVLIMG+496

@@ -1010,8 +1010,8 @@ MNEXIT:
         LDX #$AD
         LDY #$81
         JSR MNBOUNDS
-        LDA #<INPUT
-        LDX #>INPUT
+        LDA #<OEIN      ; (INPUT, and out of energy)
+        LDX #>OEIN
         JSR MNHOOK
         PLA
         TAX
@@ -1026,7 +1026,7 @@ MNBOUNDS:
         STY YCEN
         RTS
 MNINPUT:
-        JSR INPUT
+        JSR OEIN
         LDA MPRES
         BEQ mn_phasefire ; joystick up+fire is not the mouse button chord
         LDA JRAW        ; original JOYIN suppresses fire for both buttons
