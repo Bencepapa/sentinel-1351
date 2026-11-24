@@ -5690,19 +5690,23 @@ GINIT3: INC FAST
         LDA #>LOWSTART
         STA CDST+1
         JSR g_upb
-        LDX #141
-gl_table:LDA $DF00,X
-        STA GUNPACK,X
+        LDX #142
+gl_table:LDA $DEFF,X
+        STA GUNPACK-1,X
         DEX
-        CPX #$FF
         BNE gl_table
+        LDX #55         ; (OEZPMID..OEZPEND, 55 bytes, staged at OEZPTAIL: build.py)
+gl_oe:  LDA OEZPTAIL-1,X
+        STA $C2,X         ; (OEZPMID-1: build.py checks)
+        DEX
+        BNE gl_oe
         LDA #$3E
         STA $FF00
         DEC FAST
         RTS
 ; (the minefield starts at $EA16 as before, build.py checks it: the tunnel's page
 ; crossings; these bytes held the low-RAM copy helpers before bank 1)
-        .BYTE 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+        .BYTE 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
         .BYTE 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
 GINIT3END:
 MINEFREE = GINIT3END

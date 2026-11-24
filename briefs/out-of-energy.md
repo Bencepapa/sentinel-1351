@@ -210,3 +210,24 @@ energy: the warp-in is forced` (empty sector, three fighters alive, rush frames 
 **Deviations still open** (each costs bytes, the zero page is full: 149 of 149): the star slow-down is 255 frames (about 400 in the original); the
 jump arrives about 180 frames after the energy runs out (75-100 in the original: its deceleration loop is shorter); the warp-in starts with the
 message (the original: about 380 frames later, after the slow-down); the tone is `SNDRUSH`; the message blink rate is whatever `MSGRATE` held; no tunnel warp-in.
+
+## Out of energy in the raster tunnel (2026-11-24, VICE finding 7 / 9)
+
+Done (the preferred behaviour of the findings file, no Plan B): with MSSTATE 16 (the base's tunnel, friendly or hostile) the run-out
+(`OESET`, from the shots or the passive tick) now (1) vanishes the mines at once (`MNRESTORE`), (2) one frame later ends the
+sequence as a sector's arrival does (`MSOFF`: normal flight's sprites, input, shape loader, fights; MSSTATE 0) but keeps the tunnel's
+own blank routine (`MNVB`, so the bands and stars go on) and makes the sector a type-1 squadron's (M_STATE 1) for the warp-in,
+(3) steps the tunnel's phase by OEFLAG's stage like the stars (full speed, every 2nd, 4th, none: the tunnel decelerates over about 510
+frames and STOPS, it does not vanish), (4) after the slow-down the existing warp-in (`OEARR`) brings the three fighters in (about 570
+frames after the run-out; the original's states: about 540), which attack as in flight. No map, fire or steering (OEIN, as in flight).
+Raster time was not the problem (the conversion frame costs about 500 cycles, the `MNRESTORE` frame 3,400, 0 overruns, 0 late split
+writes except 2 once when the last shot's explosion is in the air); bytes were:
+* `OETPH` (55 bytes) lives in zero page `$C3-$F9` (was free); `build.py` stages it unpacked at `$DF8E` (free load-time bytes in the PRG) and
+  `GINIT3` copies it under MMU `$3F` (a 10-byte loop in place of zeros of its tail pad; `MNSTART` stays `$EA16`; its `LDX #141` loop got
+  the shorter `LDX #142 / BNE` form, the packed high image has 0 bytes spare now: do not add code to the high image without room).
+* `MTFRAME`'s `INC MTPHASE` is `JSR OETPH` (same size, +18 cycles a tunnel frame); `audit_s1` lets `OETPH` reference `MNRESTORE`,
+  `MNFIN`, `MTPHASE` (it only runs from `MTFRAME`).
+* Zero page left: `$FA` (1 byte). Not done: the energy does not tick or flash inside the tunnel (MSSTATE 16: `OEFRAME` skips every non-zero
+  MSSTATE; the original ticks there; `AND #$0F` would fix it, 2 bytes, no room); out of energy in the rings / docking (MSSTATE 1-15) is as
+  before (the friendly docking refills the energy, OEFLAG then stays set).
+* Tests: `out-of-energy.js` 6c (friendly: three shots from 22; hostile: `ENERGY10`); `js/test/quick.js` (about 50 s) is the quick set.

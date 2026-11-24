@@ -143,6 +143,7 @@
 
   function pause() {
     running = false; framesLeft = 0;
+    audio.silence();                       // no voice may hang while the log is not fed
     $('run').textContent = 'Run';
     m.video.renderTo(m.rasterLine());
     draw(); refresh(true);
@@ -543,11 +544,15 @@
   setDebug(debugOn);
 
   function typing(e) { var t = e.target.tagName; return t === 'INPUT' || t === 'SELECT' || t === 'TEXTAREA'; }
+  $('speed').addEventListener('change', function () { audio.silence(); });   // speed changes: the SID log is only played at 1x
+  document.addEventListener('visibilitychange', function () { if (document.hidden) audio.silence(); });
+  window.addEventListener('blur', function () { audio.silence(); });
   var warpBack = '1';
   window.addEventListener('keydown', function (e) {      // Alt+W: warp, 5x speed on / off
     if (e.altKey && e.code === 'KeyW') {
       var sp = $('speed');
       if (sp.value === '5') sp.value = warpBack; else { warpBack = sp.value; sp.value = '5'; }
+      audio.silence();
       e.preventDefault();
     }
   });

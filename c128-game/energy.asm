@@ -8,7 +8,7 @@
 ; Hooks (same-size patches, build.py / game.asm / ending.asm): TICKHK -> OEWORLD (every frame, at the
 ; end of the vertical blank: the energy),
 ; HINPUT's JSR INPUT -> OEIN, STARS's entry -> OESTARS, the digits' wrap in ENERGY10
-; (en3 = $F8E0) -> OESET, HENERGY no longer stops at 0000, ARRSTEP's ENTERNOTICE -> OEENT.
+; (en3 = $F8E0) -> OESET, HENERGY no longer stops at 0000, ARRSTEP's ENTERNOTICE -> OEENT, MTFRAME's INC MTPHASE\n; -> OETPH (the raster tunnel; the code from OEZPMID on is staged at $DF8E and copied by GINIT3, ZP $C3-$F9).
 ; OEFLAG $2D (build.py defines it first: zero page): 0, or out of energy ($F865) and then also the
 ; clock of the stars' slow-down and the warp-in: 1 at the start, a step every other frame, stops at
 ; 255. ENDRESET2 clears it (OECLRM), as the original's init at $8E56.
@@ -48,9 +48,9 @@ oe_st:  STA WTCNT       ; stranded: the world's clock stops ($F927 never calls $
                         ; OEFLAG - 1 after its DEC, never 0 (but once at the start)
         INC OEFLAG      ; the clock: a step every other frame (the stars slow down over 510
         BNE oe_fl       ; frames, then the warp-in is tried: $F96B sets $FB for $1AF2)
+        JSR OEARR       ; (in the pads; every other frame until it starts: OEFLAG is 0 for it)
         DEC OEFLAG
-        JSR OEARR       ; (in the pads; every other frame until it starts)
-        JMP oe_fl; The digits wrapped past 0000 (ENERGY10's en3 = $F8E0): once, the message, the siren, and the
+        BNE oe_fl; The digits wrapped past 0000 (ENERGY10's en3 = $F8E0): once, the message, the siren, and the
 ; tracking computer is out ($89E6 never runs again).
 OESET:  STY HUDE+3      ; (Y = $70 from en3; HENERGY lets only the first wrap through)
         LDA #$81
@@ -72,4 +72,38 @@ OESET:  STY HUDE+3      ; (Y = $70 from en3; HENERGY lets only the first wrap th
         LDY #$1E
         JMP SNDGO
 OETXT:  .BYTE $40,$40,$40,$40,$40,$40,$40,$40,$40,$40,$40,$40,$40,$4F,$55,$54,$40,$4F,$46,$40,$45,$4E,$45,$52,$47,$59,$FF
+OEZPMID:
+; Out of energy in the raster tunnel (MSSTATE 16, the base's sequence; tunnel.asm's MTFRAME calls this in
+; place of INC MTPHASE, every frame while the tunnel runs). Not out of energy: the phase steps. Out of
+; energy: the mines vanish (MNRESTORE, a slot a frame), the first time the sequence ends as at a sector's
+; arrival (MSOFF: normal flight's sprites, input, shapes and fights; MNFRAME once more so that the mines'
+; sprites go off) with the tunnel's own blank routine kept (MNVB: the bands and stars go on), the sector
+; is a squadron's (M_STATE 1: the warp-in's ships), and the phase steps by OEFLAG's stage as the stars do
+; (every frame, every 2nd, 4th, then none): the tunnel slows down and stops.
+OETPH:  LDA OEFLAG
+        BEQ ot_inc
+        LDA MSSTATE
+        BEQ ot_mr
+        LDA MNFIN       ; (the first out-of-energy frame: only MNRESTORE, which vanishes the mines: MNFRAME
+        BEQ ot_mr       ; clears their sprites later in the frame; the conversion is a frame of its own)
+        JSR MSOFF
+        LDA #<MNVB
+        STA vv2+1
+        LDA #>MNVB
+        STA vv2+2
+        JSR SECIDX
+        LDA #1
+        STA M_STATE,X
+        BNE ot_g
+ot_mr:  JSR MNRESTORE
+ot_g:   LDA OEFLAG
+        ROL A           ; (the carry only reaches bit 2: masked)
+        ROL A
+        ROL A
+        AND #$03
+        AND OEFLAG
+        BNE ot_r
+ot_inc: INC MTPHASE
+ot_r:   RTS
 OEZPEND:
+OEZPTAIL = $DF8E        ; (staged there, unpacked: GINIT3 copies OEZPMID..OEZPEND, under MMU $3F)

@@ -1,4 +1,4 @@
-﻿'use strict';
+'use strict';
 // Issue #28: out of energy. The C64 original (briefs/out-of-energy.md): -1 every 110 frames (flight, the map
 // open, bases; not in a jump), the digits flash below 2000, the decrement that finds 0000 wraps into $F8E0
 // (digits 0000, OUT OF ENERGY, a tone, the flag $F865); then $F927 never returns: the stars slow down for
@@ -8,7 +8,7 @@
 // The original (state frame7847, energy poked): $F8E0 prints OUT OF ENERGY ($9C5C: colour $81, rate $10, 255 flips)
 // and plays a rattle; about 490 frames later $F96B forces the warp-in ($FB := 1, WAVEINIT), which ends in the
 // warning (ALERT, its siren) and no message of its own, no tracking message, the fighters stay and attack.
-module.exports = function ({boot, run, check, resumeFromTitle}) {
+module.exports = function ({boot, run, check, resumeFromTitle, quick}) {
   const late = m => {
     let n = 0;
     for (let i = 0; i < m.vicLog.length; i += 4) {
@@ -143,7 +143,7 @@ module.exports = function ({boot, run, check, resumeFromTitle}) {
   }
 
   // 6. a jump: the energy runs out in it, the steps take a frame, the ship arrives at the destination, stranded
-  {
+  if (!quick) {
     const g = ready(), {k, m, A, S} = g;
     A.fill(0, S.M_STATE, S.M_STATE + 60); A.fill(0, S.M_COUNT, S.M_COUNT + 60);
     for (const b of [12, 17, 42, 47]) A[S.M_STATE + b] = 0xFF;
@@ -189,11 +189,49 @@ module.exports = function ({boot, run, check, resumeFromTitle}) {
     run(m, k.hooks, 30);
     check(!idle && A[S.OEFLAG] && f > 400 && rushed > 5 && A[S.ALIVE] && A[S.ALIVE + 1] && A[S.ALIVE + 2] && A[S.SQCOUNT] >= 3,
       `out of energy: the warp-in is forced (${rushed} rushing frames), three fighters in place after ${f} frames (the original: about 490 after its $F8E0) in an empty sector (idle ${idle})`);
-    const o = ready(), q = o.m, B = o.A, T = o.S;
-    B[T.MSSTATE] = 16; B[T.ARRFX] = 0; setEnergy(B, T, 0); call(q, T.ENERGY10); run(q, o.k.hooks, 700);
-    check(B[T.OEFLAG] > 100 && B[T.ARRFX] === 0, 'out of energy: no warp-in is started in the middle of a base\'s sequence');
   }
 
+  // 6c. out of energy in the raster tunnel (a base's sequence, MSSTATE 16; the original's base loop $8CF8 runs $F927 too):
+  //     the mines vanish, the tunnel slows down and STOPS (it stays, its bands and stars go on), the sequence ends as at an
+  //     arrival (MSSTATE 0, normal flight's input / fights), OUT OF ENERGY blinks, three fighters warp in after the slow-down
+  //     (about 540 frames after $F8E0 in the original's states 8219 / 8241) and attack; no overrun, no late split writes.
+  //     Friendly base: the shots run the energy out (22, as the user's state frame10593: three shots); hostile: ENERGY10.
+  for (const hostile of [0, 1]) {
+    const k = boot('game', 'trace'), m = k.m, A = m.ram, S = k.p.symbols; m.dma = true;
+    run(m, k.hooks, 60);
+    A[S.M_STATE + 24] = hostile ? 0x80 : 0xFF; call(m, S.SECTORIN);
+    run(m, k.hooks, 70);
+    const up = A[S.MSSTATE] === 16 && A[S.MNLOAD] === 12 && A[S.MTAGE] >= 3;
+    const lateAt = []; let late0 = 0, flagAt = -1, f = 0, phase = A[S.MTPHASE];
+    const rates = [0], tail = [], rushed = [];
+    if (hostile) { setEnergy(A, S, 0); call(m, S.ENERGY10); }
+    else { setEnergy(A, S, 22); m.mouse.present = true; }
+    let aliveAt = -1, steps = 0, said = '', msAt = -1, minesOff = -1, fight = 0;
+    for (; f < 900; f++) {
+      if (!hostile && flagAt < 0) m.mouse.left = f % 12 < 6;
+      m.runFrame(); if (flagAt >= 0) { const l = late(m); if (l && f - flagAt > 12) late0 += l; if (l) lateAt.push(f - flagAt); }
+      if (A[S.OEFLAG] && flagAt < 0) { flagAt = f; phase = A[S.MTPHASE]; m.mouse.left = false; said = row(A, S); }
+      if (flagAt >= 0) {
+        const t = f - flagAt, d = (A[S.MTPHASE] - phase) & 255; phase = A[S.MTPHASE];
+        rates[Math.floor(t / 64)] = (rates[Math.floor(t / 64)] || 0) + d;
+        if (t >= 560) tail.push(d);
+        if (A[S.MSSTATE] === 0 && msAt < 0) msAt = t;
+        if (t === 40) minesOff = (A[S.MNENA] === 0 && (m.vic[0x15] & 0x74) === 0) ? 1 : 0;
+        if (A[S.ARRFX] === 2) rushed.push(t);
+        if (aliveAt < 0 && A[S.ALIVE] && A[S.ALIVE + 1] && A[S.ALIVE + 2]) aliveAt = t;
+        if (aliveAt >= 0 && t > aliveAt + 150) break;
+      }
+    }
+    const kind = hostile ? 'hostile' : 'friendly';
+    const tunnelOn = A[S.vv2 + 1] === (S.MNVB & 255) && A[S.vv2 + 2] === (S.MNVB >> 8);
+    check(up && flagAt >= 0 && msAt >= 0 && msAt <= 4 && minesOff === 1 && tunnelOn,
+      `out of energy in a ${kind} base's tunnel (${hostile ? 'ENERGY10' : 'three shots from 22'}): flag at frame ${flagAt}, the sequence ends ${msAt} frames later (MSSTATE ${A[S.MSSTATE]}), the mines are gone and their sprites off (${minesOff}), the tunnel's routine stays (${tunnelOn})`);
+    check(rates[0] >= 60 && rates[2] < rates[0] && rates[6] < rates[2] && tail.length > 100 && tail.every(d => d === 0),
+      `out of energy in a ${kind} base's tunnel: the tunnel's phase steps ${rates.slice(0, 11).join(', ')} per 64 frames and stops (${tail.filter(d => d).length} steps after frame 560)`);
+    check(aliveAt > 400 && aliveAt < 900 && A[S.SQCOUNT] >= 3 && !A[S.MAPSHOWN] && A[S.MSSTATE] === 0,
+      `out of energy in a ${kind} base's tunnel: three fighters warp in ${aliveAt} frames after the flag (${rushed.length} rush frames), SQCOUNT ${A[S.SQCOUNT]}, no map`);
+    check(A[S.OVRUN] === 0 && late0 === 0, `out of energy in a ${kind} base's tunnel: ${A[S.OVRUN]} overruns, ${late0} late split writes (late frames after the flag: ${lateAt}; the shot's explosion in the air when it ran out may show 2 in the first 12)`);
+  }
   // the map and a jump from it to sector `dest` (empty), up to the fire click: the jump runs on from the caller
   const startJump = (g, dest) => {
     const {k, m, A, S} = g;
@@ -214,7 +252,7 @@ module.exports = function ({boot, run, check, resumeFromTitle}) {
   // 8. the user's VICE test: the energy runs out in a jump. The message blinks on (no other message replaces it), the
   //    ship arrives, about 490 frames later the warp-in ends in the warning, no tracking message or mode, the three
   //    fighters stay and attack (they do not vanish), the A key does nothing
-  {
+  if (!quick) {
     const k = boot('game', 'trace'), m = k.m, A = m.ram, S = k.p.symbols; m.dma = true;
     run(m, k.hooks, 80);
     A[S.APPR] = 0; A[S.APRUN] = 0; A[S.LRMODE] = 0; A[S.SQCOUNT] = 0; A[S.ARRFX] = 0; A[S.ALIVE] = A[S.ALIVE + 1] = A[S.ALIVE + 2] = 0;
@@ -268,7 +306,7 @@ module.exports = function ({boot, run, check, resumeFromTitle}) {
   // 8b. the user's retest (frame3836): the energy runs out in a jump to a sector WITH an enemy squadron. The original's
   //     stranded ship runs no approach: no scanner lock, no rush at the group (APPR / APRUN / LRMODE stay 0 after the
   //     arrival), the warp-in brings three fighters, which stay
-  {
+  if (!quick) {
     const k = boot('game', 'trace'), m = k.m, A = m.ram, S = k.p.symbols; m.dma = true;
     run(m, k.hooks, 80);
     A[S.APPR] = 0; A[S.APRUN] = 0; A[S.LRMODE] = 0; A[S.SQCOUNT] = 0; A[S.ARRFX] = 0; A[S.ALIVE] = A[S.ALIVE + 1] = A[S.ALIVE + 2] = 0;
@@ -293,7 +331,7 @@ module.exports = function ({boot, run, check, resumeFromTitle}) {
 
   // 9. energy out in a fight: the fighters stay (no new warp-in replaces them), the shot in the air finishes (it
   //    froze in its flash), the rest as in flight
-  {
+  if (!quick) {
     const g = ready(), {k, m, A, S} = g;
     A[S.ALIVE] = A[S.ALIVE + 1] = A[S.ALIVE + 2] = 1;
     setEnergy(A, S, 5);
@@ -353,7 +391,7 @@ module.exports = function ({boot, run, check, resumeFromTitle}) {
   }
 
   // 7. a new game clears it: die out of energy, the reset, the title, a new game with 9999 energy
-  {
+  if (!quick) {
     const g = ready(), {k, m, A, S} = g;
     strand(g, 1);
     run(m, k.hooks, 300);

@@ -401,6 +401,8 @@ def assemble():
     saved = json.load(open(os.path.join(ROOT, 'briefs/ref/c64-minefield.state.json')))
     import base64
     original = base64.b64decode(saved['state']['arrays']['ram'])
+    assert tunnel.count('        INC MTPHASE\n        LDA MTPHASE\n') == 1
+    tunnel = tunnel.replace('        INC MTPHASE\n        LDA MTPHASE\n', '        JSR OETPH       ; (INC MTPHASE; out of energy: the tunnel slows and stops, energy.asm)\n        LDA MTPHASE\n')
     tunnel = tunnel.replace('; MTTABLEDATA', '.BYTE ' + ','.join(str(v) for v in original[0xF4F:0xF7F]))
     table = tunnel[tunnel.index('MTTABLE:'):]
     tunnel = tunnel[:tunnel.index('MTTABLE:')]
@@ -425,7 +427,7 @@ MNEXTRA:''')
     glue = glue.replace('GINIT3END:', mine_source + '\nGINIT3END:')
     glue = glue.replace('        LDA #$D1\n        STA CSRC+1', '        LDA #$D0\n        STA CSRC+1')
     glue = glue.replace('        LDA #$00\n        STA CSRC\n        LDA #$D0\n        STA CSRC+1\n        LDA #<LOWSTART', '        LDA #$60\n        STA CSRC\n        LDA #$D0\n        STA CSRC+1\n        LDA #<LOWSTART')
-    glue = glue.replace('        JSR g_upb\n        LDX #141', '        JSR MTINIT\n        LDX #141')
+    glue = glue.replace('        JSR g_upb\n        LDX #142', '        JSR MTINIT\n        LDX #142')
     global MAPCODE
     for _ in range(3):              # the map's code goes right after the cockpit's second chunk
         source = 'OEFLAG = $2D\n' + cockpit + '\n' + mapsrc.replace('        * = $1D00\n', '        * = $%04X\n' % MAPCODE) + '\n' + glue
@@ -599,6 +601,9 @@ def audit_s1(symbols):
             # The base sequence after MSECTOR's check: MSVIEW's JMP MNVIEW (MSSTATE 16), and MSPOS
             # (called only from MINES) into MINES' helpers.
             in_sequence = value in (symbols['MNVIEW'], symbols['MNPASS'], symbols['MNSTEER'], symbols['MNREAD']) and                 symbols['MSVIEW'] <= pc < symbols['MSPOSEND']
+            # OETPH (energy.asm) runs only from MTFRAME, i.e. with MINES in S1.
+            in_sequence = in_sequence or (value in (symbols['MNRESTORE'], symbols['MNFIN'], symbols['MTPHASE']) and
+                                          symbols['OETPH'] <= pc < symbols['OEZPEND'])
             tramp = any(symbols[start] <= pc < symbols[end] for start, end in
                         (('OVTRAMP', 'OVTRAMPEND'), ('ENDTRAMP', 'ENDTRAMPEND'),
                          ('FKEYTUNNEL', 'FKEYTUNNELEND'), ('TITLETRAMP', 'TITLETRAMPEND')))
@@ -687,7 +692,8 @@ def ending_source(source, read):
          'FKEYSWEEP','FKEYINPUT','FKEYREPAIR','GPOTS','GMAPPOTS','GMAPCENTER','GMAPBUTTONS','HENGARM',
          'SECTORNOTICE','GROUPNOTICE','MISSIONHIT','MISSIONREPAIRED','STARTPLOT','NOTICEREQUEST','BASEMESSAGE',
          'TRACKNOTICE','APPROACHNOTICE','ENTERNOTICE','HREAD','HREADCLEAR','EMPTYROW',
-         'SCANROW','SCANZEROX','SCANZEROY','OESET','OEIN','OEFRAME','CLOCKDIV','ENDMODE'))
+         'SCANROW','SCANZEROX','SCANZEROY','OESET','OEIN','OEFRAME','CLOCKDIV','ENDMODE',
+         'OETPH','OEZPMID','OEZPTAIL'))
     _, sym = asm(source+'\n'+placeholder)
     packed_ranges, used = [], set()
     readonly = [(0xE960,0xEA16), (sym['MSUNPACK'],sym['MSPOS']),
@@ -958,7 +964,7 @@ def main():
     assert not (title_decode & 255) and 0x0C60 <= title_decode < title_decode + decode_pages * 256 <= symbols['LOWEND']
     assert symbols['ENDLOADEREND'] <= ENTRY, 'ending loader overlaps cockpit entry'
     assert 0xE960 + len(chunks[0xE960]) == symbols['MINEFREE']
-    assert symbols['MNSTART'] == 0xEA16
+    assert symbols['MNSTART'] == 0xEA16, hex(symbols['MNSTART'])
     assert symbols['MINEEND'] - symbols['MNSTART'] >= 3072
     assert symbols['MINEFREE'] <= symbols['MINEEND']
     assert symbols['MNARTEND'] - symbols['MNART'] == len(torp_frames(open(os.path.join(ROOT, 'c128-gui/ref/sprites-4800.bin'), 'rb').read()[65*64:77*64]))
@@ -1153,7 +1159,7 @@ def main():
     assert 0xD000 + len(second) <= 0xD100
     assert 0xD000 + len(second) <= 0xD060
     p(0xD000, second)
-    assert HIGH2SRC + len(packed) <= symbols['TITLELASTSTAGE'], 'the packed high image overlaps the final TITLE stream'
+    assert HIGH2SRC + len(packed) <= symbols['TITLELASTSTAGE'], f'the packed high image overlaps the final TITLE stream by {HIGH2SRC + len(packed) - symbols["TITLELASTSTAGE"]} bytes'
     assert symbols['TITLELASTSTAGE'] + len(title_last) <= 0x7680, (
         f'final TITLE stream needs {len(title_last)} bytes before the cockpit art')
     p(HIGH2SRC, packed)
@@ -1174,7 +1180,14 @@ def main():
     assert symbols['ENDSTAGE'] == ENDSTAGE and len(PAYLOAD) == symbols['ENDPAYPAGES'] * 256
     # The out-of-energy code (energy.asm, assembled at $2D in zero page) rides in the
     # payload's padding; B1INIT copies OEZPCOPY bytes of it to zero page.
-    zpcode = bytes(chunks[0x2D])
+    zpall = bytes(chunks[0x2D])
+    # The part from OEZPMID on (the tunnel's code) is staged unpacked at $DF8E (nothing else is there:
+    # GINIT3 copies it under MMU $3F); the rest packed in the payload's padding.
+    assert symbols['OEZPEND'] - 0x2D == len(zpall) and symbols['OEZPTAIL'] == 0xDF8E
+    zpcode = zpall[:symbols['OEZPMID'] - 0x2D]
+    zptail = zpall[symbols['OEZPMID'] - 0x2D:]
+    assert symbols['OEZPMID'] == 0xC3 and len(zptail) == 55 and symbols['OEZPEND'] <= 0xFB, (hex(symbols['OEZPMID']), len(zptail), hex(symbols['OEZPEND']))   # (GINIT3's LDX #55)
+    p(0xDF8E, zptail)
     packed = (0x2D + len(zpcode)).to_bytes(2, 'little') + lz_pack(zpcode)     # (GUNPACK's stream: its end address first)
     pad = symbols['ENDPAYPAGES'] * 256 - symbols['ENDPAYLEN']
     assert 0x2D + len(zpcode) <= 0xFB and len(packed) <= pad, 'energy code %d bytes, packed %d, padding %d' % (len(zpcode), len(packed), pad)
