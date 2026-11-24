@@ -1,4 +1,4 @@
-// Quick checks for the out-of-energy feature: `node js/test/quick.js` (about 50 s; the full suite is `node js/test/run.js`,
+﻿// Quick checks for the out-of-energy feature: `node js/test/quick.js` (about 50 s; the full suite is `node js/test/run.js`,
 // several minutes, and stays the check before any commit).
 //
 // Runs: out-of-energy.js in its quick mode (the tick, the flash, the trigger and the message, every gate, the stars' stages,
@@ -152,5 +152,7 @@ const t0=Date.now(), lap=n=>console.log('     ['+n+' done at '+Math.round((Date.
 require('./out-of-energy')({boot,run,check,resumeFromTitle,quick:true}); lap('out-of-energy');
 require('./tunnel')({boot,run,check,snap:()=>{},fs,path,OUT});                  lap('tunnel'); // (OETPH's hook in MTFRAME must not change the raster tunnel's timing)
 require('./hyperspace-freeze')({boot,run,check});                               lap('hyperspace-freeze');
+require('./hyperspace-dodge')({boot,run,check});                              lap('hyperspace-dodge');
 console.log((failures ? failures + ' check(s) failed' : 'quick checks passed')+' in '+Math.round((Date.now()-t0)/1000)+' s');
 process.exit(failures ? 1 : 0);
+
